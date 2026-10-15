@@ -2,7 +2,8 @@
 
 ## 現在の状態
 
-- **フェーズ:** **Phase 1（通信基盤）**。1-A（サーバー本体、実機なし）完了、次は 1-B（Maya クライアント）。計画は `docs/PHASE1_PLAN.md`。
+- **フェーズ:** **Phase 1（通信基盤）**。1-A（サーバー本体）、1-B（Maya クライアント、Maya 2024 で V-P1B 合格）完了。
+  次は 1-C（AE の CEP パネル）。計画と確認手順は `docs/PHASE1_PLAN.md`。
   Phase 0 は P0-1〜P0-4 合格、P0-5 は Editable のみ合格、Precision の実機転送とレンダー比較（P0-6）は先送り（下の「先送りにしたもの」）
 - **最終更新:** 2026-10-16
 
@@ -31,11 +32,24 @@
 | 変換手順の共通化（CLI とサーバー） | `core/jobs.py` | ✅ テスト済（D-13） |
 | プロトコル（Phase 1） | `protocol.py` | ✅ テスト済 |
 | Local Sync Server（認証、二重起動防止、自動終了、手動転送の手順） | `server/`, `syncbridge-server.cmd` | ✅ 偽クライアントで 18 件のテスト。実際の Maya/AE とは未接続 |
+| クライアント（stdlib の WebSocket、SyncClient、サーバーの自動起動） | `client/` | ✅ テスト済（stdlib のテストサーバーと本物のサーバーの両方） |
+| Maya の接続（service）と最小パネル（ui） | `maya_plugin/.../service.py`, `ui.py` | ✅ Maya 2024 で V-P1B 合格（AE は代役）。その後のログ表示の改善は Maya で未確認 |
+| AE の代役 | `tools/fake_ae.py` | ✅ 本物のサーバーと実データで両方向を確認 |
 
 ## テスト結果
 
 ### 2026-10-16（Windows 11, Python 3.10.6）
 
+- **V-P1B（Maya 2024 + AE の代役）合格:** サーバーの自動起動、接続中も Maya が固まらない、Maya → AE、AE → Maya
+  （確認ダイアログ、バックアップ、読み戻し誤差 0、Undo 1 回で復元）、キャンセル、切断を確認（H-MY-14/15/16）。
+  パネルのログに AE 側から送られたときの結果と AE の接続・切断を出すよう改善（**132 件 OK**）。詳細は PHASE1_PLAN.md 7 章。
+- **Phase 1-B:** 標準ライブラリだけの WebSocket クライアント（`client/ws.py`）、`SyncClient`（受信は別スレッド、
+  アプリへの処理は dispatch 経由）、サーバーの自動起動（`launcher`、Maya の `PYTHONHOME`/`PYTHONPATH` を外す）、
+  Maya の `service` と最小パネル、`exchange.apply_envelope`（適用結果を返す、Scene Time Warp がないシーンでも export できる）、
+  `tools/fake_ae.py` を実装。`describe_result` を `protocol.py` に移動。
+  テスト: `.venv` で **131 件 OK**、標準 Python で 131 件 OK（サーバー関連 24 件はスキップ）。
+  通し確認: launcher でサーバーを起動 → `fake_ae.py`（実際の AE の export）と Maya の代わりのクライアント（実際の Maya の export）で
+  Maya → AE、AE → Maya とも変換誤差 0・読み戻し誤差 0。Maya 本体ではまだ動かしていない。
 - **Phase 1-A:** `.venv` に FastAPI 0.143.2 / uvicorn 0.54.0 / websockets 16.1.1 / httpx を導入（`requirements-server.txt`）。
   CLI の変換手順を `core/jobs.py` に移し、プロトコル、セッション、サーバー、転送の手順を実装。
   偽の Maya/AE クライアントを本物の WebSocket でつなぐテストで、両方向の転送、取り消し、未接続、アプリのエラー、切断、
@@ -106,10 +120,9 @@
 
 ## 次にやること
 
-1. **Phase 1-B:** Maya クライアント（標準ライブラリの WebSocket、受信は別スレッド → `executeDeferred` でメインスレッド）と
-   最小 UI（接続状態、AE へ送る／AE から受ける）。export / apply の要求に Phase 0 の `exchange` の処理で応える。
-   実機確認は Maya 2024（H-MY-14）。その後 1-C（CEP パネル、PlayerDebugMode は利用者が設定）、1-D（両方向の手動転送）。
-2. **[実機・利用者]** 余裕があれば: 30fps のシーンでの Maya プローブ（H-MY-5）、Maya 2023 / AE 2024 での再確認。
+1. Phase 1-C: 最小 CEP パネル（PlayerDebugMode は利用者が設定）、V-AE-3。
+2. Phase 1-D: Maya と本物の AE で両方向の手動転送（P1-3〜P1-7）。
+3. **[実機・利用者]** 余裕があれば: 30fps のシーンでの Maya プローブ（H-MY-5）、Maya 2023 / AE 2024 での再確認。
 
 ### 先送りにしたもの
 

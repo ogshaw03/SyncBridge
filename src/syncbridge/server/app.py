@@ -16,7 +16,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from .. import __version__, protocol
 from .connections import ConnectionManager
-from .flow import TransferFlow, describe
+from .flow import TransferFlow
 
 log = logging.getLogger("syncbridge.server")
 
@@ -131,4 +131,4 @@ async def _idle_watch(manager: ConnectionManager, idle_timeout: float, on_idle) 
             return
 
 
-__all__ = ["create_app", "describe"]
+__all__ = ["create_app"]

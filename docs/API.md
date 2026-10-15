@@ -74,7 +74,19 @@ mapping: --mode editable|precision --tol 0.1 --origin F --maya-in-origin F --may
 | `SB.buildExport(comp, layer, oversample)` | `ae.timeremap.export` を作る |
 | `SBJSON.parse / stringify` | ES3 用 JSON |
 
-## 6. Local Sync Server（Phase 1、1-A 実装済み）
+## 6. クライアント（Phase 1-B、標準ライブラリのみ）
+
+| モジュール / 関数 | 説明 |
+|---|---|
+| `syncbridge.client.ws.WebSocket` | 最小の WebSocket クライアント（テキスト、分割、ping/pong、close）。`connect(host, port, path)`, `send_text`, `recv`（閉じたら None）, `close` |
+| `syncbridge.client.sync_client.SyncClient(app, handlers, dispatch, on_event)` | サーバーへの接続。`connect()`（セッションファイルを読む）、`request_transfer(direction, options, callback)`、`disconnect()`。受信は別スレッド、アプリへの処理と UI 通知は `dispatch` 経由 |
+| `syncbridge.client.launcher.ensure_server(port)` | サーバーが動いていなければ `.venv` の Python で起動して待つ（親の `PYTHONHOME` / `PYTHONPATH` は渡さない） |
+| `syncbridge_maya.service` | Maya 用: `connect(start_server=True)`, `send_to_ae(options)`, `receive_from_ae(options)`, `disconnect()`, `add_listener(fn)` |
+| `syncbridge_maya.ui.show()` | Maya の最小パネル（接続、モード、原点フレーム、許容誤差、2 つの送信ボタン、ログ） |
+| `syncbridge_maya.exchange.apply_envelope(env, confirm=True)` | apply エンベロープを適用（確認、バックアップ、undo、読み戻し）。`{status, backup, after, app_readback}` を返す |
+| `tools/fake_ae.py --export <AE export>` | 開発用の AE の代役（AE 側のパネルができるまでの確認用） |
+
+## 7. Local Sync Server（Phase 1、1-A 実装済み）
 
 起動: `.\syncbridge-server.cmd [--port 8765] [--idle-timeout 600]`（`.venv` が必要、`requirements-server.txt`）。
 

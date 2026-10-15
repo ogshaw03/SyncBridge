@@ -139,8 +139,8 @@ class FakeApp:
         self.ws.close()
 
 
-@unittest.skipUnless(HAVE_SERVER, "server packages not installed (requirements-server.txt)")
-class ServerTest(unittest.TestCase):
+class ServerFixture(unittest.TestCase):
+    """A real server on a free port, plus FakeApp helpers. Contains no tests itself."""
     def setUp(self):
         self.app = create_app(TOKEN, export_timeout=5, apply_timeout=5)
         config = uvicorn.Config(self.app, host="127.0.0.1", port=0, log_level="warning", ws="websockets-sansio")
@@ -176,6 +176,10 @@ class ServerTest(unittest.TestCase):
             time.sleep(0.02)
         return False
 
+
+
+@unittest.skipUnless(HAVE_SERVER, "server packages not installed (requirements-server.txt)")
+class ServerTest(ServerFixture):
     # -- session / auth ---------------------------------------------------------
     def test_health_and_probe(self):
         info = session.probe_server(self.port)

@@ -94,6 +94,20 @@ def error(code: str, msg: str, source_id: str = "server", reply_to: Optional[str
     return message("error", {"code": code, "message": msg}, source_id, reply_to)
 
 
+def describe_result(result: Optional[dict]) -> str:
+    """One-line human readable summary of transfer.result data (for logs / UIs)."""
+    if not result:
+        return "-"
+    parts = [result.get("direction", ""), result.get("status", "")]
+    conv = (result.get("report") or {}).get("conversion")
+    if conv:
+        parts.append("conversion %.4f f" % conv["max_error_frames"])
+    rb = result.get("readback")
+    if rb:
+        parts.append("readback %.4f f%s" % (rb["max_error_frames"], "" if rb["passed"] else " FAIL"))
+    return " ".join(p for p in parts if p)
+
+
 def encode(msg: dict) -> str:
     return json.dumps(msg, ensure_ascii=False, separators=(",", ":"))
 

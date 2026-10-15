@@ -92,7 +92,9 @@ def ae_comp_fps(ae_data: dict) -> FrameRate:
 
 
 def maya_to_ae_job(maya_data: dict, ae_data: Optional[dict], opts: TransferOptions) -> JobResult:
-    native = maya_data["native"]
+    native = maya_data.get("native")
+    if native is None:
+        raise ValueError("the Maya scene has no Scene Time Warp to send")
     target_fps = native["fps"]
     layer_start = None
     if ae_data:

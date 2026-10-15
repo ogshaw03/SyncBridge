@@ -17,6 +17,8 @@ Maya の Scene Time Warp と After Effects の Time Remap を双方向に転送�
 | `src/syncbridge/core/jobs.py` | 変換手順（CLI とサーバーで共有、D-13） |
 | `src/syncbridge/cli.py` | Phase 0 の変換ハブ（ファイル経由） |
 | `src/syncbridge/protocol.py` | Phase 1 のメッセージ（標準ライブラリのみ、Maya からも使う） |
+| `src/syncbridge/client/` | サーバーへのクライアント（WebSocket、SyncClient、サーバー起動）。標準ライブラリのみ（Maya 内で動く） |
+| `tools/fake_ae.py` | 開発用の AE の代役（AE パネルなしで Maya 側を試す） |
 | `src/syncbridge/server/` | Local Sync Server（FastAPI、`.venv` が必要）。`session.py` だけは標準ライブラリのみ |
 | `src/syncbridge/updater/` | Phase 6（未実装） |
 | `maya_plugin/scripts/syncbridge_maya/` | Maya アダプタ。`maya/` という名前は使わない（D-1） |

@@ -1,11 +1,14 @@
-"""Phase 0 file-based transfer for the Maya Scene Time Warp.
+"""Export / apply of the Maya Scene Time Warp.
 
+Phase 0 (files):
     export_timewarp(path)  -> writes kind "maya.timewarp.export"
     apply_timewarp(path)   -> reads  kind "maya.timewarp.apply" (from the CLI)
+Phase 1 (server, see service.py):
+    build_export(allow_missing=True) and apply_envelope(env) on the received data
 
-apply_timewarp asks for confirmation, writes a JSON backup of the current
-curve, applies inside one undo chunk, then reads the curve back and checks
-that Maya evaluates what was sent (readback).
+Applying asks for confirmation, writes a JSON backup of the current curve,
+applies inside one undo chunk, then reads the curve back and checks that Maya
+evaluates what was sent (readback). Must run on Maya's main thread.
 """
 from __future__ import annotations
 
@@ -25,8 +28,22 @@ def _app_info() -> dict:
     return {"name": "maya", "version": cmds.about(version=True), "scene": cmds.file(q=True, sn=True)}
 
 
-def build_export(oversample: int = 4) -> dict:
-    curve, plug = scene_timewarp.find_curve()
+def build_export(oversample: int = 4, allow_missing: bool = False) -> dict:
+    """Export envelope of the Scene Time Warp.
+
+    allow_missing: without a Scene Time Warp curve, return the scene settings
+    with native = None instead of raising (the server needs the fps and the
+    playback range to convert AE -> Maya).
+    """
+    try:
+        curve, plug = scene_timewarp.find_curve()
+    except scene_timewarp.SceneTimeWarpNotFound:
+        if not allow_missing:
+            raise
+        return envelope.make("maya.timewarp.export", {
+            "curve_node": None, "time_plug": None, "enabled": scene_timewarp.is_enabled(),
+            "native": None, "samples": None, "calibration": None, "scene": scene_settings.read(),
+        }, SOURCE_ID, _app_info())
     native, samples, calibration = anim_curve.read_curve(curve, oversample)
     return envelope.make("maya.timewarp.export", {
         "curve_node": curve,
@@ -64,26 +81,32 @@ def backup_dir() -> str:
     return d
 
 
-def apply_timewarp(path: str = None, confirm: bool = True) -> dict:
-    if path is None:
-        picked = cmds.fileDialog2(fileFilter="JSON (*.json)", dialogStyle=2, fileMode=1,
-                                  caption="SyncBridge: apply Scene Time Warp")
-        if not picked:
-            return None
-        path = picked[0]
-    data = envelope.load(path, "maya.timewarp.apply")["data"]
+def apply_envelope(apply_env: dict, confirm: bool = True, origin: str = "") -> dict:
+    """Apply a "maya.timewarp.apply" envelope to the Scene Time Warp.
+
+    Returns {"status": "applied" | "cancelled", "backup", "after", "app_readback", "message"}.
+    `after` is an export taken after applying (the server checks it, SPEC 5).
+    """
+    data = envelope.check(apply_env, "maya.timewarp.apply")
     native = data["native"]
-    curve, _ = scene_timewarp.find_curve()
+    try:
+        curve, _ = scene_timewarp.find_curve()
+    except scene_timewarp.SceneTimeWarpNotFound:
+        raise RuntimeError("This scene has no Scene Time Warp. Create one first "
+                           "(Key > Scene Time Warp), then send again.")
 
     if confirm:
+        source = (" from %s" % origin) if origin else ""
         answer = cmds.confirmDialog(
             title="SyncBridge",
-            message="Replace the keys of Scene Time Warp curve '%s' with %d keys (%s mode)?\n"
-                    "A JSON backup is written first." % (curve, len(native["keys"]), data["mode"]),
+            message="Replace the keys of Scene Time Warp curve '%s' with %d keys%s (%s mode)?\n"
+                    "A JSON backup is written first. One undo restores the previous curve."
+                    % (curve, len(native["keys"]), source, data["mode"]),
             button=["Apply", "Cancel"], defaultButton="Apply", cancelButton="Cancel",
             dismissString="Cancel")
         if answer != "Apply":
-            return None
+            print("SyncBridge: apply cancelled")
+            return {"status": "cancelled"}
 
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = os.path.join(backup_dir(), "timewarp_%s.json" % stamp)
@@ -96,11 +119,24 @@ def apply_timewarp(path: str = None, confirm: bool = True) -> dict:
         cmds.undoInfo(closeChunk=True)
 
     # Readback: does Maya evaluate what we intended?
-    _, samples, _ = anim_curve.read_curve(curve)
+    after = build_export()
+    samples = after["data"]["samples"]
     expected = maya_codec.decode(native)
     spf = 1.0 / anim_curve.scene_fps().fps
     report = validate_readback(expected, [t * spf for t in samples["times"]],
                                [v * spf for v in samples["values"]], native["fps"])
-    print("SyncBridge: applied %s (backup: %s)" % (path, backup_path))
+    print("SyncBridge: applied %d keys (backup: %s)" % (len(native["keys"]), backup_path))
     print("SyncBridge: readback", report.summary())
-    return {"backup": backup_path, "readback": report.to_json()}
+    return {"status": "applied", "backup": backup_path, "after": after,
+            "app_readback": report.to_json()}
+
+
+def apply_timewarp(path: str = None, confirm: bool = True) -> dict:
+    """Phase 0: apply an apply file written by the CLI (ae2maya)."""
+    if path is None:
+        picked = cmds.fileDialog2(fileFilter="JSON (*.json)", dialogStyle=2, fileMode=1,
+                                  caption="SyncBridge: apply Scene Time Warp")
+        if not picked:
+            return None
+        path = picked[0]
+    return apply_envelope(envelope.load(path, "maya.timewarp.apply"), confirm)

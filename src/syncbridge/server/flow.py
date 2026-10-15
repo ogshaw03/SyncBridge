@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 
 from .. import protocol
 from ..core import envelope, jobs
@@ -106,17 +105,3 @@ class TransferFlow:
             await self.manager.send(requester, protocol.error(code, message, reply_to=request["event_id"]))
         except Exception:
             pass
-
-
-def describe(result: Optional[dict]) -> str:
-    """One-line human readable summary of a transfer.result (for logs / UIs)."""
-    if not result:
-        return "-"
-    parts = [result.get("direction", ""), result.get("status", "")]
-    conv = (result.get("report") or {}).get("conversion")
-    if conv:
-        parts.append("conversion %.4f f" % conv["max_error_frames"])
-    rb = result.get("readback")
-    if rb:
-        parts.append("readback %.4f f%s" % (rb["max_error_frames"], "" if rb["passed"] else " FAIL"))
-    return " ".join(p for p in parts if p)

@@ -91,6 +91,23 @@ class MayaAdapterTest(unittest.TestCase):
             self.anim_curve.read_raw("timewarp")
         self.assertIn("inAngle", str(ctx.exception))
 
+    def test_weight_scale_confirmed_by_probe(self):
+        # H-MY-5, Maya 2024 probe run 2: only "w (frames)" matched Maya (24 fps).
+        self.assertEqual(self.anim_curve.DEFAULT_WEIGHT_SCALE, "w (frames)")
+        scale = self.anim_curve.WEIGHT_SCALE_CANDIDATES["w (frames)"](24.0)
+        slope, extent = self.anim_curve.angle_weight_to_tangent(60.0, 10.0, scale)
+        self.assertAlmostEqual(extent, 5.0)                  # 10 * cos(60 deg), no 1/3
+        self.assertAlmostEqual(slope, 3 ** 0.5)
+
+    def test_read_and_write_formulas_are_inverse(self):
+        for name, make in self.anim_curve.WEIGHT_SCALE_CANDIDATES.items():
+            scale = make(24.0)
+            for slope, extent in ((0.0, 8.0), (1.0, 3.0), (-2.5, 0.75), (40.0, 0.2)):
+                angle, weight = self.anim_curve.tangent_to_angle_weight(slope, extent, scale)
+                back = self.anim_curve.angle_weight_to_tangent(angle, weight, scale)
+                self.assertAlmostEqual(back[0], slope, places=9, msg=name)
+                self.assertAlmostEqual(back[1], extent, places=9, msg=name)
+
     def test_slope_from_angle(self):
         native = self.anim_curve.raw_to_native(self.anim_curve.read_raw("timewarp"), FrameRate(24))
         # H-MY-4: tan(26.565 deg) = 0.5

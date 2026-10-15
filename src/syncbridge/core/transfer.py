@@ -8,11 +8,17 @@ Each transfer returns the target-native keys plus up to three error reports:
                     vs. the mapped source curve (detects codec / mode loss)
   readback        : filled in later by comparing samples the *target* app
                     evaluates after applying (see validate_readback)
+
+t_range (R-20): the input-time range, in target seconds, over which the
+result must match the source (e.g. the Maya playback range mapped to comp
+time). Outside the source keys the source's extrapolation applies: Precision
+mode bakes it into keys, Editable mode cannot represent a linear extrapolation
+in AE and reports it. The conversion report always covers t_range.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from . import ae_codec, maya_codec
 from .ae_codec import EncodeReport
@@ -38,6 +44,7 @@ class TransferResult:
     source_fidelity: Optional[ErrorReport] = None
     warnings: List[str] = field(default_factory=list)
     unreachable: list = field(default_factory=list)
+    t_range: Optional[Tuple[float, float]] = None
 
     @property
     def passed(self) -> bool:
@@ -53,6 +60,7 @@ class TransferResult:
             "passed": self.passed,
             "warnings": self.warnings,
             "unreachable": self.unreachable,
+            "t_range": None if self.t_range is None else list(self.t_range),
             "conversion": self.conversion.to_json(),
             "source_fidelity": None if self.source_fidelity is None else self.source_fidelity.to_json(),
         }
@@ -60,11 +68,13 @@ class TransferResult:
 
 def maya_to_ae(maya_native: dict, ctx: MappingContext, mode: str = EDITABLE,
                tolerance_frames: float = DEFAULT_TOLERANCE_FRAMES, target_fps=None,
-               maya_samples: Optional[dict] = None, key_subdivision: int = 1) -> TransferResult:
+               maya_samples: Optional[dict] = None, key_subdivision: int = 1,
+               t_range: Optional[Tuple[float, float]] = None) -> TransferResult:
     """Maya-native curve -> AE-native Time Remap keys.
 
     target_fps: AE comp frame rate (key grid for Precision mode, error unit).
     maya_samples: {"times": [frames], "values": [frames]} evaluated by Maya.
+    t_range: comp-time range (seconds) that must match, see the module docstring.
     """
     _check_mode(mode)
     report = EncodeReport()
@@ -78,24 +88,27 @@ def maya_to_ae(maya_native: dict, ctx: MappingContext, mode: str = EDITABLE,
         fidelity = compare_samples(times, values, src_maya.evaluate, rate, tolerance_frames)
     src = ctx.maya_to_ae(src_maya)
     fps = target_fps if target_fps is not None else rate
-    if mode == PRECISION:
-        fit = fit_precision(src, fps, tolerance_frames, key_subdivision=key_subdivision)
-        target, unreachable = fit.curve, fit.unreachable
-    else:
-        target, unreachable = src, []
+    if mode == PRECISION and _extrapolates(src, t_range):
+        report.warnings.append(
+            "Maya linear pre/post infinity was baked into keys; the extrapolation slope "
+            "assumes H-MY-11 (not yet verified on Maya)")
+    target, unreachable = _apply_mode(src, mode, fps, tolerance_frames, key_subdivision,
+                                      t_range, report)
     native = ae_codec.encode(target, report)
     emitted = ae_codec.decode(native)
-    conversion = compare_curves(src, emitted, fps, tolerance_frames)
+    conversion = compare_curves(src, emitted, fps, tolerance_frames, t_range=_cover(src, t_range))
     return TransferResult(mode, "ae", native, emitted, src, conversion, fidelity,
-                          report.warnings, unreachable)
+                          report.warnings, unreachable, t_range)
 
 
 def ae_to_maya(ae_keys: List[dict], ctx: MappingContext, mode: str = EDITABLE,
                tolerance_frames: float = DEFAULT_TOLERANCE_FRAMES,
-               ae_samples: Optional[dict] = None, key_subdivision: int = 1) -> TransferResult:
+               ae_samples: Optional[dict] = None, key_subdivision: int = 1,
+               t_range: Optional[Tuple[float, float]] = None) -> TransferResult:
     """AE-native Time Remap keys -> Maya-native curve dict (frames of ctx.maya_fps).
 
     ae_samples: {"times": [comp seconds], "values": [source seconds]} from valueAtTime.
+    t_range: Maya scene-time range (seconds) that must match, see the module docstring.
     """
     _check_mode(mode)
     report = EncodeReport()
@@ -106,16 +119,13 @@ def ae_to_maya(ae_keys: List[dict], ctx: MappingContext, mode: str = EDITABLE,
         fidelity = compare_samples(ae_samples["times"], ae_samples["values"], src_ae.evaluate,
                                    rate, tolerance_frames)
     src = ctx.ae_to_maya(src_ae)
-    if mode == PRECISION:
-        fit = fit_precision(src, rate, tolerance_frames, key_subdivision=key_subdivision)
-        target, unreachable = fit.curve, fit.unreachable
-    else:
-        target, unreachable = src, []
+    target, unreachable = _apply_mode(src, mode, rate, tolerance_frames, key_subdivision,
+                                      t_range, report)
     native = maya_codec.encode(target, rate, report)
     emitted = maya_codec.decode(native)
-    conversion = compare_curves(src, emitted, rate, tolerance_frames)
+    conversion = compare_curves(src, emitted, rate, tolerance_frames, t_range=_cover(src, t_range))
     return TransferResult(mode, "maya", native, emitted, src, conversion, fidelity,
-                          report.warnings, unreachable)
+                          report.warnings, unreachable, t_range)
 
 
 def validate_readback(expected: TimeCurve, times: List[float], values: List[float], fps,
@@ -125,6 +135,39 @@ def validate_readback(expected: TimeCurve, times: List[float], values: List[floa
     times/values must already be in the same seconds domain as `expected`.
     """
     return compare_samples(times, values, expected.evaluate, fps, tolerance_frames)
+
+
+def _apply_mode(src: TimeCurve, mode: str, fps, tolerance_frames: float, key_subdivision: int,
+                t_range, report: EncodeReport):
+    """Return (target curve, unreachable intervals) for the chosen mode."""
+    if mode == PRECISION:
+        fit = fit_precision(src, fps, tolerance_frames, key_subdivision=key_subdivision,
+                            t_range=t_range)
+        return fit.curve, fit.unreachable
+    if _extrapolates(src, t_range):
+        lo, hi = src.domain
+        report.warnings.append(
+            "linear extrapolation outside the keys (%.3f-%.3f s) is required in the range "
+            "%.3f-%.3f s but cannot be kept in Editable mode; use Precision mode to bake it"
+            % (lo, hi, t_range[0], t_range[1]))
+    return src, []
+
+
+def _extrapolates(curve: TimeCurve, t_range) -> bool:
+    """True when t_range reaches outside the keys on a side with linear infinity."""
+    if t_range is None:
+        return False
+    lo, hi = curve.domain
+    return ((t_range[0] < lo and curve.pre_infinity.value == "linear")
+            or (t_range[1] > hi and curve.post_infinity.value == "linear"))
+
+
+def _cover(curve: TimeCurve, t_range):
+    """Comparison range: the keys plus t_range."""
+    lo, hi = curve.domain
+    if t_range is None:
+        return lo, hi
+    return min(lo, t_range[0]), max(hi, t_range[1])
 
 
 def _check_mode(mode: str):

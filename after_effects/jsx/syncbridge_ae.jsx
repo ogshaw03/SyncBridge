@@ -11,7 +11,8 @@
 
 (function () {
     function doExport(comp, layer) {
-        var file = File.saveDialog('SyncBridge: export Time Remap', 'JSON:*.json');
+        var file = new File(SB.workFolder().fsName + '/ae_export.json')
+            .saveDlg('SyncBridge: export Time Remap', 'JSON:*.json');
         if (!file) { return; }
         var env = SB.buildExport(comp, layer, 4);
         SB.writeJSON(file, env);
@@ -19,7 +20,8 @@
     }
 
     function doApply(comp, layer) {
-        var file = File.openDialog('SyncBridge: apply Time Remap', 'JSON:*.json');
+        var file = new File(SB.workFolder().fsName + '/ae_apply.json')
+            .openDlg('SyncBridge: apply Time Remap', 'JSON:*.json');
         if (!file) { return; }
         var data = SB.checkEnvelope(SB.readJSON(file), 'ae.timeremap.apply');
         var keys = data.keys, msg, stamp, backup, after;

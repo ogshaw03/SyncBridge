@@ -46,6 +46,7 @@ Windows ではリポジトリ直下の `.\syncbridge.cmd` で実行する（`src
 
 mapping: --mode editable|precision --tol 0.1 --origin F --maya-in-origin F --maya-out-origin F
          --comp-offset S --source-offset S --source-scale X --key-subdivision N
+         --range START END (Maya scene frames) | --no-range
 ```
 
 終了コード: 0 = 成功（誤差が許容内）、2 = 誤差が許容外（出力ファイルは書き出す）、1 = 入力エラー。

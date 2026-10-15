@@ -59,6 +59,16 @@ class MappingContext:
             out_offset=self.maya_output_origin_frame * spf - self.ae_source_time_offset / s,
         )
 
+    def maya_frame_to_comp_time(self, frame: float) -> float:
+        """Maya scene (input) frame -> AE comp seconds."""
+        spf = self.rate.frame_duration
+        return (frame - self.maya_input_origin_frame) * spf + self.ae_comp_time_offset
+
+    def comp_time_to_maya_frame(self, comp_time: float) -> float:
+        """AE comp seconds -> Maya scene (input) frame."""
+        spf = self.rate.frame_duration
+        return (comp_time - self.ae_comp_time_offset) / spf + self.maya_input_origin_frame
+
     def to_json(self) -> dict:
         return asdict(self)
 

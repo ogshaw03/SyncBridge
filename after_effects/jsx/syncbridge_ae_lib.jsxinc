@@ -92,6 +92,13 @@ SB.writeJSON = function (file, obj) {
     file.close();
 };
 
+// Working folder for exchange files: <repo>/probe_results (ignored by git).
+SB.workFolder = function () {
+    var f = new Folder(new File($.fileName).parent.parent.parent.fsName + '/probe_results');
+    if (!f.exists) { f.create(); }
+    return f;
+};
+
 SB.backupFolder = function () {
     return new Folder(Folder.userData.fsName + '/SyncBridge/backups');
 };
@@ -195,10 +202,13 @@ SB.applyKeys = function (prop, keys) {
         idx = prop.nearestKeyIndex(k.time);
         prop.setTemporalContinuousAtKey(idx, false);
         prop.setTemporalAutoBezierAtKey(idx, false);
-        prop.setInterpolationTypeAtKey(idx, SB.interpType(k.inInterp), SB.interpType(k.outInterp));
+        // Ease first, interpolation type last: AE 26.5 turned LINEAR / HOLD keys
+        // into BEZIER when setTemporalEaseAtKey was called after the type was set
+        // (probe 2026-10-16, H-AE-11).
         prop.setTemporalEaseAtKey(idx,
             [new KeyframeEase(k.inEase.speed, k.inEase.influence)],
             [new KeyframeEase(k.outEase.speed, k.outEase.influence)]);
+        prop.setInterpolationTypeAtKey(idx, SB.interpType(k.inInterp), SB.interpType(k.outInterp));
     }
 };
 
@@ -227,6 +237,13 @@ SB.keyRange = function (keys, layer) {
 SB.buildExport = function (comp, layer, oversample) {
     var prop, keys, range, samples = null;
     if (!layer.timeRemapEnabled) {
+        if (!layer.canSetTimeRemapEnabled) {
+            // e.g. solids, text, shape and camera layers have no source time to remap.
+            throw SB.userError('Layer "' + layer.name + '" cannot use Time Remap ' +
+                '(solid, text, shape, camera and light layers have no source time).\n' +
+                'Select a footage or precomp layer, e.g. the Maya render sequence.\n\n' +
+                'For the Phase 0 probe, run probe_ae.jsx instead (no selection needed).');
+        }
         throw SB.userError('Time Remap is not enabled on layer "' + layer.name + '".\n' +
             'Enable it (Layer > Time > Enable Time Remapping) before Export, or use Apply.');
     }

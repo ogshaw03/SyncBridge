@@ -102,6 +102,56 @@ class TransferTest(unittest.TestCase):
         self.assertTrue(res.passed, res.conversion.summary())
 
 
+class EvaluationRangeTest(unittest.TestCase):
+    """R-20: Maya Scene Time Warps made in the UI use linear pre/post infinity."""
+
+    def setUp(self):
+        self.ctx = MappingContext(maya_fps=FPS, maya_input_origin_frame=1001, maya_output_origin_frame=1001)
+        origin = 1001 / 24.0
+        # Keys at 1 s and 2 s after the origin, linear infinity on both sides.
+        self.native = maya_codec.encode(
+            testcurves.linear_infinity().affine(in_offset=origin, out_offset=origin), FPS)
+        self.range = (0.0, 3.0)   # comp seconds: 1 s before and after the keys
+
+    def test_precision_bakes_extrapolation(self):
+        res = transfer.maya_to_ae(self.native, self.ctx, transfer.PRECISION, 0.1, FPS, t_range=self.range)
+        self.assertTrue(res.passed, res.conversion.summary())
+        self.assertEqual(res.t_range, self.range)
+        self.assertAlmostEqual(res.curve.evaluate(0.0), 0.5, delta=0.1 / 24)   # extrapolated, not held
+        self.assertAlmostEqual(res.curve.evaluate(3.0), 2.0, delta=0.1 / 24)
+        self.assertTrue(any("H-MY-11" in w for w in res.warnings), res.warnings)
+
+    def test_conversion_report_covers_the_range(self):
+        res = transfer.maya_to_ae(self.native, self.ctx, transfer.PRECISION, 0.1, FPS, t_range=self.range)
+        self.assertGreaterEqual(res.conversion.sample_count, 3 * 24 * 8)
+
+    def test_editable_reports_lost_extrapolation(self):
+        res = transfer.maya_to_ae(self.native, self.ctx, transfer.EDITABLE, 0.1, FPS, t_range=self.range)
+        self.assertFalse(res.passed)
+        self.assertTrue(any("Precision" in w for w in res.warnings), res.warnings)
+
+    def test_without_range_only_keys_must_match(self):
+        res = transfer.maya_to_ae(self.native, self.ctx, transfer.EDITABLE, 0.1, FPS)
+        self.assertTrue(res.passed, res.conversion.summary())
+        self.assertIsNone(res.t_range)
+        self.assertFalse(any("H-MY-11" in w for w in res.warnings))
+
+    def test_constant_infinity_needs_no_baking(self):
+        native = maya_codec.encode(testcurves.slowmo_linear().affine(in_offset=1001 / 24.0,
+                                                                     out_offset=1001 / 24.0), FPS)
+        for mode in transfer.MODES:
+            res = transfer.maya_to_ae(native, self.ctx, mode, 0.1, FPS, t_range=(-1.0, 6.0))
+            self.assertTrue(res.passed, "%s: %s" % (mode, res.conversion.summary()))
+            self.assertFalse(any("H-MY-11" in w or "Editable" in w for w in res.warnings), res.warnings)
+
+    def test_ae_to_maya_with_range(self):
+        to_ae = transfer.maya_to_ae(self.native, self.ctx, transfer.PRECISION, 0.1, FPS, t_range=self.range)
+        maya_range = (1001 / 24.0 - 1.0, 1001 / 24.0 + 4.0)
+        res = transfer.ae_to_maya(to_ae.native, self.ctx, transfer.PRECISION, 0.1, t_range=maya_range)
+        self.assertTrue(res.passed, res.conversion.summary())
+        self.assertEqual(res.native["preInfinity"], "constant")
+
+
 class ValidationTest(unittest.TestCase):
     def test_error_in_frames(self):
         rep = compare_samples([0.0, 1.0], [0.0, 1.0 + 0.5 / 24], lambda t: t, FPS, 0.1)

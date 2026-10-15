@@ -2,7 +2,8 @@
 
 最終更新: 2026-10-16 / 対象: Maya 2023+, After Effects 2024+, Windows 10/11
 
-実機プローブの実行記録は 8 章。現在までに実行したのは **Maya 2024 の 1 回目のみ**（Maya 2023 と AE は未実施）。
+実機プローブの実行記録は 8 章。現在までに実行したのは **Maya 2024 のプローブ 2 回、AE 26.5 での Export 1 回とプローブ 2 回**
+（Maya 2023 は未実施）。
 
 > **重要:** この文書の「仮説（H-*）」は、状態欄が ✅ のもの以外は実機で確認していない。
 > 公式ドキュメントや一般的な知識を根拠にした作業仮説であり、**動作確認済みとして扱ってはいけない**。
@@ -105,30 +106,37 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 | ID | 仮説 | 判定方法 | 状態 |
 |---|---|---|---|
 | H-MY-1 | UI で作った Scene Time Warp は、`time1` の名前に "timewarp" を含む入力属性へ接続された animCurveTT である | probe: `time_node.connections`, `animCurveTT_nodes` | ✅ Maya 2024: `timewarp`（animCurveTT）の **`.apply`** → `time1.timewarpIn_Raw`（`.output` ではない） |
-| H-MY-2 | `time1.enableTimewarp` で有効／無効が切り替わり、`time1.outTime` がワープ後の時間を出す | probe: `warp_attributes`, `unit_checks.getAttr_time1_outTime` | 一部 ✅ Maya 2024: `enableTimewarp`（bool）は存在。切り替え用の `EnableTimeWarp` ランタイムコマンドもこの属性を反転する。`outTime` の挙動は未判定 |
-| H-MY-3 | `keyframe -q -vc` と `keyframe -q -eval` は TT カーブで現在の時間単位（フレーム）の値を返す | probe: `unit_checks` | ❓ |
-| H-MY-4 | TT カーブでは tan(接線角度) が無次元の傾き d(出力)/d(入力) | probe: `write_roundtrip`（非 weighted カーブ） | ❓ |
-| H-MY-5 | weighted 接線の時間方向の長さ = weight × cos(角度) × c。c は未確定 | probe: `write_roundtrip` の `asymmetric_ease`。PASS した候補が c | ❓ |
-| H-MY-6 | `setKeyframe` は animCurve ノード名を直接受け付ける | probe: `write_roundtrip` がエラーなく動くか | 一部 ✅ Maya 2024: エラーなく実行された。書き込まれた値は未確認 |
-| H-MY-7 | 非 weighted 区間は Hermite（= 1/3 ハンドルの Bezier）で評価される（devkit の animEngine に基づく） | probe: `write_roundtrip`（`speed_ramp_bezier`） | ❓ |
+| H-MY-2 | `time1.enableTimewarp` で有効／無効が切り替わり、`time1.outTime` がワープ後の時間を出す | probe: `warp_attributes`, `unit_checks.getAttr_time1_outTime` | ✅ Maya 2024: `enableTimewarp`（bool）は存在し、`EnableTimeWarp` ランタイムコマンドもこの属性を反転する。`getAttr time1.outTime -time t` はワープ後の時間を返した（フレーム 10 → 15.685）。有効/無効を切り替えたときの挙動は未確認 |
+| H-MY-3 | `keyframe -q -vc` と `keyframe -q -eval` は TT カーブで現在の時間単位（フレーム）の値を返す | probe: `unit_checks` | ✅ Maya 2024（film）: `-vc`、`-eval`、`getAttr curve.output` が全て同じフレームの値 |
+| H-MY-4 | TT カーブでは tan(接線角度) が無次元の傾き d(出力)/d(入力) | probe: `write_roundtrip`（非 weighted カーブ） | ✅ Maya 2024: 非 weighted の 8 カーブを書き込み、Maya の評価が誤差 0 |
+| H-MY-5 | weighted 接線の時間方向の長さ = weight × cos(角度) × c。c は未確定 | probe: `write_roundtrip` の `asymmetric_ease`。PASS した候補が c | ✅ Maya 2024（film / 24fps）: **c = 1（"w (frames)"）**。weighted の 3 カーブ全てで、この候補だけが誤差 0（他の候補は 5.9〜54 フレームずれ）。`DEFAULT_WEIGHT_SCALE` を変更済み。24fps 以外の時間単位では未確認 |
+| H-MY-6 | `setKeyframe` は animCurve ノード名を直接受け付ける | probe: `write_roundtrip` がエラーなく動くか | ✅ Maya 2024: 書き込んだ値で Maya の評価が誤差 0 |
+| H-MY-7 | 非 weighted 区間は Hermite（= 1/3 ハンドルの Bezier）で評価される（devkit の animEngine に基づく） | probe: `write_roundtrip`（`speed_ramp_bezier`） | ✅ Maya 2024: 誤差 0。シーンの Scene Time Warp（fixed 接線 3 キー）も誤差 0 で再現 |
 | H-MY-8 | Scene Time Warp はバッチレンダリングにも適用される | V-MY-3（レンダー比較） | ❓ |
-| H-MY-9 | animCurve ノードの `preInfinity` / `postInfinity` 属性（enum、`getAttr -asString`）で範囲外の扱いを読める | probe: `scene_warp.node.*_infinity` | ❓（`setInfinity -q` の代わりに使う。下記の事実を参照） |
+| H-MY-9 | animCurve ノードの `preInfinity` / `postInfinity` 属性（enum、`getAttr -asString`）で範囲外の扱いを読める | probe: `scene_warp.node.*_infinity` | ✅ Maya 2024: シーンの `timewarp` で `setInfinity -q` は `None`、`getAttr -asString` は `Linear` |
 | H-MY-10 | Scene Time Warp は MEL の `sceneTimeWarp "add"` で作成でき、`"delete"` で削除できる | ランタイムコマンド `AddTimeWarp` の中身から推定。作成の実行は未確認 | ❓（D-7） |
+| H-MY-11 | Linear 外挿は、最初の区間の出の傾き・最後の区間の入りの傾きで延びる（中立カーブの仮定） | probe: `scene_warp.extrapolation`、`write_roundtrip` の範囲外のサンプル | ❓（シーンの最初のキーは入り 0°・出 45° なので、どちらを使うかで結果が変わる。プローブ 3 回目で判定） |
 
-**実機で確認した事実（Maya 2024）:** `setInfinity <animCurveノード> -q -preInfinite` は `None` を返した（一時 animCurveTT で確認。シーンの `timewarp` でも同じエラーで停止したが、トレースバックは未取得）。→ `anim_curve.query_infinity()` でノード属性へのフォールバックを実装済み。
+**実機で確認した事実（Maya 2024）:**
+- `setInfinity <animCurveノード> -q -preInfinite` は `None` を返す（一時 animCurveTT とシーンの `timewarp` の両方）。→ `anim_curve.query_infinity()` でノード属性から読む。
+- UI で作った Scene Time Warp は **前後とも Linear 外挿** だった（このシーンの場合）。AE の Time Remap は範囲外で値を保持するだけなので、キーの範囲外は一致しない（R-20）。
 
 ### After Effects
 
 | ID | 仮説 | 判定方法 | 状態 |
 |---|---|---|---|
-| H-AE-1 | Time Remap の `keyTime`／`setValueAtTime`／`valueAtTime` はコンプ時間で扱われる（layer.startTime ≠ 0 でも） | probe: `@startTime0.5` の結果 | ❓ |
-| H-AE-2 | Time Remap の値はレイヤーソース時間（秒） | probe: `slowmo_linear`, `identity` | ❓ |
-| H-AE-3 | イーズ → ハンドル: dx = 影響度/100 × 区間長、dy = 速度 × dx | probe: `speed_ramp_bezier`, `asymmetric_ease` | ❓ |
-| H-AE-4 | Time Remap のキー削除やイーズ設定は他の 1D プロパティと同様に動く | probe 全体がエラーなく動くか | ❓ |
-| H-AE-5 | `setValueAtTime` でサブフレーム時刻にキーを置ける（フレームに丸められない） | probe の `readKeys[].time` と送信時刻の差 | ❓ |
-| H-AE-6 | 片側 LINEAR・片側 BEZIER の区間は「LINEAR 側のハンドル = 弦の 1/3」で評価される | probe: `speed_ramp_bezier` の始点・終点の区間 | ❓ |
-| H-AE-7 | 影響度の合計が 100% を超えても、AE はハンドルを縮めずにそのまま評価する | probe: `asymmetric_ease`（区間 2→3 秒） | ❓ |
+| H-AE-1 | Time Remap の `keyTime`／`setValueAtTime`／`valueAtTime` はコンプ時間で扱われる（layer.startTime ≠ 0 でも） | probe: `@startTime0.5` の結果 | ✅ AE 26.5: `speed_ramp_bezier@startTime0.5` が誤差 0 |
+| H-AE-2 | Time Remap の値はレイヤーソース時間（秒） | probe: `slowmo_linear`, `identity` | 一部 ✅ AE 26.5: プロパティ値は秒で、こちらの計算と一致。実際に表示されるソースのフレームとの対応はレンダー比較（V-MY-3）で確認する |
+| H-AE-3 | イーズ → ハンドル: dx = 影響度/100 × 区間長、dy = 速度 × dx | probe: `speed_ramp_bezier`, `asymmetric_ease` | ✅ AE 26.5: Bezier の 3 ベクトルが誤差 0（許容 0.01 フレーム） |
+| H-AE-4 | Time Remap のキー削除やイーズ設定は他の 1D プロパティと同様に動く | probe 全体がエラーなく動くか | ✅ AE 26.5: 10 回の実行でエラーなし。ただし設定の順序に注意（H-AE-11） |
+| H-AE-5 | `setValueAtTime` でサブフレーム時刻にキーを置ける（フレームに丸められない） | probe: `subframe_keys` の時刻の変化（`verify-ae-probe` の右端の列） | ✅ AE 26.5: フレーム 24.5 と 48.25 のキーが時刻を変えずに保持され、評価も誤差 0 |
+| H-AE-6 | 片側 LINEAR・片側 BEZIER の区間は「LINEAR 側のハンドル = 弦の 1/3」で評価される | probe: `ae_mixed_linear_bezier`（AE 形式で直接送る） | ❌ **偽**（AE 26.5）。1/3 では 2.85 フレームずれた。AE は LINEAR 側を **弦の方向に区間の 1/6** のハンドルとして評価する（誤差 0）。`ae_codec.LINEAR_SIDE_FRACTION` = 1/6 に修正済み。ただし、このモデルは同じ 1 ベクトル（向きの違う区間 2 つ）に合わせて決めたもの。エンコーダはこの形を出力しないので、AE 側で作られたキーを読むときにだけ影響する |
+| H-AE-7 | 影響度の合計が 100% を超えても、AE はハンドルを縮めずにそのまま評価する | probe: `asymmetric_ease`（区間 2→3 秒） | ✅ AE 26.5: 影響度 30% + 90% の区間が誤差 0 |
 | H-AE-8 | CEP パネルから `ws://127.0.0.1` に接続できる | V-AE-3 | ❓ |
+| H-AE-9 | AE の「29.97」は 30000/1001 ではなく 2997/100（`frameDuration` = 1/29.97） | Export の `comp.frameDuration` と `duration` | ✅ AE 26.5（1 コンプで確認）: `frameDuration` = 0.03336670003337 = 1/29.97、`duration` 11.011011… = 1/29.97 でちょうど 330 フレーム（30000/1001 では 330.00033）。23.976 など他のレートは未確認 |
+| H-AE-11 | `setTemporalEaseAtKey` を呼ぶと、そのキーの補間が BEZIER になる（イーズの値はそのまま） | probe の `interp` の変化 | ✅ AE 26.5: 補間の種類 → イーズの順に設定したら、全キーが BEZIER/BEZIER になった。`applyKeys` をイーズ → 補間の種類の順に修正し、2 回目のプローブで LINEAR/HOLD が保たれることを確認 |
+| H-AE-12 | 補間を LINEAR にすると、AE はその側のイーズを（直線の傾き、影響度 16.667%）に書き換える | probe 2 回目の `readKeys` | ✅ AE 26.5: 全ベクトルの LINEAR 側で確認（例: `slowmo_linear` の 1 秒のキーは入り 1、出 0.5）。最初のキーの入りと最後のキーの出は速度 0 |
+| H-AE-10 | Time Remap を有効にした直後は、レイヤーのイン点とアウト点に LINEAR のキーが 2 つでき、最後のキーの値はソースの長さ | Export の `keys` | ✅ AE 26.5（1 コンプで確認）: 0 秒 → 0、11.011 秒 → 11.011（ソース長）。「ソース長 − 1 フレーム」ではなかった |
 
 ---
 
@@ -149,10 +157,11 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 | R-11 | アップデートの真正性（ハッシュとパッケージが同じ場所にある） | 高 | 署名鍵（Ed25519 など）で署名し、公開鍵をアプリに同梱して検証 |
 | R-12 | Private リポジトリの認証情報 | 高 | EXE に埋め込まない。配布経路は Phase 6 で別途設計 |
 | R-13 | 会社 PC・リポジトリの利用規程 | 要確認 | 社内規程を確認してから会社 PC で clone・push する |
-| R-14 | NTSC・ドロップフレーム | 低 | 時間は有理数の fps と秒で扱う。29.97df は表示上の問題 |
+| R-14 | NTSC・ドロップフレーム。AE の 29.97 は 2997/100 で、Maya や 30000/1001 と一致しない（H-AE-9） | 中（1 時間でおよそ 0.1 フレームのずれ） | 時間は有理数の fps と秒で扱う。AE の fps は `FrameRate.from_ae()` で `frameDuration` に最も合う値を選ぶ（実装済み）。Maya の 29.97fps の内部値は未確認。29.97df は表示上の問題 |
 | R-15 | stretch ≠ 100%、ネストしたプリコンポジション | 中 | Phase 0 は stretch = 100% を前提とし、違えば確認を出す。ネストは 1 段のみ |
-| R-16 | Time Remap の値がソースの長さでクランプされる可能性、最終フレームの扱い（ソース長 − 1 フレーム） | 中 | 範囲チェックと警告（Phase 3） |
+| R-16 | Time Remap の値がソースの長さでクランプされる可能性、最終フレームの扱い（既定の最後のキーはソース長そのもの、H-AE-10） | 中 | 範囲チェックと警告（Phase 3） |
 | R-17 | Maya の pre/post infinity が cycle などの場合 | 低 | 警告を出して constant として扱う（実装済み） |
+| R-20 | Scene Time Warp が Linear 外挿で、キーの範囲外にコンプやレンダー範囲がある | 中 | 対応済み（2026-10-16）: 転送に評価範囲（`t_range`）を追加。Precision は範囲外の外挿をキーに焼き込み、Editable は警告して不合格にする。CLI は既定で Maya の再生範囲／AE のコンプ範囲を使う（`--range`、`--no-range`）。焼き込む外挿の傾きは H-MY-11 の判定待ち |
 | R-19 | 文書化されたクエリが実機では期待した値を返さない（例: `setInfinity -q` が `None`） | 中 | クエリ結果が空なら明確なエラーにする（`_query_list`）。代替手段を用意し、ダミーの cmds で回帰テストする |
 | R-18 | Maya 2023 の `stepnext` 接線 | 低 | Editable では警告、Precision を推奨（実装済み） |
 
@@ -225,10 +234,10 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 
 | # | 条件 | 状態 |
 |---|---|---|
-| P0-1 | 単体・結合テスト（`python -m unittest discover -s tests -t .`）が全件 PASS（CI: Windows/Ubuntu × Python 3.9/3.11） | ✅ ローカル 52 件 PASS（Python 3.10）。CI は push 後に確認 |
-| P0-2 | `.\syncbridge.cmd selftest` が全件 PASS（8 カーブ × 2 モード × 2 方向、誤差 0.1 フレーム以下） | ✅ |
-| P0-3 | V-MY-1: H-MY-1〜7, 9 の判定が記録され、`write_roundtrip` が少なくとも 1 つの weight 候補で全カーブ 0.01 フレーム以下 | 実施中（Maya 2024 の 1 回目は読み戻しで停止、修正済み → 再実行待ち） |
-| P0-4 | V-AE-1: `verify-ae-probe` が全件 PASS（許容 0.01 フレーム）、`@startTime` 版も PASS | 未実施 |
+| P0-1 | 単体・結合テスト（`python -m unittest discover -s tests -t .`）が全件 PASS（CI: Windows/Ubuntu × Python 3.9/3.11） | ✅ ローカル 65 件 PASS（Python 3.10）。CI は push 後に確認 |
+| P0-2 | `.\syncbridge.cmd selftest` が全件 PASS（10 カーブ × 2 モード × 2 方向、誤差 0.1 フレーム以下） | ✅ |
+| P0-3 | V-MY-1: H-MY-1〜7, 9 の判定が記録され、`write_roundtrip` が少なくとも 1 つの weight 候補で全カーブ 0.01 フレーム以下 | ✅ Maya 2024（2 回目）: H-MY-1〜7, 9 を判定、全カーブが "w (frames)" で誤差 0。Maya 2023 では未実施。範囲外の評価（H-MY-11）は 3 回目で判定 |
+| P0-4 | V-AE-1: `verify-ae-probe` が全件 PASS（許容 0.01 フレーム）、`@startTime` 版も PASS | ✅ AE 26.5（2 回目、13 ベクトル全て誤差 0。ただし `ae_mixed_linear_bezier` は H-AE-6 のモデル修正後の再判定）。AE 2024/2025 では未実施 |
 | P0-5 | V-MY-2 / V-AE-2: 両方向・両モードでリードバックの誤差が 0.1 フレーム以下 | 未実施 |
 | P0-6 | V-MY-3: レンダー比較で焼き込みのフレーム番号が一致 | 未実施 |
 
@@ -252,3 +261,68 @@ P0-3〜P0-6 の結果によって設計変更が必要になった場合は、`A
 - 対応: `query_infinity()`（ノード属性へのフォールバック）、クエリ結果の検査、プローブの記録項目の追加
   （トレースバック、カーブの属性、`.apply` の評価、`unwarpedTime`）。ダミー cmds の回帰テストを追加。
 - 次: 修正版で V-MY-1 を再実行し、H-MY-3〜7, 9 を判定する。
+
+### 2026-10-16 #2 — After Effects 26.5（`syncbridge_ae.jsx` Export、V-AE-1 ではない）
+
+- 環境: AE `app.version` = 26.5x89、日本語 UI、Windows 11
+- 経緯: スクリプトの起動と `#include` は問題なし。レイヤー未選択や平面レイヤーで前提チェックが働いた
+  （表示を案内文に改善、平面などは Time Remap を使えない旨を表示）。プリコンのレイヤーで Export に成功。
+- データ: コンプ「コンポ 1」3840×2160、29.97fps、11.011 秒。レイヤー「コンポ 2」（プリコン、startTime 0、stretch 100%）。
+  Time Remap は有効にした直後の状態で、キーは 2 つ（0 → 0、11.011 → 11.011、LINEAR）。
+- 結果:
+  - 日本語の名前は UTF-8 で正しく書き出された（Python のコンソール表示が cp932 で文字化けしただけ）
+  - `ae_codec` の評価と AE の `valueAtTime`（1321 点）が誤差 0 で一致
+  - **AE の 29.97 は 2997/100**（H-AE-9）→ `FrameRate.from_ae()` を追加し、CLI で使用
+  - 既定の最後のキーの値はソース長そのもの（H-AE-10）
+- 次: `probe_ae.jsx`（V-AE-1）で H-AE-1〜7 を判定する。23.976fps などのコンプで H-AE-9 を追加確認する。
+
+### 2026-10-16 #3 — After Effects 26.5 プローブ 1 回目（V-AE-1）
+
+- 環境: AE 26.5x89、ExtendScript 4.5.6、Windows 11。ベクトル 8 種 + `@startTime0.5` 版 2 種、24fps、エラー 0
+- Time Remap を有効にした直後のキー（60 秒の内側コンプ）: 0 → 0、60 → 60（H-AE-10 と一致）
+- 結果（`probe_results/ae_probe_results_run1.json`）:
+
+| ベクトル | 送ったキー vs AE の評価 | AE が読み返したキー vs AE の評価 |
+|---|---|---|
+| speed_ramp_bezier / asymmetric_ease / nonmonotonic_bezier / speed_ramp_bezier@startTime0.5 | PASS（誤差 0） | PASS |
+| identity / slowmo_linear / freeze_hold / jump_hold / reverse / slowmo_linear@startTime0.5 | FAIL（2.3〜48 フレーム） | PASS |
+
+- 原因: 送った LINEAR / HOLD が全て BEZIER/BEZIER になっていた（時刻・値・イーズの値は送ったとおり）。
+  `applyKeys` が補間の種類 → イーズの順に設定しており、イーズの設定で BEZIER に戻ったと判断（H-AE-11）。
+- 判定: H-AE-1 ✅、H-AE-3 ✅、H-AE-4 ✅、H-AE-7 ✅、H-AE-2 一部 ✅、H-AE-11 ✅（新規）。
+  H-AE-5 と H-AE-6 は、ベクトルが該当する状況を含んでいなかったため未判定。
+- 対応: `applyKeys` をイーズ → 補間の種類の順に変更。ベクトル `linear_then_ease`（途中のキーの片側が LINEAR）、
+  `subframe_keys`（H-AE-5）、`ae_mixed_linear_bezier`（AE 形式で直接送る、H-AE-6）を追加。
+  `verify-ae-probe` に送ったキーと読み返したキーの差（キー数、時刻、補間の種類、イーズ）の列を追加。
+- 次: 修正版で V-AE-1 を再実行する（11 ベクトル + `@startTime` 版 2 種）。
+
+### 2026-10-16 #4 — After Effects 26.5 プローブ 2 回目（V-AE-1）
+
+- 実行: 13 回（11 ベクトル + `@startTime0.5` 版 2 種）、エラー 0
+- 1 回目の判定（修正前のデコーダ）: `ae_mixed_linear_bezier` 以外の 12 ベクトルが誤差 0、キーの時刻と補間の種類は送ったとおり。
+  `ae_mixed_linear_bezier` だけ 2.85 フレームのずれ。全ベクトルで LINEAR 側のイーズの値が書き換わっていた。
+- 分析: `ae_mixed_linear_bezier` の AE のサンプルに候補モデルを当てはめた。
+  弦の 1/3（従来）2.85 フレーム、長さ 0 のハンドル 3.02 フレーム、**弦の方向に区間の 1/6：誤差 0**。
+  AE が LINEAR 側に保存するイーズ（直線の傾き、16.667%）をそのまま使っても同じ結果（H-AE-12）。
+- 判定: H-AE-5 ✅、H-AE-6 ❌（1/6 に修正）、H-AE-11 修正の効果を確認、H-AE-12 ✅（新規）。
+- 対応: `ae_codec` の片側 LINEAR の区間を 1/6 で評価するよう修正 → 13 ベクトル全て誤差 0。
+  `verify-ae-probe` は BEZIER 側のイーズだけを比較するよう変更。
+  実データの一部を `tests/fixtures/ae26.5_probe_run2.json` として保存し、回帰テスト（`tests/unit/test_ae_real_data.py`）を追加。
+- 残り: AE 2024/2025 では未確認。片側 LINEAR の 1/6 モデルを別のデータで確かめる。
+
+### 2026-10-16 #5 — Maya 2024 プローブ 2 回目（V-MY-1）
+
+- 環境: 1 回目と同じ（Maya 2024、film / 24fps）。モジュールを読み込み直して修正版を実行
+- シーンの Scene Time Warp: キー 3 つ（1→1、10→15.685、24→24）、接線 fixed、非 weighted、**前後とも Linear 外挿**
+- 結果:
+  - `setInfinity -q` はシーンのカーブでも `None`、`getAttr -asString` は `Linear`（H-MY-9 ✅）
+  - `keyframe -vc` / `-eval` / `getAttr curve.output` は同じフレーム値（H-MY-3 ✅）。`getAttr time1.outTime -time t` はワープ後の時間（H-MY-2 ✅）
+  - シーンのカーブのデコード vs Maya の評価: 誤差 0（93 サンプル）
+  - 書き込みテスト: 非 weighted の 8 カーブ（HOLD、サブフレームのキーを含む）が誤差 0（H-MY-4/6/7 ✅）
+  - weighted の 3 カーブ（`asymmetric_ease`、`nonmonotonic_bezier`、`linear_then_ease`）は **"w (frames)" だけが誤差 0**、
+    他の候補は 5.9〜54 フレームずれ（H-MY-5 ✅、c = 1）
+- 対応: `DEFAULT_WEIGHT_SCALE` を "w (frames)" に変更。換算式を `angle_weight_to_tangent` / `tangent_to_angle_weight` にまとめ、
+  逆変換のテストを追加（計 65 件 OK）。
+  プローブを拡張: キーの範囲外 ±12 フレームもサンプル、Linear 外挿のテストカーブを追加、
+  シーンのカーブの範囲外の値を記録（H-MY-11）、書き込みテストのサンプル値を保存（次回の結果を回帰テストのデータにする）。
+- 次: プローブ 3 回目で H-MY-11 を判定する。24fps 以外の時間単位で H-MY-5 を確認する。Maya 2023 でも実行する。

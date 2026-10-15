@@ -133,7 +133,24 @@ def probe_scene_warp() -> dict:
     result["unit_checks"] = checks
     read = _safe(anim_curve.read_curve, curve)
     result["calibration"] = read if isinstance(read, dict) else read[2]
+    if not isinstance(read, dict):
+        result["extrapolation"] = _safe(probe_extrapolation, curve, raw, read[0])
     return result
+
+
+def probe_extrapolation(curve: str, raw: dict, native: dict) -> list:
+    """H-MY-11: which tangent does Maya use for linear pre/post infinity?
+
+    Compares Maya's value 12 frames before / after the keys with the decoded
+    curve (which extrapolates with the outgoing slope of the first segment and
+    the incoming slope of the last segment).
+    """
+    spf = anim_curve.scene_fps().frame_duration
+    decoded = maya_codec.decode(native)
+    lo, hi = raw["times"][0], raw["times"][-1]
+    frames = [lo - 12 + i for i in range(12)] + [hi + 1 + i for i in range(12)]
+    return [{"frame": f, "maya": m, "decoded": decoded.evaluate(f * spf) / spf}
+            for f, m in zip(frames, anim_curve.sample(curve, frames))]
 
 
 def probe_write_roundtrip() -> list:
@@ -145,7 +162,8 @@ def probe_write_roundtrip() -> list:
     fps = anim_curve.scene_fps()
     spf = fps.frame_duration
     results = []
-    for name, make in testcurves.PROBE_CURVES.items():
+    curves = dict(testcurves.PROBE_CURVES, linear_infinity=testcurves.linear_infinity)
+    for name, make in curves.items():
         curve_s = make()
         native = maya_codec.encode(curve_s, fps.to_json())
         scales = list(anim_curve.WEIGHT_SCALE_CANDIDATES) if native["weighted"] \
@@ -157,12 +175,18 @@ def probe_write_roundtrip() -> list:
                 node = cmds.createNode("animCurveTT", name="syncbridgeProbe_" + name)
                 anim_curve.write_curve(node, native, scale)
                 raw = anim_curve.read_raw(node)
-                frames = anim_curve.sample_frames(raw, oversample=8)
+                # Sample 12 frames beyond the keys too, to check pre/post infinity.
+                lo, hi = min(raw["times"]), max(raw["times"])
+                frames = anim_curve.sample_frames(raw, oversample=8, frame_range=(lo - 12, hi + 12))
                 values = anim_curve.sample(node, frames)
                 rep = compare_samples([f * spf for f in frames], [v * spf for v in values],
                                       curve_s.evaluate, fps.to_json(), 0.01)
                 entry["maya_vs_expected"] = rep.to_json()
                 entry["read_back_types"] = [raw["inTangentType"], raw["outTangentType"]]
+                # Kept so the run can become a regression fixture (tests/fixtures).
+                entry["native"] = native
+                entry["raw"] = raw
+                entry["samples"] = {"frames": frames, "values": values}
             except Exception:
                 entry["error"] = traceback.format_exc()
             finally:
@@ -210,6 +234,13 @@ def _print_summary(report: dict, path: str):
             else:
                 print("  decode vs Maya:", cal["weight_scale"],
                       "max %.5f f" % cal["decode_vs_maya"]["max_error_frames"])
+            ext = sw.get("extrapolation")
+            if isinstance(ext, list) and ext:
+                worst = max(ext, key=lambda e: abs(e["maya"] - e["decoded"]))
+                print("  outside keys: max |Maya - decoded| = %.5f f at frame %g (Maya %.4f, decoded %.4f)"
+                      % (abs(worst["maya"] - worst["decoded"]), worst["frame"], worst["maya"], worst["decoded"]))
+            elif ext:
+                print("  outside keys: ERROR", ext.get("error"))
         else:
             print("Scene Time Warp:", sw.get("message") or sw.get("error"))
     for r in report["write_roundtrip"] if isinstance(report["write_roundtrip"], list) else []:

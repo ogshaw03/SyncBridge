@@ -28,6 +28,16 @@ class FrameRateTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             FrameRate.from_maya_unit("bogus")
 
+    def test_ae_rate_uses_frame_duration(self):
+        # Values reported by AE 26.5 for a "29.97" comp (probe 2026-10-16).
+        r = FrameRate.from_ae(29.9700012207031, 0.03336670003337)
+        self.assertEqual(r.fraction, Fraction(2997, 100))
+        self.assertAlmostEqual(r.seconds_to_frames(11.011011011011), 330.0, places=9)
+        # A true NTSC duration still selects the NTSC rational.
+        self.assertEqual(FrameRate.from_ae(24000 / 1001, 1001 / 24000).fraction, Fraction(24000, 1001))
+        self.assertEqual(FrameRate.from_ae(24.0, 1 / 24.0).fraction, Fraction(24))
+        self.assertEqual(FrameRate.from_ae(25.0).fraction, Fraction(25))
+
     def test_frames_seconds_roundtrip(self):
         r = FrameRate(Fraction(24000, 1001))
         self.assertAlmostEqual(r.frames_to_seconds(24000), 1001.0, places=9)

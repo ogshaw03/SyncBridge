@@ -38,6 +38,12 @@ def _add_mapping_args(p):
     p.add_argument("--tol", type=float, default=DEFAULT_TOLERANCE_FRAMES, help="tolerance in frames")
     p.add_argument("--key-subdivision", type=int, default=1,
                    help="Precision mode: key candidates per frame (1 = whole frames)")
+    r = p.add_argument_group("evaluation range (R-20, docs/SPEC.md 3.5)")
+    r.add_argument("--range", type=float, nargs=2, metavar=("START", "END"),
+                   help="Maya scene frames that must match (default: Maya playback range "
+                        "and/or AE comp range from the export files)")
+    r.add_argument("--no-range", action="store_true",
+                   help="only match within the source keys (no extrapolation baking)")
 
 
 def _ctx(args, maya_fps, layer_start=None) -> MappingContext:
@@ -55,18 +61,60 @@ def _ctx(args, maya_fps, layer_start=None) -> MappingContext:
     )
 
 
+def _span(spans):
+    spans = [s for s in spans if s is not None]
+    if not spans:
+        return None
+    return min(s[0] for s in spans), max(s[1] for s in spans)
+
+
+def _playback_frames(maya_data):
+    pr = (maya_data or {}).get("scene", {}).get("playback_range")
+    return (float(pr[0]), float(pr[1])) if pr else None
+
+
+def _maya2ae_range(args, ctx, maya_data, ae_data):
+    """Comp-time range (seconds) for maya2ae: --range, else Maya playback and AE comp ranges."""
+    if args.no_range:
+        return None
+    if args.range:
+        return tuple(ctx.maya_frame_to_comp_time(f) for f in args.range)
+    pr = _playback_frames(maya_data)
+    return _span([
+        tuple(ctx.maya_frame_to_comp_time(f) for f in pr) if pr else None,
+        (0.0, float(ae_data["comp"]["duration"])) if ae_data else None,
+    ])
+
+
+def _ae2maya_range(args, ctx, ae_data, maya_data):
+    """Maya scene-time range (seconds) for ae2maya: --range, else AE comp and Maya playback ranges."""
+    if args.no_range:
+        return None
+    spf = ctx.rate.frame_duration
+    if args.range:
+        return tuple(f * spf for f in args.range)
+    pr = _playback_frames(maya_data)
+    comp = (0.0, float(ae_data["comp"]["duration"])) if "duration" in ae_data.get("comp", {}) else None
+    return _span([
+        tuple(f * spf for f in pr) if pr else None,
+        tuple(ctx.comp_time_to_maya_frame(t) * spf for t in comp) if comp else None,
+    ])
+
+
 def cmd_maya2ae(args) -> int:
     data = envelope.load(args.input, "maya.timewarp.export")["data"]
     native = data["native"]
     target_fps = native["fps"]
     layer_start = None
+    ae = None
     if args.ae_export:
         ae = envelope.load(args.ae_export, "ae.timeremap.export")["data"]
-        target_fps = ae["comp"]["frameRate"]
+        target_fps = FrameRate.from_ae(ae["comp"]["frameRate"], ae["comp"].get("frameDuration"))
         layer_start = ae["layer"]["startTime"]
     ctx = _ctx(args, native["fps"], layer_start)
+    t_range = _maya2ae_range(args, ctx, data, ae)
     result = transfer.maya_to_ae(native, ctx, args.mode, args.tol, target_fps,
-                                 data.get("samples"), args.key_subdivision)
+                                 data.get("samples"), args.key_subdivision, t_range)
     out = envelope.make("ae.timeremap.apply", {
         "mode": args.mode,
         "context": ctx.to_json(),
@@ -82,14 +130,17 @@ def cmd_maya2ae(args) -> int:
 def cmd_ae2maya(args) -> int:
     data = envelope.load(args.input, "ae.timeremap.export")["data"]
     maya_fps = args.maya_fps
+    maya_data = None
     if args.maya_export:
-        maya_fps = envelope.load(args.maya_export, "maya.timewarp.export")["data"]["scene"]["fps"]
+        maya_data = envelope.load(args.maya_export, "maya.timewarp.export")["data"]
+        maya_fps = maya_data["scene"]["fps"]
     if maya_fps is None:
         print("error: --maya-fps or --maya-export is required", file=sys.stderr)
         return 1
     ctx = _ctx(args, maya_fps, data["layer"]["startTime"])
+    t_range = _ae2maya_range(args, ctx, data, maya_data)
     result = transfer.ae_to_maya(data["keys"], ctx, args.mode, args.tol,
-                                 data.get("samples"), args.key_subdivision)
+                                 data.get("samples"), args.key_subdivision, t_range)
     out = envelope.make("maya.timewarp.apply", {
         "mode": args.mode,
         "context": ctx.to_json(),
@@ -138,6 +189,8 @@ def cmd_probe_vectors(args) -> int:
         report = ae_codec.EncodeReport()
         vectors.append({"name": name, "keys": ae_codec.encode(make_curve(), report),
                         "warnings": report.warnings})
+    for name, keys in testcurves.AE_RAW_PROBE_VECTORS.items():
+        vectors.append({"name": name, "keys": keys, "warnings": []})
     out = envelope.make("ae.probe.vectors", {
         "comp_fps": FrameRate(args.fps).to_json(),
         "sample_oversample": args.oversample,
@@ -153,20 +206,50 @@ def cmd_verify_ae_probe(args) -> int:
     data = envelope.load(args.input, "ae.probe.results")["data"]
     fps = data["comp_fps"]
     ok = True
-    print("%-22s %-48s %s" % ("vector", "sent keys vs AE valueAtTime", "AE-read keys vs AE"))
+    row = "%-32s %-22s %-22s %s"
+    print(row % ("vector", "sent vs AE eval", "AE-read vs AE eval", "sent -> AE-read key changes"))
     for r in data["results"]:
         if r.get("error"):
             ok = False
-            print("%-22s ERROR %s" % (r["name"], r["error"]))
+            print("%-32s ERROR %s" % (r["name"], r["error"]))
             continue
         sent = ae_codec.decode(r["sentKeys"])
         read = ae_codec.decode(r["readKeys"])
         rep_sent = compare_samples(r["times"], r["values"], sent.evaluate, fps, args.tol)
         rep_read = compare_samples(r["times"], r["values"], read.evaluate, fps, args.tol)
         ok = ok and rep_sent.passed and rep_read.passed
-        print("%-22s %-48s %s" % (r["name"], _short(rep_sent), _short(rep_read)))
+        print(row % (r["name"], _short(rep_sent), _short(rep_read),
+                     _key_changes(r["sentKeys"], r["readKeys"], fps)))
     print("RESULT:", "PASS" if ok else "FAIL")
     return 0 if ok else 2
+
+
+def _key_changes(sent: list, read: list, fps) -> str:
+    """Summarise how AE changed the keys it was given (H-AE-5 rounding, H-AE-11 type changes)."""
+    if len(sent) != len(read):
+        return "key count %d -> %d" % (len(sent), len(read))
+    rate = FrameRate(fps).fps
+    notes = []
+    dt = max(abs(s["time"] - r["time"]) for s, r in zip(sent, read)) * rate
+    if dt > 1e-6:
+        notes.append("time moved up to %.4f f" % dt)
+    types = ["%d:%s/%s->%s/%s" % (i, s["inInterp"], s["outInterp"], r["inInterp"], r["outInterp"])
+             for i, (s, r) in enumerate(zip(sent, read))
+             if (s["inInterp"], s["outInterp"]) != (r["inInterp"], r["outInterp"])]
+    if types:
+        notes.append("interp " + ", ".join(types))
+    # Only BEZIER sides use their ease. AE rewrites the ease of LINEAR sides to
+    # (chord slope, 16.667 %) (H-AE-12), which is expected and not reported.
+    ease = 0.0
+    for s, r in zip(sent, read):
+        for side, interp in (("inEase", "inInterp"), ("outEase", "outInterp")):
+            if s[interp] != "BEZIER" or r[interp] != "BEZIER":
+                continue
+            for field in ("speed", "influence"):
+                ease = max(ease, abs(float(s[side][field]) - float(r[side][field])))
+    if ease > 1e-6:
+        notes.append("Bezier ease changed up to %.4g" % ease)
+    return "; ".join(notes) or "none"
 
 
 def cmd_selftest(args) -> int:
@@ -196,6 +279,10 @@ def _short(report) -> str:
 
 def _print_result(result: transfer.TransferResult):
     print("mode:", result.mode, "->", result.target_app)
+    if result.t_range is not None:
+        print("range          : %.4f - %.4f s (target input time)" % result.t_range)
+    else:
+        print("range          : source keys only")
     if result.source_fidelity is not None:
         print("source fidelity:", result.source_fidelity.summary())
     print("conversion     :", result.conversion.summary())

@@ -13,6 +13,12 @@ Temporal ease -> Bezier handle (hypothesis H-AE-3, docs/PHASE0_RESEARCH.md):
     in  handle of key i : dx = -influence/100 * (t_i - t_{i-1}), dy = speed * dx
 For Time Remap, speed is (source seconds) / (comp second), i.e. dimensionless.
 Influence is limited to [0.1, 100] percent in AE.
+H-AE-3 confirmed on AE 26.5 (probe 2026-10-16, error 0).
+
+LINEAR side next to a BEZIER side (H-AE-6, corrected by the AE 26.5 probe):
+AE evaluates the LINEAR side as a handle along the chord with influence 1/6
+(100/6 %), not 1/3. Setting a side to LINEAR also rewrites its stored ease to
+(chord slope, 16.667 %) (H-AE-12), so the stored ease is not used here.
 """
 from __future__ import annotations
 
@@ -24,6 +30,8 @@ from .curve import Interp, Key, TimeCurve
 AE_MIN_INFLUENCE = 0.1
 AE_MAX_INFLUENCE = 100.0
 DEFAULT_INFLUENCE = 100.0 / 3.0
+# Handle length of a LINEAR side in a LINEAR/BEZIER segment, as a fraction of the segment (H-AE-6).
+LINEAR_SIDE_FRACTION = 1.0 / 6.0
 
 _AE_INTERP = {"LINEAR": Interp.LINEAR, "BEZIER": Interp.BEZIER, "HOLD": Interp.HOLD}
 _INTERP_AE = {v: k for k, v in _AE_INTERP.items()}
@@ -61,7 +69,28 @@ def decode(ae_keys: List[dict]) -> TimeCurve:
             out_handle = (dx, float(ease.get("speed", 0.0)) * dx)
         keys.append(Key(float(k["time"]), float(k["value"]), in_interp, out_interp,
                         in_handle, out_handle))
+    _resolve_mixed_segments(keys)
     return TimeCurve(keys)
+
+
+def _resolve_mixed_segments(keys: List[Key]) -> None:
+    """Give the LINEAR side of a LINEAR/BEZIER segment AE's chord handle (H-AE-6).
+
+    In the neutral curve a LINEAR side means a chord handle of 1/3; AE uses 1/6,
+    so such sides become explicit BEZIER handles.
+    """
+    for a, b in zip(keys, keys[1:]):
+        if Interp.HOLD in (a.out_interp, b.in_interp):
+            continue
+        sides = (a.out_interp, b.in_interp)
+        if Interp.LINEAR not in sides or Interp.BEZIER not in sides:
+            continue
+        dx = (b.t - a.t) * LINEAR_SIDE_FRACTION
+        dy = (b.v - a.v) * LINEAR_SIDE_FRACTION
+        if a.out_interp == Interp.LINEAR:
+            a.out_interp, a.out_handle = Interp.BEZIER, (dx, dy)
+        else:
+            b.in_interp, b.in_handle = Interp.BEZIER, (-dx, -dy)
 
 
 def encode(curve: TimeCurve, report: EncodeReport = None) -> List[dict]:

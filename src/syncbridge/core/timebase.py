@@ -75,6 +75,24 @@ class FrameRate:
         return cls(data)
 
     @classmethod
+    def from_ae(cls, frame_rate: float, frame_duration: float = None) -> "FrameRate":
+        """Frame rate of an AE comp / footage.
+
+        AE probe (AE 26.5, 2026-10-16): a "29.97" comp reported
+        frameDuration = 1/29.97 and a duration of exactly 330 frames at
+        1/29.97, i.e. AE's 29.97 is 2997/100, not 30000/1001 (H-AE-9). So the
+        float is read as a decimal rate and, when frameDuration is given, the
+        candidate that best matches it is used.
+        """
+        decimal = Fraction(frame_rate).limit_denominator(1000)
+        candidates = [decimal, snap_rate(frame_rate)]
+        if frame_duration:
+            best = min(candidates, key=lambda c: abs(float(1 / c) - frame_duration))
+        else:
+            best = decimal
+        return cls(best)
+
+    @classmethod
     def from_maya_unit(cls, unit: str) -> "FrameRate":
         """Parse a Maya time unit name ("film", "ntsc", "23.976fps", ...)."""
         if unit in MAYA_TIME_UNITS:

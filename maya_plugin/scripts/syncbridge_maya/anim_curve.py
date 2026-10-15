@@ -35,8 +35,11 @@ WEIGHT_SCALE_CANDIDATES = {
     "w/3 (seconds)": lambda fps: fps / 3.0,
     "w (seconds)": lambda fps: fps,
 }
-# Used for writing until the probe confirms the real one (H-MY-5).
-DEFAULT_WEIGHT_SCALE = "w/3 (frames)"
+# H-MY-5, Maya 2024 probe run 2 (2026-10-16, film / 24 fps): only "w (frames)"
+# reproduced Maya's evaluation (error 0) for all weighted test curves, i.e. the
+# handle extent along time is weight * cos(angle) in frames. Not yet checked at
+# other time units.
+DEFAULT_WEIGHT_SCALE = "w (frames)"
 
 
 def scene_fps() -> FrameRate:
@@ -87,20 +90,36 @@ def _query_list(command, curve: str, count: int, **flags) -> list:
     return list(result)
 
 
+def angle_weight_to_tangent(angle_deg: float, weight: float, scale: float):
+    """Maya tangent angle (degrees) and weight -> (slope, handle extent in frames).
+
+    H-MY-4 (slope = tan(angle)) and H-MY-5 (extent = weight * cos(angle) * scale)
+    were confirmed on Maya 2024 at 24 fps with scale 1 ("w (frames)").
+    """
+    a = math.radians(angle_deg)
+    return math.tan(a), weight * math.cos(a) * scale
+
+
+def tangent_to_angle_weight(slope: float, handle_x: float, scale: float):
+    """Inverse of angle_weight_to_tangent: (slope, extent) -> (angle degrees, weight)."""
+    angle = math.degrees(math.atan(slope))
+    return angle, handle_x / (math.cos(math.radians(angle)) * scale)
+
+
 def raw_to_native(raw: dict, fps: FrameRate, weight_scale: str = DEFAULT_WEIGHT_SCALE) -> dict:
     """Convert read_raw() output to the Maya-native dict of syncbridge.core.maya_codec."""
     scale = WEIGHT_SCALE_CANDIDATES[weight_scale](fps.fps)
     keys = []
     for i, t in enumerate(raw.get("times", [])):
-        ia, oa = math.radians(raw["inAngle"][i]), math.radians(raw["outAngle"][i])
+        in_slope, in_x = angle_weight_to_tangent(raw["inAngle"][i], raw["inWeight"][i], scale)
+        out_slope, out_x = angle_weight_to_tangent(raw["outAngle"][i], raw["outWeight"][i], scale)
         k = {
             "time": t, "value": raw["values"][i],
             "inTangentType": raw["inTangentType"][i], "outTangentType": raw["outTangentType"][i],
-            "inSlope": math.tan(ia), "outSlope": math.tan(oa),
+            "inSlope": in_slope, "outSlope": out_slope,
         }
         if raw.get("weighted"):
-            k["inHandleX"] = raw["inWeight"][i] * math.cos(ia) * scale
-            k["outHandleX"] = raw["outWeight"][i] * math.cos(oa) * scale
+            k["inHandleX"], k["outHandleX"] = in_x, out_x
         keys.append(k)
     warnings = []
     for side in ("preInfinity", "postInfinity"):
@@ -189,14 +208,13 @@ def write_curve(curve: str, native: dict, weight_scale: str = DEFAULT_WEIGHT_SCA
         in_type = k.get("inTangentType", "fixed")
         out_type = k.get("outTangentType", "fixed")
         args = {}
-        if in_type == "fixed":
-            args["inAngle"] = math.degrees(math.atan(k["inSlope"]))
-            if weighted and k.get("inHandleX"):
-                args["inWeight"] = k["inHandleX"] / (math.cos(math.radians(args["inAngle"])) * scale)
-        if out_type == "fixed":
-            args["outAngle"] = math.degrees(math.atan(k["outSlope"]))
-            if weighted and k.get("outHandleX"):
-                args["outWeight"] = k["outHandleX"] / (math.cos(math.radians(args["outAngle"])) * scale)
+        for side, tangent_type in (("in", in_type), ("out", out_type)):
+            if tangent_type != "fixed":
+                continue
+            angle, weight = tangent_to_angle_weight(k[side + "Slope"], k.get(side + "HandleX") or 1.0, scale)
+            args[side + "Angle"] = angle
+            if weighted and k.get(side + "HandleX"):
+                args[side + "Weight"] = weight
         cmds.keyTangent(curve, edit=True, index=idx, inTangentType=in_type, outTangentType=out_type)
         if args:
             cmds.keyTangent(curve, edit=True, index=idx, **args)

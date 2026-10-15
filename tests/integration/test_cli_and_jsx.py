@@ -50,6 +50,37 @@ class CliPipelineTest(unittest.TestCase):
         back = maya_codec.decode(envelope.load(self.path("maya_apply.json"))["data"]["native"])
         self.assertAlmostEqual(back.evaluate(1001 / 24.0 + 1.0), curve.evaluate(1001 / 24.0 + 1.0), delta=0.1 / 24)
 
+    def _linear_infinity_export(self):
+        origin = 1001 / 24.0
+        native = maya_codec.encode(testcurves.linear_infinity().affine(in_offset=origin, out_offset=origin),
+                                   [24, 1])
+        # Keys at frames 1025 and 1049; playback range starts 24 frames earlier and ends 24 later.
+        envelope.save(self.path("maya_li.json"), envelope.make("maya.timewarp.export", {
+            "native": native, "samples": None,
+            "scene": {"fps": [24, 1], "playback_range": [1001, 1073]}}))
+
+    def _apply_range(self, *extra):
+        argv = ["maya2ae", self.path("maya_li.json"), "-o", self.path("apply.json"),
+                "--origin", "1001", "--mode", "precision"] + list(extra)
+        code = cli.main(argv)
+        report = envelope.load(self.path("apply.json"))["data"]["report"]
+        return code, report
+
+    def test_maya2ae_range_defaults_to_playback_range(self):
+        self._linear_infinity_export()
+        code, report = self._apply_range()
+        self.assertEqual(code, 0)
+        self.assertEqual(report["t_range"], [0.0, 3.0])   # frames 1001..1073 -> comp 0..3 s
+
+    def test_maya2ae_range_option_and_no_range(self):
+        self._linear_infinity_export()
+        code, report = self._apply_range("--range", "1013", "1061")
+        self.assertEqual(code, 0)
+        self.assertEqual(report["t_range"], [0.5, 2.5])
+        code, report = self._apply_range("--no-range")
+        self.assertEqual(code, 0)
+        self.assertIsNone(report["t_range"])
+
     def test_readback_detects_mismatch(self):
         from syncbridge.core import ae_codec
         keys = ae_codec.encode(testcurves.slowmo_linear())
@@ -63,7 +94,18 @@ class CliPipelineTest(unittest.TestCase):
     def test_probe_vectors(self):
         self.assertEqual(cli.main(["probe-vectors", "-o", self.path("v.json")]), 0)
         data = envelope.load(self.path("v.json"), "ae.probe.vectors")["data"]
-        self.assertEqual(len(data["vectors"]), len(testcurves.PROBE_CURVES))
+        self.assertEqual(len(data["vectors"]),
+                         len(testcurves.PROBE_CURVES) + len(testcurves.AE_RAW_PROBE_VECTORS))
+
+    def test_key_changes_reports_interp_change(self):
+        # AE 26.5 probe 2026-10-16: LINEAR keys came back as BEZIER (H-AE-11).
+        from syncbridge.core import ae_codec
+        sent = ae_codec.encode(testcurves.slowmo_linear())
+        read = [dict(k, inInterp="BEZIER", outInterp="BEZIER") for k in sent]
+        self.assertIn("interp 0:LINEAR/LINEAR->BEZIER/BEZIER", cli._key_changes(sent, read, [24, 1]))
+        self.assertEqual(cli._key_changes(sent, sent, [24, 1]), "none")
+        moved = [dict(k, time=k["time"] + 0.5 / 24) for k in sent]
+        self.assertIn("time moved up to 0.5000 f", cli._key_changes(sent, moved, [24, 1]))
 
     def test_envelope_rejects_foreign_files(self):
         with self.assertRaises(ValueError):

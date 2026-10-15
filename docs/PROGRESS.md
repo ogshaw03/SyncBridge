@@ -96,8 +96,15 @@
 
 ## 次にやること
 
-1. **[実機・利用者]** V-MY-2 / V-AE-2 の残り: Precision モードで両方向、AE の取り消しの確認、新しい Apply のファイル一覧の確認。
+1. **[実機・利用者]** V-MY-2 / V-AE-2 の残り: AE の取り消しの確認、新しい Apply のファイル一覧の確認。
 2. **[実機・利用者]** V-MY-3: レンダー比較（H-MY-8）。
 3. **[実機・利用者]** 余裕があれば: 30fps のシーンでの Maya プローブ（H-MY-5）、Maya 2023 / AE 2024 での再確認。
-4. GitHub に push して CI（Python 3.9 を含む）を確認する。
+4. GitHub Actions（Python 3.9 を含む）の結果を確認する（2026-10-16 に初回 push 済み、結果は未確認）。
 5. Phase 1 の準備: V-AE-3（CEP → localhost の WebSocket）、サーバーの最小実装。
+
+### 先送りにしたもの
+
+- **Precision モードの実機転送テスト（2026-10-16、利用者の判断）:** UI で作った Scene Time Warp は Editable で
+  両方向とも誤差 0 だったため、優先度を下げた。Precision モード自体は実装済みで、単体テストと selftest では合格している。
+  必要になるのは、Maya → AE で AE が表せない形（区間より長いハンドル、傾きのある Linear 外挿、Cycle 外挿、stepnext）を
+  含むときと、未検証の環境（Maya 2023、24fps 以外など）で安全側に送りたいとき。再開時は V-MY-2 / V-AE-2 を `--mode precision` で行う。

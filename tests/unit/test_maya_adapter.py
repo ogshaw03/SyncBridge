@@ -108,6 +108,33 @@ class MayaAdapterTest(unittest.TestCase):
                 self.assertAlmostEqual(back[0], slope, places=9, msg=name)
                 self.assertAlmostEqual(back[1], extent, places=9, msg=name)
 
+    def test_enum_index_formats(self):
+        enum_index = self.anim_curve.enum_index
+        self.assertEqual(enum_index("Constant:Linear::Cycle:Cycle with Offset:Oscillate", "linear"), 1)
+        self.assertEqual(enum_index("Constant:Linear::Cycle:Cycle with Offset:Oscillate", "cycle"), 3)
+        self.assertEqual(enum_index("Constant=0:Linear=1:Cycle=3:Oscillate=5", "Oscillate"), 5)
+        with self.assertRaises(ValueError):
+            enum_index("Constant:Linear", "bogus")
+
+    def test_set_infinity_writes_node_attribute(self):
+        # H-MY-12: setInfinity edits did not reach the curve node on Maya 2024.
+        cmds = self.cmds
+        cmds.enum_names = "Constant:Linear::Cycle:Cycle with Offset:Oscillate"
+        cmds.set_calls = []
+
+        def attributeQuery(attr, node=None, listEnum=False):
+            return [cmds.enum_names]
+
+        def setAttr(plug, value):
+            cmds.set_calls.append((plug, value))
+            side = plug.split(".")[1].replace("Infinity", "")
+            cmds.infinity_attr[side] = cmds.enum_names.split(":")[value]
+
+        cmds.attributeQuery, cmds.setAttr = attributeQuery, setAttr
+        self.anim_curve.set_infinity("timewarp", "pre", "linear")
+        self.assertEqual(cmds.set_calls, [("timewarp.preInfinity", 1)])
+        self.assertEqual(self.anim_curve.query_infinity("timewarp", "pre"), "linear")
+
     def test_slope_from_angle(self):
         native = self.anim_curve.raw_to_native(self.anim_curve.read_raw("timewarp"), FrameRate(24))
         # H-MY-4: tan(26.565 deg) = 0.5

@@ -16,7 +16,11 @@ handle extents are in frames along the time axis.
 
 Mapping Maya tangent angle/weight to slope/handle extent is done in the Maya
 adapter, and is verified on the real application by the Maya probe
-(hypotheses H-MY-4/5 in docs/PHASE0_RESEARCH.md).
+(H-MY-4/5 in docs/PHASE0_RESEARCH.md, confirmed on Maya 2024).
+
+Linear pre/post infinity follows the first key's in tangent and the last
+key's out tangent (Maya 2024 probe run 3, H-MY-11 corrected); these outer
+tangents become the neutral curve's outer handles.
 
 Segment model (Maya devkit animEngine): a non-weighted segment is a Hermite
 cubic, which equals a Bezier with handles at 1/3 of the segment length;
@@ -60,10 +64,21 @@ def decode(native: dict, report: EncodeReport = None) -> TimeCurve:
             dt = mk["time"] - mkeys[i - 1]["time"]
             hx = float(mk["inHandleX"]) if weighted and mk.get("inHandleX") else dt / 3.0
             in_handle = (-hx, -float(mk.get("inSlope", 0.0)) * hx)
+        else:
+            # Outer tangent: only its slope matters (linear pre infinity, H-MY-11).
+            in_handle = (-1.0, -float(mk.get("inSlope", 0.0)))
         if i < len(mkeys) - 1:
             dt = mkeys[i + 1]["time"] - mk["time"]
             hx = float(mk["outHandleX"]) if weighted and mk.get("outHandleX") else dt / 3.0
             out_handle = (hx, float(mk.get("outSlope", 0.0)) * hx)
+            in_x = float(mkeys[i + 1].get("inHandleX") or 0.0) if weighted else 0.0
+            if hx > dt + 1e-6 or in_x > dt + 1e-6:
+                report.warnings.append(
+                    "keys %d-%d: a weighted handle is longer than the segment; Maya evaluates "
+                    "this differently from SyncBridge (H-MY-13, unresolved), check the decode "
+                    "report" % (i, i + 1))
+        else:
+            out_handle = (1.0, float(mk.get("outSlope", 0.0)))
         keys.append(Key(mk["time"], mk["value"], in_interp, out_interp, in_handle, out_handle))
     curve = TimeCurve(
         keys,
@@ -95,6 +110,12 @@ def encode(curve: TimeCurve, fps, report: EncodeReport = None) -> dict:
         mk = {"time": k.t, "value": k.v,
               "inTangentType": "fixed", "outTangentType": "fixed",
               "inSlope": 0.0, "outSlope": 0.0}
+        # Outer tangents carry the extrapolation slope: Maya extrapolates linear
+        # infinity along the first key's in / last key's out tangent (H-MY-11).
+        if i == 0:
+            mk["inSlope"] = fr.edge_slope("pre")
+        if i == n - 1:
+            mk["outSlope"] = fr.edge_slope("post")
         if i > 0:
             if fr.segment_is_hold(i - 1):
                 # In-tangent of a key after a held segment has no effect; "step"

@@ -49,6 +49,8 @@ Maya の Scene Time Warp と AE の Time Remap を双方向に転送・同期す
 
 - ハンドルの時間成分は区間内に収める（関数であることを保つ）。
 - 範囲外は `pre_infinity` / `post_infinity`（constant / linear）。AE は constant のみ表現できる。
+- linear の傾きは **外側ハンドル**（最初のキーの `ih`、最後のキーの `oh`）の傾き。外側ハンドルが無ければ隣の区間の端の傾き。
+  Maya の Linear 外挿が外側の接線で延びることに合わせた（H-MY-11、Maya 2024 で確認）。
 
 ### 3.2 アプリ形式との対応
 
@@ -63,13 +65,16 @@ LINEAR 側に AE が保存するイーズ（直線の傾き、16.667%）は使�
 AE へ書くときはイーズを先に、補間の種類を最後に設定する（逆順だと BEZIER になる、H-AE-11）。
 ```
 
-**Maya（`maya_codec.py`）:** ❓H-MY-4/5/7
+**Maya（`maya_codec.py`）:** ✅H-MY-4/5/7/11（Maya 2024、24fps で確認）
 
 ```
 非 weighted: ハンドル長 = 区間長 / 3、傾き = tan(角度)
-weighted:    ハンドル長（フレーム）= weight × cos(角度) × c（c はプローブで確定）
+weighted:    ハンドル長（フレーム）= weight × cos(角度)
 step 接線 → HOLD、stepnext → 未対応（Editable では警告）
 出力時は接線タイプ fixed（Maya に再計算させない）。全ハンドルが 1/3 のときは非 weighted で出力する。
+最初のキーの入り・最後のキーの出の接線は、Linear 外挿の傾きとして読み書きする。
+区間より長い weighted ハンドルは Maya の評価と一致しない（H-MY-13、未解決）ためデコード時に警告する。
+外挿の種類は setInfinity ではなく、カーブノードの preInfinity / postInfinity 属性で読み書きする（H-MY-9/12）。
 ```
 
 ### 3.3 Maya と AE の時間軸の対応（`MappingContext`）

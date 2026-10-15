@@ -2,7 +2,7 @@
 
 最終更新: 2026-10-16 / 対象: Maya 2023+, After Effects 2024+, Windows 10/11
 
-実機プローブの実行記録は 8 章。現在までに実行したのは **Maya 2024 のプローブ 2 回、AE 26.5 での Export 1 回とプローブ 2 回**
+実機プローブの実行記録は 8 章。現在までに実行したのは **Maya 2024 のプローブ 4 回、AE 26.5 での Export 1 回とプローブ 2 回**
 （Maya 2023 は未実施）。
 
 > **重要:** この文書の「仮説（H-*）」は、状態欄が ✅ のもの以外は実機で確認していない。
@@ -115,7 +115,9 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 | H-MY-8 | Scene Time Warp はバッチレンダリングにも適用される | V-MY-3（レンダー比較） | ❓ |
 | H-MY-9 | animCurve ノードの `preInfinity` / `postInfinity` 属性（enum、`getAttr -asString`）で範囲外の扱いを読める | probe: `scene_warp.node.*_infinity` | ✅ Maya 2024: シーンの `timewarp` で `setInfinity -q` は `None`、`getAttr -asString` は `Linear` |
 | H-MY-10 | Scene Time Warp は MEL の `sceneTimeWarp "add"` で作成でき、`"delete"` で削除できる | ランタイムコマンド `AddTimeWarp` の中身から推定。作成の実行は未確認 | ❓（D-7） |
-| H-MY-11 | Linear 外挿は、最初の区間の出の傾き・最後の区間の入りの傾きで延びる（中立カーブの仮定） | probe: `scene_warp.extrapolation`、`write_roundtrip` の範囲外のサンプル | ❓（シーンの最初のキーは入り 0°・出 45° なので、どちらを使うかで結果が変わる。プローブ 3 回目で判定） |
+| H-MY-11 | Linear 外挿は、最初の区間の出の傾き・最後の区間の入りの傾きで延びる（中立カーブの仮定） | probe: `scene_warp.extrapolation`、`write_roundtrip` の範囲外のサンプル | ❌ **偽**（Maya 2024、3 回目）。Maya は **最初のキーの入りの接線・最後のキーの出の接線** で延ばす（シーンのカーブの範囲外 24 点で誤差 0）。中立カーブの外側ハンドルとして扱うよう修正済み。UI で作った Scene Time Warp は外側の接線が 0° なので、Linear 外挿でも実際は水平 |
+| H-MY-12 | `setInfinity <カーブノード> -preInfinite linear` で外挿の種類を設定できる | probe: `write_roundtrip` の `linear_infinity` の読み戻し | ❌ **偽**（Maya 2024、3 回目）。linear を設定しても Constant のまま。`anim_curve.set_infinity()` でノードの enum 属性に直接書くよう修正し、4 回目で linear が保存され範囲外も誤差 0 になることを確認 |
+| H-MY-13 | 区間より長い weighted ハンドルを、Maya は「区間内に縮める」と同等に評価する | probe: 誤った weight の単位で書いたカーブの読み戻し | ❌ **偽・未解決**（Maya 2024、3 回目）。1 本のハンドルが区間より長い 2 カーブで 15〜20 フレームずれた。4 つの候補モデルも合わない。2 本の合計が区間を超えるだけなら一致する。デコード時に警告を出す。SyncBridge のエンコーダはこの形を出力しない |
 
 **実機で確認した事実（Maya 2024）:**
 - `setInfinity <animCurveノード> -q -preInfinite` は `None` を返す（一時 animCurveTT とシーンの `timewarp` の両方）。→ `anim_curve.query_infinity()` でノード属性から読む。
@@ -161,7 +163,7 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 | R-15 | stretch ≠ 100%、ネストしたプリコンポジション | 中 | Phase 0 は stretch = 100% を前提とし、違えば確認を出す。ネストは 1 段のみ |
 | R-16 | Time Remap の値がソースの長さでクランプされる可能性、最終フレームの扱い（既定の最後のキーはソース長そのもの、H-AE-10） | 中 | 範囲チェックと警告（Phase 3） |
 | R-17 | Maya の pre/post infinity が cycle などの場合 | 低 | 警告を出して constant として扱う（実装済み） |
-| R-20 | Scene Time Warp が Linear 外挿で、キーの範囲外にコンプやレンダー範囲がある | 中 | 対応済み（2026-10-16）: 転送に評価範囲（`t_range`）を追加。Precision は範囲外の外挿をキーに焼き込み、Editable は警告して不合格にする。CLI は既定で Maya の再生範囲／AE のコンプ範囲を使う（`--range`、`--no-range`）。焼き込む外挿の傾きは H-MY-11 の判定待ち |
+| R-20 | Scene Time Warp が Linear 外挿で、キーの範囲外にコンプやレンダー範囲がある | 中 | 対応済み（2026-10-16）: 転送に評価範囲（`t_range`）を追加。Precision は範囲外の外挿をキーに焼き込み、Editable は警告して不合格にする。CLI は既定で Maya の再生範囲／AE のコンプ範囲を使う（`--range`、`--no-range`）。外挿の傾きは外側の接線（H-MY-11 で確認） |
 | R-19 | 文書化されたクエリが実機では期待した値を返さない（例: `setInfinity -q` が `None`） | 中 | クエリ結果が空なら明確なエラーにする（`_query_list`）。代替手段を用意し、ダミーの cmds で回帰テストする |
 | R-18 | Maya 2023 の `stepnext` 接線 | 低 | Editable では警告、Precision を推奨（実装済み） |
 
@@ -191,13 +193,17 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 
 ### V-MY-2: Maya → AE のエンドツーエンド
 
-1. Maya: `import syncbridge_maya.exchange as sbx; sbx.export_timewarp(r".../probe_results/maya.json")`
-   （`decode vs Maya` が PASS であることを確認する）
-2. AE: Maya のワープなしレンダーを読み込んだコンプでレイヤーを 1 つ選び、`syncbridge_ae.jsx` → Export（`ae.json`）
-3. PC: `.\syncbridge.cmd maya2ae probe_results/maya.json -o probe_results/ae_apply.json --ae-export probe_results/ae.json --origin 1001 --mode editable`
-4. AE: `syncbridge_ae.jsx` → Apply… で `ae_apply.json` を選ぶ（`ae_apply_after.json` が出力される）
-5. PC: `.\syncbridge.cmd readback probe_results/ae_apply.json probe_results/ae_apply_after.json`
-6. `--mode precision` でも 3〜5 を繰り返す。
+準備: Maya は **テスト用に保存したシーン**（Scene Time Warp あり）。AE は **テスト用プロジェクト** に、Maya と同じ fps（例: 24）の
+コンプ `SB_test` を作り、別のコンプ `SB_src`（同じ fps、ワープ後の時間より長い尺）をレイヤーとして置き、Time Remap を有効にする。
+`--origin` は Maya の再生範囲の開始フレーム（Maya の開始フレーム ⇔ コンプ時間 0、ソース時間 0）。以下は開始フレーム 1 の例。
+
+1. Maya: `sbx.export_timewarp(r"<repo>/probe_results/v2_maya.json")`（`decode vs Maya` が PASS であること）
+2. AE: `SB_src` のレイヤーを選び、`syncbridge_ae.jsx` → Export → `v2_ae_before.json`
+3. PC: `.\syncbridge.cmd maya2ae probe_results\v2_maya.json -o probe_results\v2_ae_apply.json --ae-export probe_results\v2_ae_before.json --origin 1 --mode editable`
+4. AE: 同じレイヤーを選び、`syncbridge_ae.jsx` → Apply… → `v2_ae_apply.json`（`v2_ae_apply_after.json` が出力される）
+5. PC: `.\syncbridge.cmd readback probe_results\v2_ae_apply.json probe_results\v2_ae_apply_after.json`
+6. `--mode precision`（出力名 `v2_ae_apply_precision.json`）でも 3〜5 を繰り返す。
+7. AE で「編集 → 取り消し」1 回で元に戻ることも確認する。
 
 ### V-MY-3: レンダー一致（H-MY-8、R-5）
 
@@ -218,9 +224,11 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 
 ### V-AE-2: AE → Maya のエンドツーエンド
 
-1. AE: Time Remap を付けたレイヤーを選び、`syncbridge_ae.jsx` → Export（`ae.json`）
-2. PC: `.\syncbridge.cmd ae2maya probe_results/ae.json -o probe_results/maya_apply.json --maya-fps 24 --origin 1001`
-3. Maya: `sbx.apply_timewarp(r".../probe_results/maya_apply.json")` → 確認ダイアログ、JSON バックアップ、適用、リードバックの結果が表示される。
+1. AE: V-MY-2 で適用したレイヤーの Time Remap を少し編集する（例: 中間のキーの値を変える）。レイヤーを選び Export → `v2_ae_edited.json`
+2. PC: `.\syncbridge.cmd ae2maya probe_results\v2_ae_edited.json -o probe_results\v2_maya_apply.json --maya-export probe_results\v2_maya.json --origin 1 --mode editable`
+3. Maya: `sbx.apply_timewarp(r"<repo>/probe_results/v2_maya_apply.json")` → 確認ダイアログ、JSON バックアップ、適用、
+   リードバックの結果（`SyncBridge: readback PASS ...`）が Script Editor に表示される。
+4. Maya で Ctrl+Z 1 回で元に戻ることを確認する。
 
 ### V-AE-3: CEP から localhost への通信（H-AE-8、Phase 1 の前提）
 
@@ -236,9 +244,9 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 |---|---|---|
 | P0-1 | 単体・結合テスト（`python -m unittest discover -s tests -t .`）が全件 PASS（CI: Windows/Ubuntu × Python 3.9/3.11） | ✅ ローカル 65 件 PASS（Python 3.10）。CI は push 後に確認 |
 | P0-2 | `.\syncbridge.cmd selftest` が全件 PASS（10 カーブ × 2 モード × 2 方向、誤差 0.1 フレーム以下） | ✅ |
-| P0-3 | V-MY-1: H-MY-1〜7, 9 の判定が記録され、`write_roundtrip` が少なくとも 1 つの weight 候補で全カーブ 0.01 フレーム以下 | ✅ Maya 2024（2 回目）: H-MY-1〜7, 9 を判定、全カーブが "w (frames)" で誤差 0。Maya 2023 では未実施。範囲外の評価（H-MY-11）は 3 回目で判定 |
+| P0-3 | V-MY-1: H-MY-1〜7, 9 の判定が記録され、`write_roundtrip` が少なくとも 1 つの weight 候補で全カーブ 0.01 フレーム以下 | ✅ Maya 2024（2 回目）: H-MY-1〜7, 9 を判定、全カーブが "w (frames)" で誤差 0。Maya 2023 では未実施。3 回目で範囲外の評価（H-MY-11）も判定し、実データを回帰テスト化 |
 | P0-4 | V-AE-1: `verify-ae-probe` が全件 PASS（許容 0.01 フレーム）、`@startTime` 版も PASS | ✅ AE 26.5（2 回目、13 ベクトル全て誤差 0。ただし `ae_mixed_linear_bezier` は H-AE-6 のモデル修正後の再判定）。AE 2024/2025 では未実施 |
-| P0-5 | V-MY-2 / V-AE-2: 両方向・両モードでリードバックの誤差が 0.1 フレーム以下 | 未実施 |
+| P0-5 | V-MY-2 / V-AE-2: 両方向・両モードでリードバックの誤差が 0.1 フレーム以下 | 実施中: **Editable は両方向とも合格**（リードバックとアプリ間の直接比較が誤差 0、8 章 #8・#9）。Precision モードは未実施 |
 | P0-6 | V-MY-3: レンダー比較で焼き込みのフレーム番号が一致 | 未実施 |
 
 P0-3〜P0-6 の結果によって設計変更が必要になった場合は、`ARCHITECTURE.md` の「設計判断」に理由とともに追記する。
@@ -326,3 +334,59 @@ P0-3〜P0-6 の結果によって設計変更が必要になった場合は、`A
   プローブを拡張: キーの範囲外 ±12 フレームもサンプル、Linear 外挿のテストカーブを追加、
   シーンのカーブの範囲外の値を記録（H-MY-11）、書き込みテストのサンプル値を保存（次回の結果を回帰テストのデータにする）。
 - 次: プローブ 3 回目で H-MY-11 を判定する。24fps 以外の時間単位で H-MY-5 を確認する。Maya 2023 でも実行する。
+
+### 2026-10-16 #6 — Maya 2024 プローブ 3 回目（V-MY-1）
+
+- 出力先が 2 回目と同じ名前だったため、結果ファイルを `maya_probe_run3.json` に改名した（2 回目の内容は #5 に記録済み）
+- 結果:
+  - シーンのカーブの範囲外（前後 12 フレーム）: 従来のデコードは最大 12 フレームずれ（Maya 24.0、デコード 36.0）。
+    「最初のキーの入り・最後のキーの出の接線で延ばす」モデルで 24 点すべて誤差 0（H-MY-11 は偽 → 修正）
+  - `linear_infinity` の書き込み: 6 フレームのずれ。Maya に残った外挿は Constant（`setInfinity` の設定が効いていない、H-MY-12）。
+    加えて、エンコーダが外側の接線を傾き 0 で書いていた
+  - 書き込みテストの他のカーブは 2 回目と同じ（weighted は "w (frames)" のみ誤差 0）
+  - 誤った単位で書いた 20 件の読み戻しを正しい単位で再デコード → 18 件は誤差 0、
+    1 本のハンドルが区間より長い 2 件だけ 15〜20 フレームずれた（H-MY-13、未解決）
+- 対応:
+  - 中立カーブ: 外挿の傾きに外側ハンドル（最初のキーの入り・最後のキーの出）を使う（`TimeCurve.edge_slope`）
+  - Maya コーデック: 外側の接線をデコード／エンコードする。区間より長いハンドルを警告する
+  - Maya アダプタ: 外挿の種類を enum 属性に直接書き、書いた後に読み戻して確認する（`set_infinity`）
+  - 実データを `tests/fixtures/maya2024_probe_run3.json` に保存し、回帰テスト（`tests/unit/test_maya_real_data.py`）を追加（計 80 件 OK）
+- 次: プローブ 4 回目で `set_infinity` の修正（H-MY-12）を確認する。24fps 以外、Maya 2023 でも実行する。
+
+### 2026-10-16 #7 — Maya 2024 プローブ 4 回目（V-MY-1）
+
+- 結果（`probe_results/maya_probe_run4.json`）:
+  - シーンのカーブの範囲外: 誤差 0（3 回目は 12 フレーム）→ 外側の接線で延ばす修正（H-MY-11）を確認
+  - `linear_infinity` の書き込み: 誤差 0（3 回目は 6 フレーム）。Maya に残った外挿は linear/linear、外側の接線は 26.565°（傾き 0.5）、
+    キーの前後 12 フレームで 18.0 / 42.0 → `set_infinity`（H-MY-12 の修正）を確認
+  - その他の書き込みテストは 3 回目と同じ（weighted は "w (frames)" のみ誤差 0、区間より長いハンドルは H-MY-13 のまま）
+- 対応: `linear_infinity` の結果を `tests/fixtures/maya2024_probe_run3.json` の `run4_linear_infinity` に追加し、回帰テストを追加（計 81 件 OK）
+- 残り（Maya）: 24fps 以外の時間単位（H-MY-5）、Maya 2023、レンダー（H-MY-8）、自動作成（H-MY-10）、H-MY-13
+
+### 2026-10-16 #8 — 転送テスト V-MY-2（Maya 2024 → AE 26.5、Editable）
+
+- 構成: Maya のシーン（film、Scene Time Warp 3 キー、前後 Linear・外側の接線 0°）、AE のコンプ `SB_test`（24fps）に
+  プリコン `SB_src`（startTime 0、stretch 100%）、`--origin 1`
+- 手順と結果:
+  - Maya `export_timewarp` → 成功（初めての実行）
+  - CLI `maya2ae --mode editable`: conversion PASS（誤差 0）、source fidelity PASS、評価範囲 0〜2 秒（AE のコンプ範囲）
+  - AE Apply → 3 キー適用、JSON バックアップ作成（初めての実行）
+  - `readback`: **PASS（誤差 0、185 点）**
+  - Maya の評価値と AE の Time Remap の直接比較（Maya フレーム 1 ⇔ コンプ 0 秒・ソース 0 秒）: **PASS（誤差 0、92 点）**
+- 見つかった問題と対応:
+  - AE の保存・読み込みダイアログが `probe_results` ではなくスクリプトのフォルダで開き、適用ファイルが見つからなかった
+    → Export はファイル名の入力で `probe_results` に保存、Apply は `probe_results` の適用ファイルを新しい順に一覧から選ぶ形に変更。
+    存在しないファイルは「File not found」と表示。`after_effects/jsx/*.json` を `.gitignore` に追加
+  - 外側の接線が 0° の Linear 外挿にも「表現できない」警告が出ていた → 傾きがあるときだけ警告するよう変更（transfer、ae_codec）
+- 次: 取り消しの確認、Precision モード、AE → Maya（V-AE-2）
+
+### 2026-10-16 #9 — 転送テスト V-AE-2（AE 26.5 → Maya 2024、Editable）
+
+- AE で中間のキーを編集（時刻 9 → 16 フレーム、値 約 14.7 → 7.58 フレーム）し、入力式の Export で `v2_ae_edited.json` を保存
+- CLI `ae2maya --mode editable --origin 1`: source fidelity PASS（誤差 0）、conversion PASS（誤差 0）、3 キー、警告なし
+- Maya のキー: 1→1、**17→8.58**、24→24（AE のフレーム + 1 の対応どおり）。非 weighted、外挿は Constant（AE に Linear 外挿は無い）
+- Maya `apply_timewarp`（初めての実行）: 確認ダイアログ → JSON バックアップ → 適用 → **readback PASS（誤差 0、93 点）**
+- AE の評価値と、Maya に適用したカーブの直接比較: **誤差 0（93 点）**
+- 取り消し: Maya で Ctrl+Z 1 回で元のカーブ（10→15.69）に戻ることを利用者が確認
+- 結論: Editable モードで Maya ⇔ AE の両方向を実機で確認（Maya 2024・AE 26.5、24fps、stretch 100%、startTime 0）。
+  Precision モード、AE の取り消し、startTime ≠ 0 や fps 違いの構成は未確認

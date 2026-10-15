@@ -77,6 +77,7 @@ SB.checkEnvelope = function (env, kind) {
 // ---------------------------------------------------------------- files
 SB.readJSON = function (file) {
     file.encoding = 'UTF-8';
+    if (!file.exists) { throw SB.userError('File not found:\n' + file.fsName); }
     if (!file.open('r')) { throw SB.userError('Cannot open ' + file.fsName + '\n\n' + SB.WRITE_PREF_HINT); }
     var text = file.read();
     file.close();
@@ -97,6 +98,55 @@ SB.workFolder = function () {
     var f = new Folder(new File($.fileName).parent.parent.parent.fsName + '/probe_results');
     if (!f.exists) { f.create(); }
     return f;
+};
+
+// JSON files in the work folder, newest first. `include` / `exclude` are RegExps on the name.
+SB.listWorkFiles = function (include, exclude) {
+    var files = SB.workFolder().getFiles('*.json'), out = [], i, f, name;
+    for (i = 0; i < files.length; i++) {
+        f = files[i];
+        name = f.displayName;
+        if (f instanceof File && (!include || include.test(name)) && !(exclude && exclude.test(name))) {
+            out.push(f);
+        }
+    }
+    out.sort(function (a, b) { return b.modified.getTime() - a.modified.getTime(); });
+    return out;
+};
+
+// Pick one of `files` (newest first) from a list, or browse elsewhere. Returns a File or null.
+// Does not rely on the OS file dialog's start folder, which Windows may ignore.
+SB.pickFile = function (title, files) {
+    var dlg, list, row, okBtn, browseBtn, names = [], i, choice = null;
+    if (!files.length) {
+        alert('No matching JSON file in\n' + SB.workFolder().fsName + '\n\nPick the file in the next dialog.', title);
+        return File.openDialog(title, 'JSON:*.json');
+    }
+    for (i = 0; i < files.length; i++) { names.push(files[i].displayName); }
+    dlg = new Window('dialog', title);
+    dlg.alignChildren = 'fill';
+    dlg.add('statictext', undefined, 'Folder: ' + SB.workFolder().fsName);
+    list = dlg.add('dropdownlist', undefined, names);
+    list.selection = 0;
+    row = dlg.add('group');
+    okBtn = row.add('button', undefined, 'OK');
+    browseBtn = row.add('button', undefined, 'Browse...');
+    row.add('button', undefined, 'Cancel', { name: 'cancel' });
+    okBtn.onClick = function () { choice = files[list.selection.index]; dlg.close(); };
+    browseBtn.onClick = function () { choice = 'browse'; dlg.close(); };
+    dlg.show();
+    if (choice === 'browse') { return File.openDialog(title, 'JSON:*.json'); }
+    return choice;
+};
+
+// Ask for a file name and return a File in the work folder (null if cancelled).
+SB.askWorkFile = function (title, defaultName) {
+    var name = prompt('File name (saved in ' + SB.workFolder().fsName + ')', defaultName, title), file;
+    if (!name) { return null; }
+    if (!/\.json$/i.test(name)) { name += '.json'; }
+    file = new File(SB.workFolder().fsName + '/' + name);
+    if (file.exists && !confirm('Overwrite ' + file.fsName + '?')) { return null; }
+    return file;
 };
 
 SB.backupFolder = function () {

@@ -96,9 +96,13 @@ def _resolve_mixed_segments(keys: List[Key]) -> None:
 def encode(curve: TimeCurve, report: EncodeReport = None) -> List[dict]:
     """TimeCurve -> AE-native keys. Lossy steps are recorded in `report`."""
     report = report if report is not None else EncodeReport()
-    if curve.pre_infinity.value != "constant" or curve.post_infinity.value != "constant":
-        report.warnings.append("AE Time Remap holds values outside the key range; "
-                               "linear pre/post infinity is not representable")
+    # A linear infinity with a flat outer tangent equals AE's held value (e.g. Maya
+    # Scene Time Warps made in the UI), so only a sloped one is lost.
+    sloped = [side for side, inf in (("pre", curve.pre_infinity), ("post", curve.post_infinity))
+              if inf.value == "linear" and abs(curve.edge_slope(side)) > 1e-12]
+    if sloped:
+        report.warnings.append("AE Time Remap holds values outside the key range; sloped linear "
+                               "%s infinity is not representable" % "/".join(sloped))
     keys = curve.keys
     out: List[dict] = []
     for i, k in enumerate(keys):

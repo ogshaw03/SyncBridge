@@ -11,8 +11,7 @@
 
 (function () {
     function doExport(comp, layer) {
-        var file = new File(SB.workFolder().fsName + '/ae_export.json')
-            .saveDlg('SyncBridge: export Time Remap', 'JSON:*.json');
+        var file = SB.askWorkFile('SyncBridge: export Time Remap', 'ae_export.json');
         if (!file) { return; }
         var env = SB.buildExport(comp, layer, 4);
         SB.writeJSON(file, env);
@@ -20,8 +19,8 @@
     }
 
     function doApply(comp, layer) {
-        var file = new File(SB.workFolder().fsName + '/ae_apply.json')
-            .openDlg('SyncBridge: apply Time Remap', 'JSON:*.json');
+        // Apply files written by the CLI (maya2ae), excluding the *_after.json readback files.
+        var file = SB.pickFile('SyncBridge: apply Time Remap', SB.listWorkFiles(/apply/i, /_after\.json$/i));
         if (!file) { return; }
         var data = SB.checkEnvelope(SB.readJSON(file), 'ae.timeremap.apply');
         var keys = data.keys, msg, stamp, backup, after;

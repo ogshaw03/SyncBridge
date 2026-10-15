@@ -16,6 +16,8 @@ Verification status (docs/PHASE0_RESEARCH.md):
     evaluation, and probe.py reports which scale matches.
   * H-MY-6: setKeyframe accepts an animCurve node name directly.
   * H-MY-9: the animCurve node has preInfinity / postInfinity enum attributes.
+  * H-MY-12: `setInfinity` edits do not reach an animCurve node given by name;
+    write the enum attribute instead (set_infinity).
 """
 from __future__ import annotations
 
@@ -219,8 +221,40 @@ def write_curve(curve: str, native: dict, weight_scale: str = DEFAULT_WEIGHT_SCA
         if args:
             cmds.keyTangent(curve, edit=True, index=idx, **args)
 
-    cmds.setInfinity(curve, preInfinite=native.get("preInfinity", "constant"),
-                     postInfinite=native.get("postInfinity", "constant"))
+    set_infinity(curve, "pre", native.get("preInfinity", "constant"))
+    set_infinity(curve, "post", native.get("postInfinity", "constant"))
+
+
+def set_infinity(curve: str, side: str, value: str) -> None:
+    """Set pre/post infinity ("constant", "linear", ...) on an animCurve node.
+
+    Maya 2024 probe run 3 (2026-10-16): `setInfinity <curve> -preInfinite linear`
+    left the curve node at Constant (H-MY-12), like the query returning None
+    (H-MY-9). So the node's own enum attribute is written instead.
+    """
+    attr = "%sInfinity" % side
+    names = cmds.attributeQuery(attr, node=curve, listEnum=True)[0]
+    cmds.setAttr("%s.%s" % (curve, attr), enum_index(names, value))
+    actual = query_infinity(curve, side)
+    if actual != value.lower():
+        raise RuntimeError("%s.%s is %r after setting %r" % (curve, attr, actual, value))
+
+
+def enum_index(enum_names: str, value: str) -> int:
+    """Index of `value` in a Maya `attributeQuery -listEnum` string.
+
+    Handles both "A:B::D" (implicit, empty slots count) and "A=0:B=1:D=3" forms.
+    """
+    index = 0
+    for part in enum_names.split(":"):
+        name = part
+        if "=" in part:
+            name, number = part.rsplit("=", 1)
+            index = int(number)
+        if name.strip().lower() == value.lower():
+            return index
+        index += 1
+    raise ValueError("%r is not one of %r" % (value, enum_names))
 
 
 def _infinity(value) -> str:

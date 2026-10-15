@@ -144,6 +144,16 @@ class EvaluationRangeTest(unittest.TestCase):
             self.assertTrue(res.passed, "%s: %s" % (mode, res.conversion.summary()))
             self.assertFalse(any("H-MY-11" in w or "Editable" in w for w in res.warnings), res.warnings)
 
+    def test_flat_linear_infinity_needs_no_warning(self):
+        # Like a Scene Time Warp made in the Maya UI: linear infinity, 0-degree outer tangents.
+        native = maya_codec.decode(self.native)
+        native.keys[0].in_handle = (-1.0, 0.0)
+        native.keys[-1].out_handle = (1.0, 0.0)
+        flat = maya_codec.encode(native, FPS)
+        res = transfer.maya_to_ae(flat, self.ctx, transfer.EDITABLE, 0.1, FPS, t_range=self.range)
+        self.assertTrue(res.passed, res.conversion.summary())
+        self.assertFalse(any("Editable" in w or "H-MY-11" in w for w in res.warnings), res.warnings)
+
     def test_ae_to_maya_with_range(self):
         to_ae = transfer.maya_to_ae(self.native, self.ctx, transfer.PRECISION, 0.1, FPS, t_range=self.range)
         maya_range = (1001 / 24.0 - 1.0, 1001 / 24.0 + 4.0)

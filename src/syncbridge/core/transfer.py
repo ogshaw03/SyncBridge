@@ -90,8 +90,8 @@ def maya_to_ae(maya_native: dict, ctx: MappingContext, mode: str = EDITABLE,
     fps = target_fps if target_fps is not None else rate
     if mode == PRECISION and _extrapolates(src, t_range):
         report.warnings.append(
-            "Maya linear pre/post infinity was baked into keys; the extrapolation slope "
-            "assumes H-MY-11 (not yet verified on Maya)")
+            "Maya linear pre/post infinity was baked into keys along the outer tangents "
+            "(H-MY-11, confirmed on Maya 2024)")
     target, unreachable = _apply_mode(src, mode, fps, tolerance_frames, key_subdivision,
                                       t_range, report)
     native = ae_codec.encode(target, report)
@@ -154,12 +154,19 @@ def _apply_mode(src: TimeCurve, mode: str, fps, tolerance_frames: float, key_sub
 
 
 def _extrapolates(curve: TimeCurve, t_range) -> bool:
-    """True when t_range reaches outside the keys on a side with linear infinity."""
+    """True when t_range reaches outside the keys on a side with a sloped linear infinity.
+
+    A linear infinity with a flat outer tangent equals constant (Scene Time Warps
+    made in the Maya UI have 0-degree outer tangents), so it needs no baking.
+    """
     if t_range is None:
         return False
     lo, hi = curve.domain
-    return ((t_range[0] < lo and curve.pre_infinity.value == "linear")
-            or (t_range[1] > hi and curve.post_infinity.value == "linear"))
+    pre = (t_range[0] < lo and curve.pre_infinity.value == "linear"
+           and abs(curve.edge_slope("pre")) > 1e-12)
+    post = (t_range[1] > hi and curve.post_infinity.value == "linear"
+            and abs(curve.edge_slope("post")) > 1e-12)
+    return pre or post
 
 
 def _cover(curve: TimeCurve, t_range):

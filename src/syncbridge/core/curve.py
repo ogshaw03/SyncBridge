@@ -20,6 +20,10 @@ Segment semantics (defined by SyncBridge, see docs/SPEC.md "Neutral curve"):
 Handles are explicit (dt, dv) offsets in seconds, which is the common
 denominator of Maya tangents (slope + weight) and AE temporal ease
 (speed + influence). Converting to/from those lives in codecs.
+
+Outside the keys: constant, or linear along the first key's in_handle /
+last key's out_handle (the "outer" handles, which no segment uses). Without
+an outer handle the slope of the adjacent segment end is used.
 """
 from __future__ import annotations
 
@@ -125,11 +129,11 @@ class TimeCurve:
             return keys[0].v
         if t <= keys[0].t:
             if self.pre_infinity == Extrapolation.LINEAR and t < keys[0].t:
-                return keys[0].v + (t - keys[0].t) * self._edge_slope(0)
+                return keys[0].v + (t - keys[0].t) * self.edge_slope("pre")
             return keys[0].v
         if t >= keys[-1].t:
             if self.post_infinity == Extrapolation.LINEAR and t > keys[-1].t:
-                return keys[-1].v + (t - keys[-1].t) * self._edge_slope(len(keys) - 1)
+                return keys[-1].v + (t - keys[-1].t) * self.edge_slope("post")
             return keys[-1].v
         i = bisect.bisect_right(self._times, t) - 1
         return self._eval_segment(i, t)
@@ -147,21 +151,26 @@ class TimeCurve:
         u = _solve_bezier_x(p0[0], p1[0], p2[0], p3[0], t)
         return _bezier(p0[1], p1[1], p2[1], p3[1], u)
 
-    def _edge_slope(self, index: int) -> float:
-        """Slope used for linear extrapolation at the first/last key."""
-        if index == 0:
-            if self.segment_is_hold(0):
-                return 0.0
-            p0, p1, _, p3 = self.segment_bezier(0)
-            dx, dy = p1[0] - p0[0], p1[1] - p0[1]
-            if abs(dx) < 1e-12:
-                dx, dy = p3[0] - p0[0], p3[1] - p0[1]
-            return dy / dx
-        last = index - 1
-        if self.segment_is_hold(last):
+    def edge_slope(self, side: str) -> float:
+        """Slope of linear extrapolation before ("pre") or after ("post") the keys.
+
+        The outer handle (first key's in_handle / last key's out_handle) wins
+        when present: Maya extrapolates linear infinity along those outer
+        tangents (Maya 2024 probe run 3, 2026-10-16, H-MY-11 corrected).
+        Without it the slope of the adjacent segment end is used.
+        """
+        first = side == "pre"
+        key = self.keys[0] if first else self.keys[-1]
+        outer = key.in_handle if first else key.out_handle
+        if outer is not None and abs(outer[0]) > 1e-12:
+            return outer[1] / outer[0]
+        if len(self.keys) < 2:
             return 0.0
-        p0, _, p2, p3 = self.segment_bezier(last)
-        dx, dy = p3[0] - p2[0], p3[1] - p2[1]
+        seg = 0 if first else len(self.keys) - 2
+        if self.segment_is_hold(seg):
+            return 0.0
+        p0, p1, p2, p3 = self.segment_bezier(seg)
+        dx, dy = (p1[0] - p0[0], p1[1] - p0[1]) if first else (p3[0] - p2[0], p3[1] - p2[1])
         if abs(dx) < 1e-12:
             dx, dy = p3[0] - p0[0], p3[1] - p0[1]
         return dy / dx

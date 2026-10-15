@@ -3,7 +3,8 @@
 ## 現在の状態
 
 - **フェーズ:** Phase 0（技術検証）— DCC 不要の部分は完了、**実機検証中**
-  （AE 26.5・Maya 2024 とも、プローブの合格条件 P0-3/P0-4 を満たした。エンドツーエンド転送とレンダー比較は未実施）
+  （AE 26.5・Maya 2024 とも、プローブの合格条件 P0-3/P0-4 を満たした。Editable の転送は両方向とも実機で誤差 0。
+  Precision の転送とレンダー比較は未実施）
 - **最終更新:** 2026-10-16
 
 ## 実装済み
@@ -13,7 +14,7 @@
 | 有理数 fps、Maya 時間単位、フレーム ⇔ 秒 | `core/timebase.py` | ✅ テスト済 |
 | 中立カーブ（LINEAR/BEZIER/HOLD、外挿、アフィン変換、JSON） | `core/curve.py` | ✅ テスト済 |
 | AE Time Remap 形式 ⇔ 中立カーブ | `core/ae_codec.py` | ✅ AE 26.5 の実データで誤差 0（H-AE-3/6/12） |
-| Maya animCurveTT 形式 ⇔ 中立カーブ | `core/maya_codec.py` | ✅ Maya 2024 で誤差 0（H-MY-4/5/7）。Linear 外挿の傾き（H-MY-11）は未判定 |
+| Maya animCurveTT 形式 ⇔ 中立カーブ | `core/maya_codec.py` | ✅ Maya 2024 の実データで誤差 0（H-MY-4/5/7/11）。区間より長いハンドル（H-MY-13）は未解決で警告のみ |
 | Maya ⇔ AE の時間軸の対応 | `core/mapping.py` | ✅ テスト済 |
 | Precision モード（適応的な区分線形、サブフレームでの検証） | `core/sampler.py` | ✅ テスト済 |
 | 誤差計測とレポート | `core/validation.py` | ✅ テスト済 |
@@ -21,8 +22,9 @@
 | 交換エンベロープ、JSON Schema | `core/envelope.py`, `schemas/` | ✅ テスト済 |
 | CLI（maya2ae, ae2maya, readback, probe-vectors, verify-ae-probe, selftest） | `cli.py` | ✅ テスト済 |
 | Maya アダプタ（検索、読み書き、export/apply、バックアップ、リードバック） | `maya_plugin/.../` | ⚠ Maya 2024 で読み書きとも確認（プローブ経由）。`export_timewarp` / `apply_timewarp` は未実行。ダミー cmds で回帰テスト |
-| Maya プローブ | `maya_plugin/.../probe.py` | ✅ Maya 2024 で 2 回実行（PHASE0_RESEARCH.md 8 章 #5）。範囲外のサンプルとサンプル値の保存を追加済み |
-| AE スクリプト（Export/Apply、バックアップ、undo） | `after_effects/jsx/syncbridge_ae.jsx` | ⚠ AE 26.5 で Export は成功。Apply は未実行 |
+| Maya プローブ | `maya_plugin/.../probe.py` | ✅ Maya 2024 で 4 回実行（PHASE0_RESEARCH.md 8 章 #5〜#7） |
+| Maya の実データによる回帰テスト | `tests/fixtures/maya2024_probe_run3.json`, `tests/unit/test_maya_real_data.py` | ✅ |
+| AE スクリプト（Export/Apply、バックアップ、undo） | `after_effects/jsx/syncbridge_ae.jsx` | ✅ AE 26.5 で Export と Apply（バックアップ、リードバック）を確認。ファイル選択の変更後の版は未実行 |
 | AE プローブ | `after_effects/jsx/probe_ae.jsx` | ✅ AE 26.5 で 2 回実行、2 回目は 13 ベクトル全て誤差 0 |
 | AE の実データによる回帰テスト | `tests/fixtures/ae26.5_probe_run2.json`, `tests/unit/test_ae_real_data.py` | ✅ |
 | ES3 用 JSON | `after_effects/jsx/syncbridge_json.jsxinc` | ✅ Node で Python の json と往復確認 |
@@ -32,6 +34,17 @@
 
 ### 2026-10-16（Windows 11, Python 3.10.6）
 
+- 転送テスト V-AE-2（PHASE0_RESEARCH.md 8 章 #9）: AE 26.5 → Maya 2024、Editable。AE で中間のキーの時刻と値を編集 →
+  Maya に 17→8.58 として反映、Maya の readback 誤差 0、AE の評価と Maya のカーブの直接比較も誤差 0。Maya の取り消し 1 回で復元。
+  入力式の Export も動作。
+- 転送テスト V-MY-2（PHASE0_RESEARCH.md 8 章 #8）: Maya 2024 → AE 26.5、Editable。export / Apply を初めて実機で使用し、
+  リードバック誤差 0、**Maya の評価と AE の Time Remap の直接比較も誤差 0**。AE のファイル選択がスクリプトのフォルダで開く問題を修正、
+  傾きのない Linear 外挿の誤警告を修正（**82 件 OK**）。
+- Maya 2024 プローブ #4（PHASE0_RESEARCH.md 8 章 #7）: 範囲外の誤差 0、`linear_infinity` も誤差 0 で
+  H-MY-11/12 の修正を実機で確認。結果を fixture に追加（**81 件 OK**）。
+- Maya 2024 プローブ #3（PHASE0_RESEARCH.md 8 章 #6）: Linear 外挿は外側の接線で延びると判明（H-MY-11 は偽 → 修正、
+  範囲外 24 点で誤差 0）。`setInfinity` の設定がカーブノードに効かない（H-MY-12）→ enum 属性へ直接書くよう修正。
+  区間より長いハンドルは Maya と一致しない（H-MY-13、未解決、警告を追加）。実データを回帰テスト化（**80 件 OK**）。
 - Maya 2024 プローブ #1: Scene Time Warp = `timewarp.apply` → `time1.timewarpIn_Raw`（H-MY-1 ✅）、`enableTimewarp` あり。
   `setInfinity -q` が `None` を返して読み取りが全て停止 → `query_infinity()` でノード属性にフォールバックするよう修正。
 - `py -3.10 -m unittest discover -s tests -t .` → **57 件 OK**（ダミー cmds による Maya アダプタのテスト 5 件を追加）
@@ -68,10 +81,10 @@
 
 ## 未解決の問題・未確認事項
 
-- Maya（2024）: H-MY-1〜7, 9 は確認。H-MY-5 は 24fps でのみ確認。H-MY-8（レンダー）、H-MY-10（自動作成）、
-  H-MY-11（Linear 外挿の傾き）は未判定。Maya 2023 では未実施。
-- UI で作った Scene Time Warp は Linear 外挿（R-20）→ Precision で評価範囲まで焼き込むよう対応済み。
-  ただし焼き込む外挿の傾きは H-MY-11 が未判定のため、Maya の範囲外の値と一致するかは未確認。
+- Maya（2024）: H-MY-1〜7, 9, 11 は確認（11 は修正後のモデルで）。H-MY-5 は 24fps でのみ確認。
+  H-MY-8（レンダー）、H-MY-10（自動作成）は未判定。H-MY-12 の修正（`set_infinity`）は 4 回目で確認。
+  H-MY-13（区間より長いハンドル）は未解決。Maya 2023 では未実施。
+- UI で作った Scene Time Warp は Linear 外挿だが、外側の接線が 0° なので実際は水平に延びる（R-20 は対応済み）。
 - AE（26.5）: H-AE-1/3/4/5/7/11/12 は確認、H-AE-6 は偽（1/6 に修正）、H-AE-2 は一部、H-AE-9/10 は 1 コンプで確認。
   H-AE-8（CEP の通信）は未判定。AE 2024/2025 では未実施。片側 LINEAR の 1/6 モデルは 1 ベクトルのみで決定。
 - AE の Apply（`syncbridge_ae.jsx`）とリードバックは未実行（V-MY-2）。
@@ -83,10 +96,8 @@
 
 ## 次にやること
 
-1. **[実機・利用者]** Maya プローブ 3 回目: H-MY-11（Linear 外挿）の判定と、書き込みテストのサンプルを回帰テストのデータにする。
-   可能なら 30fps のシーンでも実行して H-MY-5 を確認し、Maya 2023 でも実行する。
-2. **[実機・利用者]** V-MY-2 / V-AE-2: エンドツーエンドの転送とリードバック（Maya の export/apply、AE の Apply を初めて使う）。
-   Linear 外挿のシーンは `--mode precision` で送る。
-3. **[実機・利用者]** V-MY-3: レンダー比較（H-MY-8）。
+1. **[実機・利用者]** V-MY-2 / V-AE-2 の残り: Precision モードで両方向、AE の取り消しの確認、新しい Apply のファイル一覧の確認。
+2. **[実機・利用者]** V-MY-3: レンダー比較（H-MY-8）。
+3. **[実機・利用者]** 余裕があれば: 30fps のシーンでの Maya プローブ（H-MY-5）、Maya 2023 / AE 2024 での再確認。
 4. GitHub に push して CI（Python 3.9 を含む）を確認する。
 5. Phase 1 の準備: V-AE-3（CEP → localhost の WebSocket）、サーバーの最小実装。

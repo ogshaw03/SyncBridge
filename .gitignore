@@ -29,6 +29,8 @@ incrementalSave/
 cache/
 work/
 probe_results/
+# Exchange files accidentally saved next to the scripts
+after_effects/jsx/*.json
 
 # Claude Code local
 .claude/worktrees/

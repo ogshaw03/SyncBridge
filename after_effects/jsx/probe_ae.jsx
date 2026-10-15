@@ -40,8 +40,26 @@
         return out;
     }
 
+    var HOW_TO = 'Create it on the PC first (in the repository folder):\n' +
+        '  .\\syncbridge.cmd probe-vectors -o probe_results\\ae_probe_vectors.json';
+
+    // Default: <repo>/probe_results/ae_probe_vectors.json next to this script's repository.
+    function pickVectorsFile() {
+        var repo = new File($.fileName).parent.parent.parent;
+        var def = new File(repo.fsName + '/probe_results/ae_probe_vectors.json');
+        if (def.exists) {
+            if (confirm('SyncBridge probe: use this vectors file?\n' + def.fsName)) { return def; }
+        } else {
+            alert('SyncBridge probe: ae_probe_vectors.json was not found at\n' + def.fsName + '\n\n' +
+                HOW_TO + '\n\nYou can also pick the file manually in the next dialog.');
+        }
+        var picked = File.openDialog('SyncBridge probe: select ae_probe_vectors.json', 'JSON:*.json');
+        if (!picked) { alert('SyncBridge probe: cancelled (no vectors file selected).\n\n' + HOW_TO); }
+        return picked;
+    }
+
     try {
-        var vf = File.openDialog('SyncBridge probe: select ae_probe_vectors.json', 'JSON:*.json');
+        var vf = pickVectorsFile();
         if (!vf) { return; }
         var data = SB.checkEnvelope(SB.readJSON(vf), 'ae.probe.vectors');
         var fps = data.comp_fps[0] / data.comp_fps[1];
@@ -91,6 +109,6 @@
         for (i = 0; i < results.length; i++) { if (results[i].error) { errors++; } }
         alert('SyncBridge probe finished: ' + results.length + ' runs, ' + errors + ' errors.\n' + out.fsName);
     } catch (e) {
-        alert('SyncBridge probe error:\n' + e.toString() + (e.line ? '\n(line ' + e.line + ')' : ''));
+        SB.alertError('SyncBridge probe', e);
     }
 }());

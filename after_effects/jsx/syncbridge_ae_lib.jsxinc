@@ -17,6 +17,26 @@ SB.SCHEMA = 'syncbridge.exchange';
 SB.SCHEMA_VERSION = '0.1';
 SB.TIME_EPS = 1e-6;
 
+// ---------------------------------------------------------------- errors
+// An error caused by the current state in AE (selection, settings, chosen file),
+// not by a bug. It is shown as plain guidance, without a line number.
+SB.userError = function (message) {
+    var e = new Error(message);
+    e.sbUser = true;
+    return e;
+};
+
+SB.alertError = function (title, e) {
+    if (e && e.sbUser) {
+        alert(e.message, title);
+        return;
+    }
+    alert(title + ' error:\n' + e.toString() + (e.line ? '\n(line ' + e.line + ')' : ''));
+};
+
+SB.WRITE_PREF_HINT = 'If AE blocks file access, enable Preferences > Scripting & Expressions > ' +
+    '"Allow Scripts to Write Files and Access Network".';
+
 // ---------------------------------------------------------------- envelope
 SB.uuid = function () {
     var s = '', i, hex = '0123456789abcdef';
@@ -44,18 +64,20 @@ SB.makeEnvelope = function (kind, data) {
 };
 
 SB.checkEnvelope = function (env, kind) {
-    if (!env || env.schema !== SB.SCHEMA) { throw new Error('Not a SyncBridge exchange file.'); }
+    if (!env || env.schema !== SB.SCHEMA) { throw SB.userError('The selected file is not a SyncBridge exchange file.'); }
     if (String(env.schema_version).split('.')[0] !== SB.SCHEMA_VERSION.split('.')[0]) {
-        throw new Error('Unsupported schema_version ' + env.schema_version);
+        throw SB.userError('Unsupported schema_version ' + env.schema_version + ' (update SyncBridge).');
     }
-    if (kind && env.kind !== kind) { throw new Error('Expected ' + kind + ', got ' + env.kind); }
+    if (kind && env.kind !== kind) {
+        throw SB.userError('Wrong file: expected a "' + kind + '" file, but this is "' + env.kind + '".');
+    }
     return env.data;
 };
 
 // ---------------------------------------------------------------- files
 SB.readJSON = function (file) {
     file.encoding = 'UTF-8';
-    if (!file.open('r')) { throw new Error('Cannot open ' + file.fsName); }
+    if (!file.open('r')) { throw SB.userError('Cannot open ' + file.fsName + '\n\n' + SB.WRITE_PREF_HINT); }
     var text = file.read();
     file.close();
     return SBJSON.parse(text);
@@ -65,7 +87,7 @@ SB.writeJSON = function (file, obj) {
     var folder = file.parent;
     if (folder && !folder.exists) { folder.create(); }
     file.encoding = 'UTF-8';
-    if (!file.open('w')) { throw new Error('Cannot write ' + file.fsName); }
+    if (!file.open('w')) { throw SB.userError('Cannot write ' + file.fsName + '\n\n' + SB.WRITE_PREF_HINT); }
     file.write(SBJSON.stringify(obj, '  '));
     file.close();
 };
@@ -77,8 +99,15 @@ SB.backupFolder = function () {
 // ---------------------------------------------------------------- selection
 SB.activeCompAndLayer = function () {
     var comp = app.project.activeItem;
-    if (!(comp instanceof CompItem)) { throw new Error('Open a composition and select one layer.'); }
-    if (comp.selectedLayers.length !== 1) { throw new Error('Select exactly one layer.'); }
+    if (!(comp instanceof CompItem)) {
+        throw SB.userError('Open a composition (click its timeline), select one layer, then run SyncBridge again.');
+    }
+    if (comp.selectedLayers.length !== 1) {
+        throw SB.userError('Select exactly one layer in comp "' + comp.name + '" (currently ' +
+            comp.selectedLayers.length + ' selected), then run SyncBridge again.\n\n' +
+            'Export: the layer must have Time Remap enabled.\n' +
+            'For the Phase 0 probe, run probe_ae.jsx instead (no selection needed).');
+    }
     return { comp: comp, layer: comp.selectedLayers[0] };
 };
 
@@ -198,7 +227,8 @@ SB.keyRange = function (keys, layer) {
 SB.buildExport = function (comp, layer, oversample) {
     var prop, keys, range, samples = null;
     if (!layer.timeRemapEnabled) {
-        throw new Error('Time Remap is not enabled on layer "' + layer.name + '".');
+        throw SB.userError('Time Remap is not enabled on layer "' + layer.name + '".\n' +
+            'Enable it (Layer > Time > Enable Time Remapping) before Export, or use Apply.');
     }
     prop = SB.timeRemapProp(layer);
     keys = SB.readKeys(prop);

@@ -33,6 +33,12 @@
 - Maya 2024 プローブ #1: Scene Time Warp = `timewarp.apply` → `time1.timewarpIn_Raw`（H-MY-1 ✅）、`enableTimewarp` あり。
   `setInfinity -q` が `None` を返して読み取りが全て停止 → `query_infinity()` でノード属性にフォールバックするよう修正。
 - `py -3.10 -m unittest discover -s tests -t .` → **57 件 OK**（ダミー cmds による Maya アダプタのテスト 5 件を追加）
+- AE で初めてスクリプトを起動（バージョン未記録）: `#include` を含めて読み込みは成功。`syncbridge_ae.jsx` は
+  レイヤー未選択の前提チェックで停止（正常動作だが「Error … (line 81)」と表示されて紛らわしかった）。
+  `probe_ae.jsx` は `ae_probe_vectors.json` が未作成のため先に進めなかった。対応:
+  - 操作で解決できるエラーは案内として表示（`SB.userError` / `SB.alertError`）、ファイル書き込みの許可設定も案内
+  - `probe_ae.jsx` が `<repo>/probe_results/ae_probe_vectors.json` を自動で探し、無ければ作り方を表示
+  - CLI の起動用 `syncbridge.cmd` を追加（この PC の `python` は Store の仮コマンドのため）。手順書のコマンドを統一
 
 ### 2026-10-15（Windows 11, Python 3.10.6, Node v24.16.0）
 

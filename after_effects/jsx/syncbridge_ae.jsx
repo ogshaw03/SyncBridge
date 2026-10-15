@@ -25,7 +25,8 @@
         var keys = data.keys, msg, stamp, backup, after;
 
         if (!layer.canSetTimeRemapEnabled) {
-            throw new Error('Time Remap cannot be enabled on layer "' + layer.name + '".');
+            throw SB.userError('Time Remap cannot be enabled on layer "' + layer.name + '" ' +
+                '(use a footage or precomp layer).');
         }
         if (Math.abs(comp.frameRate - data.comp_fps[0] / data.comp_fps[1]) > 1e-3) {
             msg = 'Comp frame rate ' + comp.frameRate + ' differs from the payload (' +
@@ -77,6 +78,6 @@
         if (choice === 'export') { doExport(sel.comp, sel.layer); }
         if (choice === 'apply') { doApply(sel.comp, sel.layer); }
     } catch (e) {
-        alert('SyncBridge error:\n' + e.toString() + (e.line ? '\n(line ' + e.line + ')' : ''));
+        SB.alertError('SyncBridge', e);
     }
 }());

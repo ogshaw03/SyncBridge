@@ -34,15 +34,15 @@ JSON Schema: [`schemas/exchange.v0.schema.json`](../schemas/exchange.v0.schema.j
 
 ## 3. CLI
 
-`src` を `PYTHONPATH` に入れて実行する（または `pip install -e .`）。
+Windows ではリポジトリ直下の `.\syncbridge.cmd` で実行する（`src` を PYTHONPATH に入れ、`py -3` で起動する。`python` が Microsoft Store の仮のコマンドでも動く）。他の環境では `src` を `PYTHONPATH` に入れて `python -m syncbridge.cli` で実行する。
 
 ```
-python -m syncbridge.cli maya2ae <maya_export> -o <ae_apply> [--ae-export <ae_export>] [mapping]
-python -m syncbridge.cli ae2maya <ae_export> -o <maya_apply> (--maya-fps 24 | --maya-export <maya_export>) [mapping]
-python -m syncbridge.cli readback <apply> <after>
-python -m syncbridge.cli probe-vectors -o <file> [--fps 24]
-python -m syncbridge.cli verify-ae-probe <results> [--tol 0.01]
-python -m syncbridge.cli selftest [--fps 24]
+.\syncbridge.cmd maya2ae <maya_export> -o <ae_apply> [--ae-export <ae_export>] [mapping]
+.\syncbridge.cmd ae2maya <ae_export> -o <maya_apply> (--maya-fps 24 | --maya-export <maya_export>) [mapping]
+.\syncbridge.cmd readback <apply> <after>
+.\syncbridge.cmd probe-vectors -o <file> [--fps 24]
+.\syncbridge.cmd verify-ae-probe <results> [--tol 0.01]
+.\syncbridge.cmd selftest [--fps 24]
 
 mapping: --mode editable|precision --tol 0.1 --origin F --maya-in-origin F --maya-out-origin F
          --comp-offset S --source-offset S --source-scale X --key-subdivision N

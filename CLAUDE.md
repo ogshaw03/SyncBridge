@@ -23,12 +23,16 @@ Maya の Scene Time Warp と After Effects の Time Remap を双方向に転送�
 
 ## コマンド
 
-```bash
-py -3.10 -m unittest discover -s tests -t .          # 全テスト（Windows。CI は python）
-PYTHONPATH=src py -3.10 -m syncbridge.cli selftest    # 参照カーブの往復テスト
+```powershell
+py -3 -m unittest discover -s tests -t .          # 全テスト（CI は python）
+.\syncbridge.cmd selftest                          # CLI（参照カーブの往復テスト）
 ```
 
-このPCの `python` コマンドは Windows ストアのスタブのため、`py -3.10` を使う。pytest は未インストール（unittest で書く）。
+- `python` コマンドが Windows ストアの仮のコマンドの PC があるため、`py -3` か `syncbridge.cmd` を使う。pytest は未インストール（unittest で書く）。
+- Git Bash から `cmd //c syncbridge.cmd` を呼ぶとカレントフォルダが解決されないことがある。CLI の確認は PowerShell で行う。
+- **ファイルの一括編集で、Bash の heredoc や sed に `\n`、` `、`\\` などのエスケープを含めない。**
+  この環境ではシェル経由でエスケープが余分に解釈され、生の改行や U+2028 が書き込まれたり `\` が消えたりした（2026-10）。
+  Edit ツールを使うか、スクラッチに置いた `.py` ファイル（`chr(92)` など）で編集する。
 
 ## コーディング規約
 

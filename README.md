@@ -14,9 +14,9 @@ Maya 2023 以降、After Effects 2024 以降、Windows 10 / 11（他 OS も見�
 
 ## クイックスタート（DCC なし）
 
-```bash
-py -3.10 -m unittest discover -s tests -t .
-PYTHONPATH=src py -3.10 -m syncbridge.cli selftest
+```powershell
+py -3 -m unittest discover -s tests -t .
+.\syncbridge.cmd selftest
 ```
 
 ## Phase 0 の転送手順（ファイル経由）
@@ -27,7 +27,7 @@ PYTHONPATH=src py -3.10 -m syncbridge.cli selftest
    import syncbridge_maya.exchange as sbx
    sbx.export_timewarp()
    ```
-2. PC: `python -m syncbridge.cli maya2ae maya.json -o ae_apply.json --origin 1001 --mode editable`
+2. PC: `.\syncbridge.cmd maya2ae maya.json -o ae_apply.json --origin 1001 --mode editable`
 3. AE: `File > Scripts > Run Script File...` → `after_effects/jsx/syncbridge_ae.jsx` → Apply…
 
 逆方向や検証の詳細は [docs/PHASE0_RESEARCH.md](docs/PHASE0_RESEARCH.md) の 6 章。

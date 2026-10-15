@@ -185,9 +185,9 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 1. Maya: `import syncbridge_maya.exchange as sbx; sbx.export_timewarp(r".../probe_results/maya.json")`
    （`decode vs Maya` が PASS であることを確認する）
 2. AE: Maya のワープなしレンダーを読み込んだコンプでレイヤーを 1 つ選び、`syncbridge_ae.jsx` → Export（`ae.json`）
-3. PC: `python -m syncbridge.cli maya2ae probe_results/maya.json -o probe_results/ae_apply.json --ae-export probe_results/ae.json --origin 1001 --mode editable`
+3. PC: `.\syncbridge.cmd maya2ae probe_results/maya.json -o probe_results/ae_apply.json --ae-export probe_results/ae.json --origin 1001 --mode editable`
 4. AE: `syncbridge_ae.jsx` → Apply… で `ae_apply.json` を選ぶ（`ae_apply_after.json` が出力される）
-5. PC: `python -m syncbridge.cli readback probe_results/ae_apply.json probe_results/ae_apply_after.json`
+5. PC: `.\syncbridge.cmd readback probe_results/ae_apply.json probe_results/ae_apply_after.json`
 6. `--mode precision` でも 3〜5 を繰り返す。
 
 ### V-MY-3: レンダー一致（H-MY-8、R-5）
@@ -199,10 +199,10 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 
 ### V-AE-1: AE プローブ（H-AE-1〜7）
 
-1. PC: `python -m syncbridge.cli probe-vectors -o probe_results/ae_probe_vectors.json`
+1. PC: `.\syncbridge.cmd probe-vectors -o probe_results/ae_probe_vectors.json`
 2. AE 2024 以降で任意のプロジェクトを開き、`File > Scripts > Run Script File...` → `after_effects/jsx/probe_ae.jsx` → 1. のファイルを選ぶ。
    一時コンプ `SB_probe_inner` と `SB_probe_outer` を作成し、終了時に削除する（既存のコンプは変更しない）。
-3. PC: `python -m syncbridge.cli verify-ae-probe probe_results/ae_probe_results.json`
+3. PC: `.\syncbridge.cmd verify-ae-probe probe_results/ae_probe_results.json`
 4. 判定: 左列「送信キー vs AE の評価値」がすべて PASS なら H-AE-2/3/6/7 は真。
    `@startTime0.5` が PASS なら H-AE-1 は真。右列「AE が読み返したキー vs AE の評価値」が FAIL の場合は、
    AE がキーを書き換えている（丸め、正規化）ので `readKeys` と `sentKeys` を比較する（H-AE-5）。
@@ -210,7 +210,7 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 ### V-AE-2: AE → Maya のエンドツーエンド
 
 1. AE: Time Remap を付けたレイヤーを選び、`syncbridge_ae.jsx` → Export（`ae.json`）
-2. PC: `python -m syncbridge.cli ae2maya probe_results/ae.json -o probe_results/maya_apply.json --maya-fps 24 --origin 1001`
+2. PC: `.\syncbridge.cmd ae2maya probe_results/ae.json -o probe_results/maya_apply.json --maya-fps 24 --origin 1001`
 3. Maya: `sbx.apply_timewarp(r".../probe_results/maya_apply.json")` → 確認ダイアログ、JSON バックアップ、適用、リードバックの結果が表示される。
 
 ### V-AE-3: CEP から localhost への通信（H-AE-8、Phase 1 の前提）
@@ -226,7 +226,7 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 | # | 条件 | 状態 |
 |---|---|---|
 | P0-1 | 単体・結合テスト（`python -m unittest discover -s tests -t .`）が全件 PASS（CI: Windows/Ubuntu × Python 3.9/3.11） | ✅ ローカル 52 件 PASS（Python 3.10）。CI は push 後に確認 |
-| P0-2 | `python -m syncbridge.cli selftest` が全件 PASS（8 カーブ × 2 モード × 2 方向、誤差 0.1 フレーム以下） | ✅ |
+| P0-2 | `.\syncbridge.cmd selftest` が全件 PASS（8 カーブ × 2 モード × 2 方向、誤差 0.1 フレーム以下） | ✅ |
 | P0-3 | V-MY-1: H-MY-1〜7, 9 の判定が記録され、`write_roundtrip` が少なくとも 1 つの weight 候補で全カーブ 0.01 フレーム以下 | 実施中（Maya 2024 の 1 回目は読み戻しで停止、修正済み → 再実行待ち） |
 | P0-4 | V-AE-1: `verify-ae-probe` が全件 PASS（許容 0.01 フレーム）、`@startTime` 版も PASS | 未実施 |
 | P0-5 | V-MY-2 / V-AE-2: 両方向・両モードでリードバックの誤差が 0.1 フレーム以下 | 未実施 |

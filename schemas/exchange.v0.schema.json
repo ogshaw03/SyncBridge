@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "syncbridge.exchange/0.1",
+  "title": "SyncBridge exchange envelope (schema_version 0.x)",
+  "description": "Used by Phase 0 files and, from Phase 1, WebSocket messages. See docs/API.md. Times are seconds unless a field says frames.",
+  "type": "object",
+  "required": ["schema", "schema_version", "kind", "event_id", "source_id", "revision", "created", "data"],
+  "properties": {
+    "schema": {"const": "syncbridge.exchange"},
+    "schema_version": {"type": "string", "pattern": "^0\\."},
+    "kind": {"enum": ["maya.timewarp.export", "maya.timewarp.apply", "ae.timeremap.export",
+                      "ae.timeremap.apply", "ae.probe.vectors", "ae.probe.results", "maya.probe.results"]},
+    "event_id": {"type": "string"},
+    "source_id": {"type": "string"},
+    "revision": {"type": "integer", "minimum": 0},
+    "created": {"type": "string"},
+    "app": {"type": "object"},
+    "data": {"type": "object"}
+  },
+  "$defs": {
+    "fps": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2,
+            "description": "[numerator, denominator], e.g. [24000, 1001]"},
+    "samples": {
+      "type": "object", "required": ["times", "values"],
+      "description": "Values evaluated by the application itself (ground truth).",
+      "properties": {"times": {"type": "array", "items": {"type": "number"}},
+                     "values": {"type": "array", "items": {"type": "number"}}}
+    },
+    "neutralCurve": {
+      "type": "object", "required": ["keys"],
+      "properties": {
+        "pre_infinity": {"enum": ["constant", "linear"]},
+        "post_infinity": {"enum": ["constant", "linear"]},
+        "keys": {"type": "array", "items": {
+          "type": "object", "required": ["t", "v"],
+          "properties": {
+            "t": {"type": "number"}, "v": {"type": "number"},
+            "in": {"enum": ["linear", "bezier", "hold"]}, "out": {"enum": ["linear", "bezier", "hold"]},
+            "ih": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+            "oh": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}
+          }}}
+      }
+    },
+    "aeKey": {
+      "type": "object", "required": ["time", "value", "inInterp", "outInterp"],
+      "properties": {
+        "time": {"type": "number", "description": "comp seconds"},
+        "value": {"type": "number", "description": "layer source seconds"},
+        "inInterp": {"enum": ["LINEAR", "BEZIER", "HOLD"]},
+        "outInterp": {"enum": ["LINEAR", "BEZIER", "HOLD"]},
+        "inEase": {"$ref": "#/$defs/aeEase"},
+        "outEase": {"$ref": "#/$defs/aeEase"}
+      }
+    },
+    "aeEase": {"type": "object", "properties": {
+      "speed": {"type": "number"}, "influence": {"type": "number", "minimum": 0.1, "maximum": 100}}},
+    "mayaNative": {
+      "type": "object", "required": ["fps", "keys"],
+      "properties": {
+        "fps": {"$ref": "#/$defs/fps"},
+        "weighted": {"type": "boolean"},
+        "preInfinity": {"enum": ["constant", "linear"]},
+        "postInfinity": {"enum": ["constant", "linear"]},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "keys": {"type": "array", "items": {
+          "type": "object", "required": ["time", "value"],
+          "properties": {
+            "time": {"type": "number", "description": "scene frames"},
+            "value": {"type": "number", "description": "warped frames"},
+            "inTangentType": {"type": "string"}, "outTangentType": {"type": "string"},
+            "inSlope": {"type": "number"}, "outSlope": {"type": "number"},
+            "inHandleX": {"type": "number", "description": "frames, weighted curves only"},
+            "outHandleX": {"type": "number"}
+          }}}
+      }
+    },
+    "mappingContext": {
+      "type": "object",
+      "properties": {
+        "maya_fps": {"$ref": "#/$defs/fps"},
+        "maya_input_origin_frame": {"type": "number"},
+        "maya_output_origin_frame": {"type": "number"},
+        "ae_comp_time_offset": {"type": "number"},
+        "ae_source_time_offset": {"type": "number"},
+        "source_time_scale": {"type": "number", "exclusiveMinimum": 0}
+      }
+    }
+  }
+}

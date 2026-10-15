@@ -1,0 +1,17 @@
+[project]
+name = "syncbridge"
+version = "0.0.1"
+description = "Maya <-> After Effects time warp / time remap sync tool"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+server = ["fastapi", "uvicorn[standard]"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

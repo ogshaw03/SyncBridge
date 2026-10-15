@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build
+build/
+dist/
+*.spec.bak
+
+# Local / PC-specific (do not commit)
+.env
+*.local.json
+local_settings.json
+secrets/
+*.token
+
+# DCC work files & caches
+*.ma.swatches
+*.mb
+*.aep
+*.aepx
+incrementalSave/
+cache/
+work/
+probe_results/
+
+# Claude Code local
+.claude/worktrees/
+.claude/settings.local.json
+
+# OS
+Thumbs.db
+.DS_Store

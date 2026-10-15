@@ -1,0 +1,56 @@
+// SyncBridge: minimal JSON for ExtendScript (ES3 has no built-in JSON).
+// parse() validates the text with the json2.js-style regular expressions
+// before eval, so only JSON text is evaluated. Only SyncBridge-written files
+// are read with it.
+
+var SBJSON = (function () {
+    function quote(s) {
+        return '"' + String(s).replace(/[\\"\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, function (c) {
+            var m = { '\b': '\\b', '\t': '\\t', '\n': '\\n', '\f': '\\f', '\r': '\\r', '"': '\\"', '\\': '\\\\' };
+            if (m[c]) { return m[c]; }
+            return '\\u' + ('0000' + c.charCodeAt(0).toString(16)).slice(-4);
+        }) + '"';
+    }
+
+    function str(value, indent, depth) {
+        var i, parts, pad, padIn, k;
+        if (value === null || value === undefined) { return 'null'; }
+        switch (typeof value) {
+        case 'number':
+            return isFinite(value) ? String(value) : 'null';
+        case 'boolean':
+            return String(value);
+        case 'string':
+            return quote(value);
+        }
+        pad = indent ? '\n' + new Array(depth + 1).join(indent) : '';
+        padIn = indent ? '\n' + new Array(depth + 2).join(indent) : '';
+        parts = [];
+        if (value instanceof Array) {
+            for (i = 0; i < value.length; i++) { parts.push(str(value[i], indent, depth + 1)); }
+            return parts.length ? '[' + padIn + parts.join(',' + padIn) + pad + ']' : '[]';
+        }
+        for (k in value) {
+            if (value.hasOwnProperty(k) && typeof value[k] !== 'function') {
+                parts.push(quote(k) + (indent ? ': ' : ':') + str(value[k], indent, depth + 1));
+            }
+        }
+        return parts.length ? '{' + padIn + parts.join(',' + padIn) + pad + '}' : '{}';
+    }
+
+    function parse(text) {
+        var t = String(text);
+        if (/^[\],:{}\s]*$/.test(t
+                .replace(/\\(?:["\\\/bfnrt]|u[0-9a-fA-F]{4})/g, '@')
+                .replace(/"[^"\\\n\r]*"|true|false|null|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?/g, ']')
+                .replace(/(?:^|:|,)(?:\s*\[)+/g, ''))) {
+            return eval('(' + t + ')');
+        }
+        throw new Error('SBJSON.parse: invalid JSON');
+    }
+
+    return {
+        stringify: function (value, indent) { return str(value, indent || '', 0); },
+        parse: parse
+    };
+}());

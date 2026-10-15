@@ -1,0 +1,210 @@
+// SyncBridge: After Effects Time Remap helpers (ExtendScript / ES3).
+//
+// Verification status (docs/PHASE0_RESEARCH.md): the Property / Layer /
+// CompItem methods used below are documented in the After Effects Scripting
+// Guide, but this file has NOT yet been run on After Effects.
+//   H-AE-1: keyTime / setValueAtTime / valueAtTime on Time Remap use comp time.
+//   H-AE-2: Time Remap values are layer source time in seconds.
+//   H-AE-3: ease speed/influence <-> Bezier handle (see src/syncbridge/core/ae_codec.py).
+//   H-AE-4: removing keys / setting eases on Time Remap behaves like other 1D properties.
+//   H-AE-5: keys can be placed at sub-frame times via setValueAtTime.
+
+#include "syncbridge_json.jsxinc"
+
+var SB = SB || {};
+
+SB.SCHEMA = 'syncbridge.exchange';
+SB.SCHEMA_VERSION = '0.1';
+SB.TIME_EPS = 1e-6;
+
+// ---------------------------------------------------------------- envelope
+SB.uuid = function () {
+    var s = '', i, hex = '0123456789abcdef';
+    for (i = 0; i < 32; i++) {
+        s += hex.charAt(Math.floor(Math.random() * 16));
+        if (i === 7 || i === 11 || i === 15 || i === 19) { s += '-'; }
+    }
+    return s;
+};
+
+SB.isoNow = function () {
+    function p(n) { return (n < 10 ? '0' : '') + n; }
+    var d = new Date();
+    return d.getUTCFullYear() + '-' + p(d.getUTCMonth() + 1) + '-' + p(d.getUTCDate()) + 'T' +
+        p(d.getUTCHours()) + ':' + p(d.getUTCMinutes()) + ':' + p(d.getUTCSeconds()) + '+00:00';
+};
+
+SB.makeEnvelope = function (kind, data) {
+    return {
+        schema: SB.SCHEMA, schema_version: SB.SCHEMA_VERSION, kind: kind,
+        event_id: SB.uuid(), source_id: 'ae', revision: 0, created: SB.isoNow(),
+        app: { name: 'aftereffects', version: app.version, project: app.project.file ? app.project.file.fsName : null },
+        data: data
+    };
+};
+
+SB.checkEnvelope = function (env, kind) {
+    if (!env || env.schema !== SB.SCHEMA) { throw new Error('Not a SyncBridge exchange file.'); }
+    if (String(env.schema_version).split('.')[0] !== SB.SCHEMA_VERSION.split('.')[0]) {
+        throw new Error('Unsupported schema_version ' + env.schema_version);
+    }
+    if (kind && env.kind !== kind) { throw new Error('Expected ' + kind + ', got ' + env.kind); }
+    return env.data;
+};
+
+// ---------------------------------------------------------------- files
+SB.readJSON = function (file) {
+    file.encoding = 'UTF-8';
+    if (!file.open('r')) { throw new Error('Cannot open ' + file.fsName); }
+    var text = file.read();
+    file.close();
+    return SBJSON.parse(text);
+};
+
+SB.writeJSON = function (file, obj) {
+    var folder = file.parent;
+    if (folder && !folder.exists) { folder.create(); }
+    file.encoding = 'UTF-8';
+    if (!file.open('w')) { throw new Error('Cannot write ' + file.fsName); }
+    file.write(SBJSON.stringify(obj, '  '));
+    file.close();
+};
+
+SB.backupFolder = function () {
+    return new Folder(Folder.userData.fsName + '/SyncBridge/backups');
+};
+
+// ---------------------------------------------------------------- selection
+SB.activeCompAndLayer = function () {
+    var comp = app.project.activeItem;
+    if (!(comp instanceof CompItem)) { throw new Error('Open a composition and select one layer.'); }
+    if (comp.selectedLayers.length !== 1) { throw new Error('Select exactly one layer.'); }
+    return { comp: comp, layer: comp.selectedLayers[0] };
+};
+
+SB.timeRemapProp = function (layer) {
+    return layer.property('ADBE Time Remapping');
+};
+
+// ---------------------------------------------------------------- info
+SB.compInfo = function (comp) {
+    return {
+        name: comp.name, id: comp.id, frameRate: comp.frameRate, frameDuration: comp.frameDuration,
+        duration: comp.duration, displayStartTime: comp.displayStartTime,
+        workAreaStart: comp.workAreaStart, workAreaDuration: comp.workAreaDuration,
+        width: comp.width, height: comp.height, pixelAspect: comp.pixelAspect,
+        time: comp.time
+    };
+};
+
+SB.layerInfo = function (layer) {
+    var src = layer.source, info = {
+        name: layer.name, index: layer.index, startTime: layer.startTime,
+        inPoint: layer.inPoint, outPoint: layer.outPoint, stretch: layer.stretch,
+        canSetTimeRemapEnabled: layer.canSetTimeRemapEnabled,
+        timeRemapEnabled: layer.timeRemapEnabled, source: null
+    };
+    if (src) {
+        info.source = {
+            name: src.name, duration: src.duration, frameRate: src.frameRate,
+            isComp: (src instanceof CompItem)
+        };
+        if (src instanceof CompItem) { info.source.displayStartTime = src.displayStartTime; }
+    }
+    return info;
+};
+
+// ---------------------------------------------------------------- keys
+SB.interpName = function (t) {
+    if (t === KeyframeInterpolationType.HOLD) { return 'HOLD'; }
+    if (t === KeyframeInterpolationType.BEZIER) { return 'BEZIER'; }
+    return 'LINEAR';
+};
+
+SB.interpType = function (name) {
+    if (name === 'HOLD') { return KeyframeInterpolationType.HOLD; }
+    if (name === 'BEZIER') { return KeyframeInterpolationType.BEZIER; }
+    return KeyframeInterpolationType.LINEAR;
+};
+
+SB.readKeys = function (prop) {
+    var keys = [], i, ie, oe;
+    for (i = 1; i <= prop.numKeys; i++) {
+        ie = prop.keyInTemporalEase(i)[0];
+        oe = prop.keyOutTemporalEase(i)[0];
+        keys.push({
+            time: prop.keyTime(i), value: prop.keyValue(i),
+            inInterp: SB.interpName(prop.keyInInterpolationType(i)),
+            outInterp: SB.interpName(prop.keyOutInterpolationType(i)),
+            inEase: { speed: ie.speed, influence: ie.influence },
+            outEase: { speed: oe.speed, influence: oe.influence },
+            autoBezier: prop.keyTemporalAutoBezier(i),
+            continuous: prop.keyTemporalContinuous(i)
+        });
+    }
+    return keys;
+};
+
+// Replace all keys of `prop` with `keys` (AE-native format, see ae_codec.py).
+// New keys are set before stale keys are removed so the property never
+// loses all of its keys.
+SB.applyKeys = function (prop, keys) {
+    var i, j, idx, k, t, keep;
+    for (i = 0; i < keys.length; i++) {
+        prop.setValueAtTime(keys[i].time, keys[i].value);
+    }
+    for (i = prop.numKeys; i >= 1; i--) {
+        t = prop.keyTime(i);
+        keep = false;
+        for (j = 0; j < keys.length; j++) {
+            if (Math.abs(keys[j].time - t) < SB.TIME_EPS) { keep = true; break; }
+        }
+        if (!keep) { prop.removeKey(i); }
+    }
+    for (i = 0; i < keys.length; i++) {
+        k = keys[i];
+        idx = prop.nearestKeyIndex(k.time);
+        prop.setTemporalContinuousAtKey(idx, false);
+        prop.setTemporalAutoBezierAtKey(idx, false);
+        prop.setInterpolationTypeAtKey(idx, SB.interpType(k.inInterp), SB.interpType(k.outInterp));
+        prop.setTemporalEaseAtKey(idx,
+            [new KeyframeEase(k.inEase.speed, k.inEase.influence)],
+            [new KeyframeEase(k.outEase.speed, k.outEase.influence)]);
+    }
+};
+
+// Evaluate the property with AE itself (ground truth for verification).
+SB.sample = function (prop, t0, t1, frameDuration, oversample) {
+    var times = [], values = [], step = frameDuration / oversample, n, i, t;
+    n = Math.floor((t1 - t0) / step + 1e-9);
+    for (i = 0; i <= n; i++) {
+        t = t0 + i * step;
+        times.push(t);
+        values.push(prop.valueAtTime(t, false));
+    }
+    if (t1 - times[times.length - 1] > SB.TIME_EPS) {
+        times.push(t1);
+        values.push(prop.valueAtTime(t1, false));
+    }
+    return { times: times, values: values };
+};
+
+SB.keyRange = function (keys, layer) {
+    if (keys.length) { return [keys[0].time, keys[keys.length - 1].time]; }
+    return [layer.inPoint, layer.outPoint];
+};
+
+// Build the "ae.timeremap.export" envelope for a layer.
+SB.buildExport = function (comp, layer, oversample) {
+    var prop, keys, range, samples = null;
+    if (!layer.timeRemapEnabled) {
+        throw new Error('Time Remap is not enabled on layer "' + layer.name + '".');
+    }
+    prop = SB.timeRemapProp(layer);
+    keys = SB.readKeys(prop);
+    range = SB.keyRange(keys, layer);
+    samples = SB.sample(prop, range[0], range[1], comp.frameDuration, oversample || 4);
+    return SB.makeEnvelope('ae.timeremap.export', {
+        comp: SB.compInfo(comp), layer: SB.layerInfo(layer), keys: keys, samples: samples
+    });
+};

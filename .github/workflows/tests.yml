@@ -1,0 +1,20 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python: ["3.9", "3.11"]   # 3.9 = Maya 2023 Python
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Run unit tests (stdlib unittest, no DCC required)
+        run: python -m unittest discover -s tests -t . -v

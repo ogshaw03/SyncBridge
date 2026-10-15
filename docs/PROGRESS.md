@@ -2,8 +2,8 @@
 
 ## 現在の状態
 
-- **フェーズ:** Phase 0（技術検証）— DCC 不要の部分は完了、**Maya / AE の実機検証が未実施**
-- **最終更新:** 2026-10-15
+- **フェーズ:** Phase 0（技術検証）— DCC 不要の部分は完了、**実機検証中**（Maya 2024 プローブ 1 回目を実施、AE は未実施）
+- **最終更新:** 2026-10-16
 
 ## 実装済み
 
@@ -19,14 +19,20 @@
 | 変換パイプライン（Editable/Precision、両方向、3 種類の誤差レポート） | `core/transfer.py` | ✅ テスト済 |
 | 交換エンベロープ、JSON Schema | `core/envelope.py`, `schemas/` | ✅ テスト済 |
 | CLI（maya2ae, ae2maya, readback, probe-vectors, verify-ae-probe, selftest） | `cli.py` | ✅ テスト済 |
-| Maya アダプタ（検索、読み書き、export/apply、バックアップ、リードバック） | `maya_plugin/.../` | ⚠ 未実行（ダミーの maya モジュールで import のみ確認） |
-| Maya プローブ | `maya_plugin/.../probe.py` | ⚠ 未実行 |
+| Maya アダプタ（検索、読み書き、export/apply、バックアップ、リードバック） | `maya_plugin/.../` | ⚠ Maya 2024 で書き込みはエラーなし、読み取りは失敗 → 修正済み・再実行待ち。ダミー cmds で回帰テスト |
+| Maya プローブ | `maya_plugin/.../probe.py` | ⚠ Maya 2024 で 1 回実行（結果は PHASE0_RESEARCH.md 8 章）、記録項目を追加済み |
 | AE スクリプト（Export/Apply、バックアップ、undo） | `after_effects/jsx/syncbridge_ae.jsx` | ⚠ 未実行（Node で構文のみ確認） |
 | AE プローブ | `after_effects/jsx/probe_ae.jsx` | ⚠ 未実行（Node で構文のみ確認） |
 | ES3 用 JSON | `after_effects/jsx/syncbridge_json.jsxinc` | ✅ Node で Python の json と往復確認 |
 | CI（Windows/Ubuntu × Python 3.9/3.11） | `.github/workflows/tests.yml` | ⚠ 未実行（push 後に確認） |
 
 ## テスト結果
+
+### 2026-10-16（Windows 11, Python 3.10.6）
+
+- Maya 2024 プローブ #1: Scene Time Warp = `timewarp.apply` → `time1.timewarpIn_Raw`（H-MY-1 ✅）、`enableTimewarp` あり。
+  `setInfinity -q` が `None` を返して読み取りが全て停止 → `query_infinity()` でノード属性にフォールバックするよう修正。
+- `py -3.10 -m unittest discover -s tests -t .` → **57 件 OK**（ダミー cmds による Maya アダプタのテスト 5 件を追加）
 
 ### 2026-10-15（Windows 11, Python 3.10.6, Node v24.16.0）
 
@@ -41,15 +47,16 @@
 
 ## 未解決の問題・未確認事項
 
-- Maya の仮説 H-MY-1〜8、AE の仮説 H-AE-1〜8 はすべて未判定（`PHASE0_RESEARCH.md` 4 章）。
+- Maya: H-MY-1 は Maya 2024 で確認、H-MY-2/6 は一部確認。H-MY-3〜5, 7〜10 は未判定。Maya 2023 では未実施。
+- AE: H-AE-1〜8 はすべて未判定（`PHASE0_RESEARCH.md` 4 章）。
 - weighted 接線の単位（H-MY-5）が未確定 → `anim_curve.DEFAULT_WEIGHT_SCALE` は仮の値。
-- Scene Time Warp を自動で作成する方法が未確認（D-7）。
+- Scene Time Warp の自動作成: コマンドは `sceneTimeWarp "add"` と判明、実行時の挙動は未確認（H-MY-10, D-7）。
 - Python 3.9 での実行は CI で確認する（このPCには 3.10 しかない）。
 - 社内のセキュリティ規程（会社 PC での clone/push）の確認（R-13）。
 
 ## 次にやること
 
-1. **[実機・利用者]** V-MY-1: Maya プローブを実行し、結果を `PHASE0_RESEARCH.md` に記録する。
+1. **[実機・利用者]** V-MY-1: 修正版の Maya プローブを **再実行** し、結果を `PHASE0_RESEARCH.md` 8 章に記録する（Maya 2023 でも実行する）。
 2. **[実機・利用者]** V-AE-1: AE プローブを実行し、`verify-ae-probe` で判定する。
 3. プローブの結果に応じて `DEFAULT_WEIGHT_SCALE` やコーデックを修正し、仮説の状態を更新する。
 4. **[実機・利用者]** V-MY-2 / V-AE-2: エンドツーエンドの転送とリードバック、V-MY-3: レンダー比較。

@@ -1,14 +1,15 @@
 """Locate the Maya *Scene* Time Warp (not a generic `timeWarp` deformer-style node).
 
-Structure assumed until confirmed by probe.py on Maya 2023 (H-MY-1/2 in
-docs/PHASE0_RESEARCH.md):
-  * The Scene Time Warp created from the Maya UI is an animCurveTT whose
-    output is connected to an input attribute of the `time1` node whose name
-    contains "timewarp" (case-insensitive).
-  * `time1.enableTimewarp` (bool) switches the warp on and off.
-
-Discovery is done by connection search instead of hard-coded names so the
-probe result can confirm or correct the assumption.
+Observed in the first probe (Maya 2024, 2026-10-16; docs/PHASE0_RESEARCH.md H-MY-1/2):
+  * The Scene Time Warp is an animCurveTT named `timewarp`, connected
+    `timewarp.apply -> time1.timewarpIn_Raw` (note: from `.apply`, not `.output`).
+  * `time1.enableTimewarp` (bool) exists. `time1` also has `timewarpIn`
+    (compound: _Raw, _Hidden, _Inmap, _Outmap) and `unwarpedTime`.
+  * Created / deleted / selected by the MEL procedure `sceneTimeWarp "add"`,
+    `"delete"`, `"select"` (runtime commands AddTimeWarp, DeleteTimeWarp,
+    SelectTimeWarp). Not called from here yet (D-7).
+Not yet confirmed on Maya 2023. Discovery still searches connections instead of
+hard-coding names.
 """
 from __future__ import annotations
 

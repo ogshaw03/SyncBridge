@@ -1,8 +1,10 @@
 # Phase 0 技術検証レポート
 
-最終更新: 2026-10-15 / 対象: Maya 2023+, After Effects 2024+, Windows 10/11
+最終更新: 2026-10-16 / 対象: Maya 2023+, After Effects 2024+, Windows 10/11
 
-> **重要:** この文書の「仮説（H-*）」は、Maya・AE の実機ではまだ一度も確認していない。
+実機プローブの実行記録は 8 章。現在までに実行したのは **Maya 2024 の 1 回目のみ**（Maya 2023 と AE は未実施）。
+
+> **重要:** この文書の「仮説（H-*）」は、状態欄が ✅ のもの以外は実機で確認していない。
 > 公式ドキュメントや一般的な知識を根拠にした作業仮説であり、**動作確認済みとして扱ってはいけない**。
 > 各仮説は下記のプローブ（V-*）を実機で実行して判定し、結果をこの文書と `PROGRESS.md` に記録する。
 
@@ -102,14 +104,18 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 
 | ID | 仮説 | 判定方法 | 状態 |
 |---|---|---|---|
-| H-MY-1 | UI で作った Scene Time Warp は、`time1` の名前に "timewarp" を含む入力属性へ接続された animCurveTT である | probe: `time_node.connections`, `animCurveTT_nodes` | ❓ |
-| H-MY-2 | `time1.enableTimewarp` で有効／無効が切り替わり、`time1.outTime` がワープ後の時間を出す | probe: `warp_attributes`, `unit_checks.getAttr_time1_outTime` | ❓ |
+| H-MY-1 | UI で作った Scene Time Warp は、`time1` の名前に "timewarp" を含む入力属性へ接続された animCurveTT である | probe: `time_node.connections`, `animCurveTT_nodes` | ✅ Maya 2024: `timewarp`（animCurveTT）の **`.apply`** → `time1.timewarpIn_Raw`（`.output` ではない） |
+| H-MY-2 | `time1.enableTimewarp` で有効／無効が切り替わり、`time1.outTime` がワープ後の時間を出す | probe: `warp_attributes`, `unit_checks.getAttr_time1_outTime` | 一部 ✅ Maya 2024: `enableTimewarp`（bool）は存在。切り替え用の `EnableTimeWarp` ランタイムコマンドもこの属性を反転する。`outTime` の挙動は未判定 |
 | H-MY-3 | `keyframe -q -vc` と `keyframe -q -eval` は TT カーブで現在の時間単位（フレーム）の値を返す | probe: `unit_checks` | ❓ |
 | H-MY-4 | TT カーブでは tan(接線角度) が無次元の傾き d(出力)/d(入力) | probe: `write_roundtrip`（非 weighted カーブ） | ❓ |
 | H-MY-5 | weighted 接線の時間方向の長さ = weight × cos(角度) × c。c は未確定 | probe: `write_roundtrip` の `asymmetric_ease`。PASS した候補が c | ❓ |
-| H-MY-6 | `setKeyframe` は animCurve ノード名を直接受け付ける | probe: `write_roundtrip` がエラーなく動くか | ❓ |
+| H-MY-6 | `setKeyframe` は animCurve ノード名を直接受け付ける | probe: `write_roundtrip` がエラーなく動くか | 一部 ✅ Maya 2024: エラーなく実行された。書き込まれた値は未確認 |
 | H-MY-7 | 非 weighted 区間は Hermite（= 1/3 ハンドルの Bezier）で評価される（devkit の animEngine に基づく） | probe: `write_roundtrip`（`speed_ramp_bezier`） | ❓ |
 | H-MY-8 | Scene Time Warp はバッチレンダリングにも適用される | V-MY-3（レンダー比較） | ❓ |
+| H-MY-9 | animCurve ノードの `preInfinity` / `postInfinity` 属性（enum、`getAttr -asString`）で範囲外の扱いを読める | probe: `scene_warp.node.*_infinity` | ❓（`setInfinity -q` の代わりに使う。下記の事実を参照） |
+| H-MY-10 | Scene Time Warp は MEL の `sceneTimeWarp "add"` で作成でき、`"delete"` で削除できる | ランタイムコマンド `AddTimeWarp` の中身から推定。作成の実行は未確認 | ❓（D-7） |
+
+**実機で確認した事実（Maya 2024）:** `setInfinity <animCurveノード> -q -preInfinite` は `None` を返した（一時 animCurveTT で確認。シーンの `timewarp` でも同じエラーで停止したが、トレースバックは未取得）。→ `anim_curve.query_infinity()` でノード属性へのフォールバックを実装済み。
 
 ### After Effects
 
@@ -130,7 +136,7 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 
 | ID | リスク | 影響 | 対策 |
 |---|---|---|---|
-| R-1 | Scene Time Warp の構造が H-MY-1/2 と違う | 高 | 接続の探索で特定、プローブで構造を記録、Phase 0 ではカーブを新規作成しない（D-7） |
+| R-1 | Scene Time Warp の構造が H-MY-1/2 と違う | 中（Maya 2024 で H-MY-1 を確認） | 接続の探索で特定、プローブで構造を記録、Phase 0 ではカーブを新規作成しない（D-7）。Maya 2023 でも確認する |
 | R-2 | Maya の weight の単位が不明（H-MY-5） | 中 | 読み取り時の自己キャリブレーション（D-6）、Precision モードは影響なし（D-4） |
 | R-3 | AE のイーズの式が仮説と違う（H-AE-3/6/7） | 中 | プローブで判定、リードバック検証（D-5）で必ず検出 |
 | R-4 | AE がサブフレームのキーをフレームに丸める（H-AE-5 が偽） | 中 | Precision は既定でフレーム位置にキーを置く。サブフレームの補助キーは `allow_subframe=False` で無効化できる |
@@ -147,6 +153,7 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 | R-15 | stretch ≠ 100%、ネストしたプリコンポジション | 中 | Phase 0 は stretch = 100% を前提とし、違えば確認を出す。ネストは 1 段のみ |
 | R-16 | Time Remap の値がソースの長さでクランプされる可能性、最終フレームの扱い（ソース長 − 1 フレーム） | 中 | 範囲チェックと警告（Phase 3） |
 | R-17 | Maya の pre/post infinity が cycle などの場合 | 低 | 警告を出して constant として扱う（実装済み） |
+| R-19 | 文書化されたクエリが実機では期待した値を返さない（例: `setInfinity -q` が `None`） | 中 | クエリ結果が空なら明確なエラーにする（`_query_list`）。代替手段を用意し、ダミーの cmds で回帰テストする |
 | R-18 | Maya 2023 の `stepnext` 接線 | 低 | Editable では警告、Precision を推奨（実装済み） |
 
 ---
@@ -155,7 +162,7 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 
 すべての結果ファイルは `probe_results/`（Git 管理外）に置き、要約をこの文書の 4 章と `PROGRESS.md` に転記する。
 
-### V-MY-1: Maya プローブ（H-MY-1〜7）
+### V-MY-1: Maya プローブ（H-MY-1〜7, 9）
 
 1. Maya 2023 で新規シーンを開き、UI から Scene Time Warp を作成する（例: 1001 → 1001、1100 → 1050 のスロー）。
 2. Script Editor（Python）で次を実行する。
@@ -220,9 +227,28 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 |---|---|---|
 | P0-1 | 単体・結合テスト（`python -m unittest discover -s tests -t .`）が全件 PASS（CI: Windows/Ubuntu × Python 3.9/3.11） | ✅ ローカル 52 件 PASS（Python 3.10）。CI は push 後に確認 |
 | P0-2 | `python -m syncbridge.cli selftest` が全件 PASS（8 カーブ × 2 モード × 2 方向、誤差 0.1 フレーム以下） | ✅ |
-| P0-3 | V-MY-1: H-MY-1〜7 の判定が記録され、`write_roundtrip` が少なくとも 1 つの weight 候補で全カーブ 0.01 フレーム以下 | 未実施 |
+| P0-3 | V-MY-1: H-MY-1〜7, 9 の判定が記録され、`write_roundtrip` が少なくとも 1 つの weight 候補で全カーブ 0.01 フレーム以下 | 実施中（Maya 2024 の 1 回目は読み戻しで停止、修正済み → 再実行待ち） |
 | P0-4 | V-AE-1: `verify-ae-probe` が全件 PASS（許容 0.01 フレーム）、`@startTime` 版も PASS | 未実施 |
 | P0-5 | V-MY-2 / V-AE-2: 両方向・両モードでリードバックの誤差が 0.1 フレーム以下 | 未実施 |
 | P0-6 | V-MY-3: レンダー比較で焼き込みのフレーム番号が一致 | 未実施 |
 
 P0-3〜P0-6 の結果によって設計変更が必要になった場合は、`ARCHITECTURE.md` の「設計判断」に理由とともに追記する。
+
+---
+
+## 8. 実機プローブの実行記録
+
+### 2026-10-16 #1 — Maya 2024（V-MY-1）
+
+- 環境: Maya 2024（API 20240000）、Python 3.10.8、PySide2 5.15.2.1、Windows 11（26200）、時間単位 film（24fps）
+- シーン: UI で Scene Time Warp を作成済み、`enableTimewarp` = true
+- 結果:
+  - `time1` の関連属性: `enableTimewarp`, `timewarpIn`（compound）, `timewarpIn_Raw`, `timewarpIn_Hidden`,
+    `timewarpIn_Inmap`(`From`/`To`), `timewarpIn_Outmap`(`From`/`To`), `unwarpedTime`
+  - 接続: `timewarp.apply` → `time1.timewarpIn_Raw`（animCurveTT は `timewarp` の 1 つだけ）→ H-MY-1 ✅
+  - 関連コマンド: `sceneTimeWarp "add" / "delete" / "select"`、`EnableTimeWarp` = `enableTimewarp` を反転して `currentTime` を再設定
+  - **読み取りは全て失敗:** `setInfinity -q` が `None` を返し `read_raw` が TypeError で停止。
+    書き込み（`setKeyframe`, `cutKey`, `keyTangent`, `setInfinity` 編集）は全カーブでエラーなし。
+- 対応: `query_infinity()`（ノード属性へのフォールバック）、クエリ結果の検査、プローブの記録項目の追加
+  （トレースバック、カーブの属性、`.apply` の評価、`unwarpedTime`）。ダミー cmds の回帰テストを追加。
+- 次: 修正版で V-MY-1 を再実行し、H-MY-3〜7, 9 を判定する。

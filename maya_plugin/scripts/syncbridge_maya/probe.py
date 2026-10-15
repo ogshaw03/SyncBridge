@@ -33,7 +33,7 @@ def _safe(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except Exception as exc:  # the probe must report, not stop
-        return {"error": "%s: %s" % (type(exc).__name__, exc)}
+        return {"error": "%s: %s" % (type(exc).__name__, exc), "traceback": traceback.format_exc()}
 
 
 def probe_environment() -> dict:
@@ -69,8 +69,8 @@ def probe_time_node() -> dict:
         "connections": [[a, b, _safe(cmds.nodeType, b.split(".")[0])]
                         for a, b in zip(conns[0::2], conns[1::2])],
         "animCurveTT_nodes": [
-            {"node": n, "outputs": cmds.listConnections(n + ".output", plugs=True,
-                                                        source=False, destination=True) or []}
+            {"node": n, "outputs": _pairs(cmds.listConnections(n, plugs=True, connections=True,
+                                                              source=False, destination=True))}
             for n in (cmds.ls(type="animCurveTT") or [])],
     }
 
@@ -90,26 +90,49 @@ def probe_commands() -> dict:
     return found
 
 
+def _pairs(conns) -> list:
+    conns = conns or []
+    return [[a, b] for a, b in zip(conns[0::2], conns[1::2])]
+
+
+def probe_curve_node(curve: str) -> dict:
+    """Attributes of an animCurve node relevant to H-MY-1/9 (read-only)."""
+    info = {"attributes": _safe(cmds.listAttr, curve)}
+    for side in ("pre", "post"):
+        flag = {"pre": "preInfinite", "post": "postInfinite"}[side]
+        info["%s_infinity" % side] = {
+            "setInfinity_query": _safe(cmds.setInfinity, curve, q=True, **{flag: True}),
+            "getAttr_asString": _safe(cmds.getAttr, "%s.%sInfinity" % (curve, side), asString=True),
+        }
+    return info
+
+
 def probe_scene_warp() -> dict:
-    """H-MY-2/3 on the existing Scene Time Warp, read-only."""
+    """H-MY-1/2/3/9 on the existing Scene Time Warp, read-only."""
     try:
         curve, plug = scene_timewarp.find_curve()
     except scene_timewarp.SceneTimeWarpNotFound as exc:
         return {"found": False, "message": str(exc)}
     result = {"found": True, "curve": curve, "plug": plug,
-              "enabled": scene_timewarp.is_enabled(), "raw": anim_curve.read_raw(curve)}
+              "enabled": scene_timewarp.is_enabled(),
+              "node": probe_curve_node(curve),
+              "raw": _safe(anim_curve.read_raw, curve)}
     raw = result["raw"]
+    if "error" in raw:
+        return result
     checks = []
     for t, v in list(zip(raw["times"], raw["values"]))[:10]:
         checks.append({
             "time": t, "valueChange": v,
             "keyframe_eval": _safe(cmds.keyframe, curve, q=True, eval=True, time=(t, t)),
             "getAttr_curve_output": _safe(cmds.getAttr, curve + ".output", time=t),
+            "getAttr_curve_apply": _safe(cmds.getAttr, curve + ".apply", time=t),
             "getAttr_time1_outTime": _safe(cmds.getAttr, TIME_NODE + ".outTime", time=t),
+            "getAttr_time1_unwarpedTime": _safe(cmds.getAttr, TIME_NODE + ".unwarpedTime", time=t),
         })
     result["unit_checks"] = checks
-    native, samples, calibration = anim_curve.read_curve(curve)
-    result["calibration"] = calibration
+    read = _safe(anim_curve.read_curve, curve)
+    result["calibration"] = read if isinstance(read, dict) else read[2]
     return result
 
 
@@ -179,8 +202,14 @@ def _print_summary(report: dict, path: str):
     if isinstance(sw, dict):
         if sw.get("found"):
             print("Scene Time Warp: %s -> %s, enabled=%s" % (sw["curve"], sw["plug"], sw["enabled"]))
-            print("  decode vs Maya:", sw["calibration"]["weight_scale"],
-                  "max %.5f f" % sw["calibration"]["decode_vs_maya"]["max_error_frames"])
+            node = sw.get("node", {})
+            print("  infinity query: pre=%s post=%s" % (node.get("pre_infinity"), node.get("post_infinity")))
+            cal = sw.get("calibration") or sw.get("raw") or {}
+            if "error" in cal:
+                print("  read ERROR", cal["error"])
+            else:
+                print("  decode vs Maya:", cal["weight_scale"],
+                      "max %.5f f" % cal["decode_vs_maya"]["max_error_frames"])
         else:
             print("Scene Time Warp:", sw.get("message") or sw.get("error"))
     for r in report["write_roundtrip"] if isinstance(report["write_roundtrip"], list) else []:

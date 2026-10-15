@@ -3,8 +3,10 @@
 Must be called from Maya's main thread.
 
 Verification status (docs/PHASE0_RESEARCH.md):
-  * maya.cmds flags used here are documented in the Maya 2023 command
-    reference, but this module has NOT yet been run on Maya.
+  * maya.cmds flags used here are documented in the Maya command reference.
+    First Maya 2024 probe (2026-10-16): write_curve ran without errors on a
+    temporary animCurveTT; read_raw failed on `setInfinity -q` (fixed, H-MY-9).
+    The values themselves are not verified yet.
   * H-MY-3: keyframe -valueChange / -eval on a TT curve return values in the
     current time unit (frames).
   * H-MY-4: for a TT curve tan(tangent angle) is the dimensionless slope
@@ -13,6 +15,7 @@ Verification status (docs/PHASE0_RESEARCH.md):
     The scale is unknown; read_curve() calibrates it against Maya's own
     evaluation, and probe.py reports which scale matches.
   * H-MY-6: setKeyframe accepts an animCurve node name directly.
+  * H-MY-9: the animCurve node has preInfinity / postInfinity enum attributes.
 """
 from __future__ import annotations
 
@@ -42,23 +45,46 @@ def scene_fps() -> FrameRate:
 
 def read_raw(curve: str) -> dict:
     """Query the curve's keys and tangents as Maya reports them (no conversion)."""
-    q = dict(q=True)
-    n = cmds.keyframe(curve, keyframeCount=True, **q) or 0
+    n = cmds.keyframe(curve, q=True, keyframeCount=True) or 0
     if n == 0:
         return {"keys": []}
     return {
-        "times": cmds.keyframe(curve, timeChange=True, **q),
-        "values": cmds.keyframe(curve, valueChange=True, **q),
-        "inTangentType": cmds.keyTangent(curve, inTangentType=True, **q),
-        "outTangentType": cmds.keyTangent(curve, outTangentType=True, **q),
-        "inAngle": cmds.keyTangent(curve, inAngle=True, **q),
-        "outAngle": cmds.keyTangent(curve, outAngle=True, **q),
-        "inWeight": cmds.keyTangent(curve, inWeight=True, **q),
-        "outWeight": cmds.keyTangent(curve, outWeight=True, **q),
-        "weighted": bool((cmds.keyTangent(curve, weightedTangents=True, **q) or [False])[0]),
-        "preInfinity": cmds.setInfinity(curve, preInfinite=True, **q)[0],
-        "postInfinity": cmds.setInfinity(curve, postInfinite=True, **q)[0],
+        "times": _query_list(cmds.keyframe, curve, n, timeChange=True),
+        "values": _query_list(cmds.keyframe, curve, n, valueChange=True),
+        "inTangentType": _query_list(cmds.keyTangent, curve, n, inTangentType=True),
+        "outTangentType": _query_list(cmds.keyTangent, curve, n, outTangentType=True),
+        "inAngle": _query_list(cmds.keyTangent, curve, n, inAngle=True),
+        "outAngle": _query_list(cmds.keyTangent, curve, n, outAngle=True),
+        "inWeight": _query_list(cmds.keyTangent, curve, n, inWeight=True),
+        "outWeight": _query_list(cmds.keyTangent, curve, n, outWeight=True),
+        "weighted": bool((cmds.keyTangent(curve, q=True, weightedTangents=True) or [False])[0]),
+        "preInfinity": query_infinity(curve, "pre"),
+        "postInfinity": query_infinity(curve, "post"),
     }
+
+
+def query_infinity(curve: str, side: str) -> str:
+    """Return the pre/post infinity type in lower case ("constant", "linear", "cycle", ...).
+
+    Maya 2024 probe (2026-10-16): `setInfinity <curve> -q -preInfinite` returned
+    None when given an animCurve node, so fall back to the curve node's own
+    preInfinity / postInfinity enum attribute (H-MY-9).
+    """
+    flag = {"pre": "preInfinite", "post": "postInfinite"}[side]
+    result = cmds.setInfinity(curve, q=True, **{flag: True})
+    if result:
+        return str(result[0]).lower()
+    return str(cmds.getAttr("%s.%sInfinity" % (curve, side), asString=True)).lower()
+
+
+def _query_list(command, curve: str, count: int, **flags) -> list:
+    """Run a per-key query and fail with a clear message if Maya returns nothing."""
+    result = command(curve, q=True, **flags)
+    if result is None or len(result) != count:
+        raise RuntimeError("%s -q %s on %s returned %r (expected %d values)"
+                           % (getattr(command, "__name__", command), "/".join(flags), curve,
+                              result, count))
+    return list(result)
 
 
 def raw_to_native(raw: dict, fps: FrameRate, weight_scale: str = DEFAULT_WEIGHT_SCALE) -> dict:

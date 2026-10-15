@@ -130,6 +130,22 @@ AE → Maya
   Editable は表現できない外挿を警告し、不合格として報告する（黙って捨てない、SPEC 5 章 6）。
 - 既定の範囲は、Maya の再生範囲と AE のコンプ範囲。どちらも「利用者が見る時間」なので、これで一致すれば見た目は一致する。
 
+### D-11: サーバーは FastAPI + uvicorn、開発環境はリポジトリ内の `.venv`（2026-10-16、Phase 1）
+
+- 仕様どおり FastAPI。依存は `requirements-server.txt` にバージョンを固定し、リポジトリ内の `.venv`（Git 管理外）に入れる。
+  PC の Python 本体には入れない（利用者の選択）。配布時は PyInstaller で EXE に含める（Phase 6）。
+- uvicorn の WebSocket 実装は `websockets-sansio`（旧実装は非推奨警告が出るため）。
+- `syncbridge.core` と `syncbridge.protocol`、`server/session.py` は標準ライブラリだけで書く（Maya のクライアントが import するため）。
+
+### D-12: Maya のクライアントは標準ライブラリだけで書く（Phase 1-B で実装予定）
+
+- Maya の Python に外部パッケージを入れずに済むようにするため。必要なのはテキストフレーム、ping/pong、close だけ。
+
+### D-13: 変換手順は `core/jobs.py` に置き、CLI とサーバーで共有する（2026-10-16）
+
+- Phase 0 の CLI にあった「オプション → 時間の対応 → 評価範囲 → 変換 → 読み戻しの検証」を移した。CLI とサーバーで結果が食い違わないようにするため。
+- サーバーは、変換が許容誤差を超えたら転送先に適用を依頼しない（CLI はファイルを書くだけなので従来どおり書き出す）。
+
 ## 4. 将来の構成（Phase 1 以降の方針）
 
 - **サーバー:** FastAPI + WebSocket、`127.0.0.1` のみで待ち受ける。起動時にセッショントークンを発行し、

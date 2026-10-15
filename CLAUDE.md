@@ -14,8 +14,11 @@ Maya の Scene Time Warp と After Effects の Time Remap を双方向に転送�
 | パス | 内容 |
 |---|---|
 | `src/syncbridge/core/` | Time Mapping Core。純 Python、**標準ライブラリのみ**、Maya/AE を import しない |
+| `src/syncbridge/core/jobs.py` | 変換手順（CLI とサーバーで共有、D-13） |
 | `src/syncbridge/cli.py` | Phase 0 の変換ハブ（ファイル経由） |
-| `src/syncbridge/server/`, `updater/` | Phase 1 / Phase 6（未実装） |
+| `src/syncbridge/protocol.py` | Phase 1 のメッセージ（標準ライブラリのみ、Maya からも使う） |
+| `src/syncbridge/server/` | Local Sync Server（FastAPI、`.venv` が必要）。`session.py` だけは標準ライブラリのみ |
+| `src/syncbridge/updater/` | Phase 6（未実装） |
 | `maya_plugin/scripts/syncbridge_maya/` | Maya アダプタ。`maya/` という名前は使わない（D-1） |
 | `after_effects/jsx/` | ExtendScript。`after_effects/cep/` は Phase 1 |
 | `schemas/` | 交換形式の JSON Schema |
@@ -24,9 +27,14 @@ Maya の Scene Time Warp と After Effects の Time Remap を双方向に転送�
 ## コマンド
 
 ```powershell
-py -3 -m unittest discover -s tests -t .          # 全テスト（CI は python）
+py -3 -m unittest discover -s tests -t .          # 標準ライブラリだけで動くテスト（サーバーはスキップ）
+.\.venv\Scripts\python -m unittest discover -s tests -t .   # サーバーを含む全テスト
 .\syncbridge.cmd selftest                          # CLI（参照カーブの往復テスト）
+.\syncbridge-server.cmd                            # Local Sync Server を起動
 ```
+
+- 新しい PC では最初に `.venv` を作る: `py -3.10 -m venv .venv` → `.venv\Scripts\python -m pip install -r requirements-server.txt`
+  （PC の Python 本体には入れない、D-11）。
 
 - `python` コマンドが Windows ストアの仮のコマンドの PC があるため、`py -3` か `syncbridge.cmd` を使う。pytest は未インストール（unittest で書く）。
 - Git Bash から `cmd //c syncbridge.cmd` を呼ぶとカレントフォルダが解決されないことがある。CLI の確認は PowerShell で行う。

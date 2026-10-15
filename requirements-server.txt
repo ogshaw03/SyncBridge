@@ -1,0 +1,9 @@
+# Local Sync Server (Phase 1). Install into the repository venv:
+#   py -3.10 -m venv .venv
+#   .venv\Scripts\python -m pip install -r requirements-server.txt
+# syncbridge.core itself needs only the standard library (it also runs inside Maya).
+fastapi==0.143.2
+uvicorn==0.54.0
+websockets==16.1.1
+# tests (FastAPI TestClient)
+httpx==0.28.1

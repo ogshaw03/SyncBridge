@@ -15,7 +15,7 @@ import argparse
 import json
 import sys
 
-from .core import ae_codec, envelope, maya_codec, testcurves, transfer
+from .core import ae_codec, envelope, jobs, maya_codec, testcurves, transfer
 from .core.mapping import MappingContext
 from .core.timebase import FrameRate
 from .core.validation import DEFAULT_TOLERANCE_FRAMES, compare_samples
@@ -46,137 +46,57 @@ def _add_mapping_args(p):
                    help="only match within the source keys (no extrapolation baking)")
 
 
-def _ctx(args, maya_fps, layer_start=None) -> MappingContext:
-    origin = args.origin if args.origin is not None else 0.0
-    comp_offset = args.comp_offset
-    if comp_offset is None:
-        comp_offset = layer_start if layer_start is not None else 0.0
-    return MappingContext(
-        maya_fps=FrameRate(maya_fps).to_json(),
-        maya_input_origin_frame=args.maya_in_origin if args.maya_in_origin is not None else origin,
-        maya_output_origin_frame=args.maya_out_origin if args.maya_out_origin is not None else origin,
-        ae_comp_time_offset=comp_offset,
-        ae_source_time_offset=args.source_offset,
-        source_time_scale=args.source_scale,
+def _options(args) -> jobs.TransferOptions:
+    return jobs.TransferOptions(
+        mode=args.mode,
+        tolerance_frames=args.tol,
+        origin=args.origin,
+        maya_in_origin=args.maya_in_origin,
+        maya_out_origin=args.maya_out_origin,
+        comp_offset=args.comp_offset,
+        source_offset=args.source_offset,
+        source_scale=args.source_scale,
+        key_subdivision=args.key_subdivision,
+        range_frames=tuple(args.range) if args.range else None,
+        no_range=args.no_range,
+        maya_fps=getattr(args, "maya_fps", None),
     )
-
-
-def _span(spans):
-    spans = [s for s in spans if s is not None]
-    if not spans:
-        return None
-    return min(s[0] for s in spans), max(s[1] for s in spans)
-
-
-def _playback_frames(maya_data):
-    pr = (maya_data or {}).get("scene", {}).get("playback_range")
-    return (float(pr[0]), float(pr[1])) if pr else None
-
-
-def _maya2ae_range(args, ctx, maya_data, ae_data):
-    """Comp-time range (seconds) for maya2ae: --range, else Maya playback and AE comp ranges."""
-    if args.no_range:
-        return None
-    if args.range:
-        return tuple(ctx.maya_frame_to_comp_time(f) for f in args.range)
-    pr = _playback_frames(maya_data)
-    return _span([
-        tuple(ctx.maya_frame_to_comp_time(f) for f in pr) if pr else None,
-        (0.0, float(ae_data["comp"]["duration"])) if ae_data else None,
-    ])
-
-
-def _ae2maya_range(args, ctx, ae_data, maya_data):
-    """Maya scene-time range (seconds) for ae2maya: --range, else AE comp and Maya playback ranges."""
-    if args.no_range:
-        return None
-    spf = ctx.rate.frame_duration
-    if args.range:
-        return tuple(f * spf for f in args.range)
-    pr = _playback_frames(maya_data)
-    comp = (0.0, float(ae_data["comp"]["duration"])) if "duration" in ae_data.get("comp", {}) else None
-    return _span([
-        tuple(f * spf for f in pr) if pr else None,
-        tuple(ctx.comp_time_to_maya_frame(t) * spf for t in comp) if comp else None,
-    ])
 
 
 def cmd_maya2ae(args) -> int:
     data = envelope.load(args.input, "maya.timewarp.export")["data"]
-    native = data["native"]
-    target_fps = native["fps"]
-    layer_start = None
-    ae = None
-    if args.ae_export:
-        ae = envelope.load(args.ae_export, "ae.timeremap.export")["data"]
-        target_fps = FrameRate.from_ae(ae["comp"]["frameRate"], ae["comp"].get("frameDuration"))
-        layer_start = ae["layer"]["startTime"]
-    ctx = _ctx(args, native["fps"], layer_start)
-    t_range = _maya2ae_range(args, ctx, data, ae)
-    result = transfer.maya_to_ae(native, ctx, args.mode, args.tol, target_fps,
-                                 data.get("samples"), args.key_subdivision, t_range)
-    out = envelope.make("ae.timeremap.apply", {
-        "mode": args.mode,
-        "context": ctx.to_json(),
-        "comp_fps": FrameRate(target_fps).to_json(),
-        "keys": result.native,
-        "report": result.to_json(),
-    })
-    envelope.save(args.output, out)
-    _print_result(result)
-    return 0 if result.passed else 2
+    ae = envelope.load(args.ae_export, "ae.timeremap.export")["data"] if args.ae_export else None
+    job = jobs.maya_to_ae_job(data, ae, _options(args))
+    envelope.save(args.output, job.apply_envelope())
+    _print_result(job.result)
+    return 0 if job.passed else 2
 
 
 def cmd_ae2maya(args) -> int:
     data = envelope.load(args.input, "ae.timeremap.export")["data"]
-    maya_fps = args.maya_fps
     maya_data = None
     if args.maya_export:
         maya_data = envelope.load(args.maya_export, "maya.timewarp.export")["data"]
-        maya_fps = maya_data["scene"]["fps"]
-    if maya_fps is None:
+    if maya_data is None and args.maya_fps is None:
         print("error: --maya-fps or --maya-export is required", file=sys.stderr)
         return 1
-    ctx = _ctx(args, maya_fps, data["layer"]["startTime"])
-    t_range = _ae2maya_range(args, ctx, data, maya_data)
-    result = transfer.ae_to_maya(data["keys"], ctx, args.mode, args.tol,
-                                 data.get("samples"), args.key_subdivision, t_range)
-    out = envelope.make("maya.timewarp.apply", {
-        "mode": args.mode,
-        "context": ctx.to_json(),
-        "native": result.native,
-        "report": result.to_json(),
-    })
-    envelope.save(args.output, out)
-    _print_result(result)
-    return 0 if result.passed else 2
+    job = jobs.ae_to_maya_job(data, maya_data, _options(args))
+    envelope.save(args.output, job.apply_envelope())
+    _print_result(job.result)
+    return 0 if job.passed else 2
 
 
 def cmd_readback(args) -> int:
     """Compare what the target app evaluates after apply with what was sent."""
     with open(args.apply, encoding="utf-8") as f:
         apply_env = json.load(f)
-    data = envelope.check(apply_env)
-    kind = apply_env["kind"]
-    if kind == "ae.timeremap.apply":
-        after = envelope.load(args.after, "ae.timeremap.export")["data"]
-        expected = ae_codec.decode(data["keys"])
-        fps = data["comp_fps"]
-        times, values = after["samples"]["times"], after["samples"]["values"]
-    elif kind == "maya.timewarp.apply":
-        after = envelope.load(args.after, "maya.timewarp.export")["data"]
-        expected = maya_codec.decode(data["native"])
-        fps = data["native"]["fps"]
-        spf = FrameRate(fps).frame_duration
-        times = [t * spf for t in after["samples"]["times"]]
-        values = [v * spf for v in after["samples"]["values"]]
-    else:
+    envelope.check(apply_env)
+    if apply_env["kind"] not in ("ae.timeremap.apply", "maya.timewarp.apply"):
         print("error: %s is not an apply file" % args.apply, file=sys.stderr)
         return 1
-    lo, hi = expected.domain
-    pairs = [(t, v) for t, v in zip(times, values) if lo <= t <= hi]
-    report = compare_samples([p[0] for p in pairs], [p[1] for p in pairs],
-                             expected.evaluate, fps, args.tol)
+    with open(args.after, encoding="utf-8") as f:
+        after_env = json.load(f)
+    report = jobs.readback(apply_env, after_env, args.tol)
     print("readback:", report.summary())
     for t, err in report.exceedances[:10]:
         print("  t=%.5f s  error=%.5f f" % (t, err))

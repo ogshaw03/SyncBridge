@@ -242,12 +242,12 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 
 | # | 条件 | 状態 |
 |---|---|---|
-| P0-1 | 単体・結合テスト（`python -m unittest discover -s tests -t .`）が全件 PASS（CI: Windows/Ubuntu × Python 3.9/3.11） | ✅ ローカル 65 件 PASS（Python 3.10）。CI は push 後に確認 |
+| P0-1 | 単体・結合テスト（`python -m unittest discover -s tests -t .`）が全件 PASS（CI: Windows/Ubuntu × Python 3.9/3.11） | ✅ ローカル 82 件 PASS（Python 3.10）。CI は 2026-10-16 の push で実行し、利用者が確認 |
 | P0-2 | `.\syncbridge.cmd selftest` が全件 PASS（10 カーブ × 2 モード × 2 方向、誤差 0.1 フレーム以下） | ✅ |
 | P0-3 | V-MY-1: H-MY-1〜7, 9 の判定が記録され、`write_roundtrip` が少なくとも 1 つの weight 候補で全カーブ 0.01 フレーム以下 | ✅ Maya 2024（2 回目）: H-MY-1〜7, 9 を判定、全カーブが "w (frames)" で誤差 0。Maya 2023 では未実施。3 回目で範囲外の評価（H-MY-11）も判定し、実データを回帰テスト化 |
 | P0-4 | V-AE-1: `verify-ae-probe` が全件 PASS（許容 0.01 フレーム）、`@startTime` 版も PASS | ✅ AE 26.5（2 回目、13 ベクトル全て誤差 0。ただし `ae_mixed_linear_bezier` は H-AE-6 のモデル修正後の再判定）。AE 2024/2025 では未実施 |
 | P0-5 | V-MY-2 / V-AE-2: 両方向・両モードでリードバックの誤差が 0.1 フレーム以下 | 実施中: **Editable は両方向とも合格**（リードバックとアプリ間の直接比較が誤差 0、8 章 #8・#9）。Precision モードの実機テストは先送り（利用者の判断、PROGRESS.md 参照） |
-| P0-6 | V-MY-3: レンダー比較で焼き込みのフレーム番号が一致 | 未実施 |
+| P0-6 （先送り） | V-MY-3: レンダー比較で焼き込みのフレーム番号が一致 | 未実施 |
 
 P0-3〜P0-6 の結果によって設計変更が必要になった場合は、`ARCHITECTURE.md` の「設計判断」に理由とともに追記する。
 
@@ -379,6 +379,7 @@ P0-3〜P0-6 の結果によって設計変更が必要になった場合は、`A
     存在しないファイルは「File not found」と表示。`after_effects/jsx/*.json` を `.gitignore` に追加
   - 外側の接線が 0° の Linear 外挿にも「表現できない」警告が出ていた → 傾きがあるときだけ警告するよう変更（transfer、ae_codec）
 - 次: 取り消しの確認、Precision モード、AE → Maya（V-AE-2）
+- 追記: AE の Apply は「編集 → 取り消し」1 回で元に戻ることを利用者が確認
 
 ### 2026-10-16 #9 — 転送テスト V-AE-2（AE 26.5 → Maya 2024、Editable）
 

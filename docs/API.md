@@ -74,7 +74,40 @@ mapping: --mode editable|precision --tol 0.1 --origin F --maya-in-origin F --may
 | `SB.buildExport(comp, layer, oversample)` | `ae.timeremap.export` を作る |
 | `SBJSON.parse / stringify` | ES3 用 JSON |
 
-## 6. Phase 1 の予定（未実装）
+## 6. Local Sync Server（Phase 1、1-A 実装済み）
 
-- `ws://127.0.0.1:8765`、接続時にトークンで認証。
-- メッセージ = エンベロープ。追加予定の kind: `hello`, `bye`, `sync.request`, `sync.ack`, `sync.conflict`, `settings.*`。
+起動: `.\syncbridge-server.cmd [--port 8765] [--idle-timeout 600]`（`.venv` が必要、`requirements-server.txt`）。
+
+| 項目 | 内容 |
+|---|---|
+| 待ち受け | `127.0.0.1` のみ（既定ポート 8765）。`GET /health` → `{app: "syncbridge", version, protocol, clients}`（秘密情報なし） |
+| WebSocket | `ws://127.0.0.1:<port>/ws`。JSON テキストフレーム 1 つ = エンベロープ 1 つ |
+| セッションファイル | `%LOCALAPPDATA%\SyncBridge\session.json` = `{port, token, pid, version, started}`。クライアントはここから port と token を読む。`SYNCBRIDGE_SESSION_DIR` で場所を変更可 |
+| 認証 | 最初のメッセージは `hello`（10 秒以内）。トークンが違えば `error auth_failed` を返して close 4401 |
+| 二重起動 | 起動時に `/health` を確認し、SyncBridge が動いていれば何もせず終了（終了コード 0）。別のプログラムがポートを使っていれば 3 |
+| 自動終了 | 接続が `--idle-timeout` 秒（既定 600、0 で無効）なければ終了し、セッションファイルを消す |
+
+### メッセージ（`src/syncbridge/protocol.py`）
+
+応答は `reply_to` に要求の `event_id` を入れる。
+
+| kind | 向き | data |
+|---|---|---|
+| `hello` | クライアント → サーバー | `token`, `app`（maya / ae / test）, `version`, `pid`, `document` |
+| `welcome` | サーバー → クライアント | `client_id`（例 `maya-1`）, `server_version`, `protocol` |
+| `peers` | サーバー → 全員 | `clients: [{client_id, app, version, pid, document, connected_at}]`（接続・切断のたび） |
+| `transfer.request` | クライアント → サーバー | `direction`（maya2ae / ae2maya）, `options`（`core.jobs.TransferOptions` の JSON）, 省略可 `source` / `target`（client_id） |
+| `transfer.result` | サーバー → 要求元 | `status`（applied / cancelled / failed）, `direction`, `source`, `target`, `report`（変換の誤差）, `readback`, `backup`, `message` |
+| `export.request` / `export.result` | サーバー ⇔ アプリ | `{}` / `{export: <maya.timewarp.export か ae.timeremap.export のエンベロープ>}` |
+| `apply.request` / `apply.result` | サーバー ⇔ アプリ | `{apply: <apply エンベロープ>}` / `{status, after?: <適用後の export エンベロープ>, backup?, message?}` |
+| `error` | どちらでも | `code`, `message`（要求への応答なら `reply_to` 付き） |
+
+エラーコード: `bad_message`, `auth_failed`, `no_peer`, `timeout`, `peer_disconnected`, `app_error`, `conversion_failed`, `busy`。
+
+### 転送の規則
+
+- 送信元のアプリ（方向から決まる）は、要求元がそのアプリならその接続、違えば最後に接続したそのアプリ（`source` で指定可）。
+  転送先も同様（`target` で指定可）。
+- 変換が許容誤差を超えたら **転送先に何も送らない**（`status: failed` と誤差レポートを返す、SPEC 5 章）。
+- 転送は同時に 1 つだけ（2 つ目は `busy`）。export は 60 秒、apply は利用者の確認を待つため 600 秒でタイムアウト。
+- `apply.result` に `after` があれば、サーバーが読み戻しを検証して `readback` に入れる。

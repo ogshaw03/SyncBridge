@@ -20,14 +20,26 @@ KINDS = (
     "ae.probe.vectors",
     "ae.probe.results",
     "maya.probe.results",
+    # Phase 1 messages (syncbridge.protocol, docs/API.md)
+    "hello",
+    "welcome",
+    "peers",
+    "transfer.request",
+    "transfer.result",
+    "export.request",
+    "export.result",
+    "apply.request",
+    "apply.result",
+    "error",
 )
 
 
 def make(kind: str, data: dict, source_id: str = "core", app: Optional[dict] = None,
-         revision: int = 0) -> dict:
+         revision: int = 0, reply_to: Optional[str] = None) -> dict:
+    """Build an envelope. `reply_to` is the event_id of the request this answers."""
     if kind not in KINDS:
         raise ValueError("unknown kind: %r" % kind)
-    return {
+    env = {
         "schema": SCHEMA,
         "schema_version": SCHEMA_VERSION,
         "kind": kind,
@@ -38,6 +50,9 @@ def make(kind: str, data: dict, source_id: str = "core", app: Optional[dict] = N
         "app": app or {},
         "data": data,
     }
+    if reply_to is not None:
+        env["reply_to"] = reply_to
+    return env
 
 
 def check(envelope: dict, kind: Optional[str] = None) -> dict:

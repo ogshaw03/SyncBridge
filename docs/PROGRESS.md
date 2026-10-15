@@ -2,9 +2,8 @@
 
 ## 現在の状態
 
-- **フェーズ:** Phase 0（技術検証）— DCC 不要の部分は完了、**実機検証中**
-  （AE 26.5・Maya 2024 とも、プローブの合格条件 P0-3/P0-4 を満たした。Editable の転送は両方向とも実機で誤差 0。
-  Precision の転送とレンダー比較は未実施）
+- **フェーズ:** **Phase 1（通信基盤）**。1-A（サーバー本体、実機なし）完了、次は 1-B（Maya クライアント）。計画は `docs/PHASE1_PLAN.md`。
+  Phase 0 は P0-1〜P0-4 合格、P0-5 は Editable のみ合格、Precision の実機転送とレンダー比較（P0-6）は先送り（下の「先送りにしたもの」）
 - **最終更新:** 2026-10-16
 
 ## 実装済み
@@ -28,12 +27,23 @@
 | AE プローブ | `after_effects/jsx/probe_ae.jsx` | ✅ AE 26.5 で 2 回実行、2 回目は 13 ベクトル全て誤差 0 |
 | AE の実データによる回帰テスト | `tests/fixtures/ae26.5_probe_run2.json`, `tests/unit/test_ae_real_data.py` | ✅ |
 | ES3 用 JSON | `after_effects/jsx/syncbridge_json.jsxinc` | ✅ Node で Python の json と往復確認 |
-| CI（Windows/Ubuntu × Python 3.9/3.11） | `.github/workflows/tests.yml` | ⚠ 未実行（push 後に確認） |
+| CI（Windows/Ubuntu × Python 3.9/3.11） | `.github/workflows/tests.yml` | ✅ 2026-10-16 の push で実行、利用者が確認。サーバー用 job は追加後未実行 |
+| 変換手順の共通化（CLI とサーバー） | `core/jobs.py` | ✅ テスト済（D-13） |
+| プロトコル（Phase 1） | `protocol.py` | ✅ テスト済 |
+| Local Sync Server（認証、二重起動防止、自動終了、手動転送の手順） | `server/`, `syncbridge-server.cmd` | ✅ 偽クライアントで 18 件のテスト。実際の Maya/AE とは未接続 |
 
 ## テスト結果
 
 ### 2026-10-16（Windows 11, Python 3.10.6）
 
+- **Phase 1-A:** `.venv` に FastAPI 0.143.2 / uvicorn 0.54.0 / websockets 16.1.1 / httpx を導入（`requirements-server.txt`）。
+  CLI の変換手順を `core/jobs.py` に移し、プロトコル、セッション、サーバー、転送の手順を実装。
+  偽の Maya/AE クライアントを本物の WebSocket でつなぐテストで、両方向の転送、取り消し、未接続、アプリのエラー、切断、
+  タイムアウト、変換失敗時に適用しないこと、同時実行の拒否を確認。
+  実際に起動して、二重起動の検出、セッションファイル、8 秒の自動終了とファイル削除を確認。
+  テスト: 標準 Python で 106 件 OK（サーバーの 16 件はスキップ）、`.venv` で **106 件 OK**。
+- AE の Apply も「編集 → 取り消し」1 回で元に戻ることを利用者が確認（V-MY-2 の残り）。
+- GitHub に初回 push（`main`）。GitHub Actions の結果は利用者がブラウザで確認済み（ローカルのブラウザ操作では未確認）。
 - 転送テスト V-AE-2（PHASE0_RESEARCH.md 8 章 #9）: AE 26.5 → Maya 2024、Editable。AE で中間のキーの時刻と値を編集 →
   Maya に 17→8.58 として反映、Maya の readback 誤差 0、AE の評価と Maya のカーブの直接比較も誤差 0。Maya の取り消し 1 回で復元。
   入力式の Export も動作。
@@ -96,13 +106,16 @@
 
 ## 次にやること
 
-1. **[実機・利用者]** V-MY-2 / V-AE-2 の残り: AE の取り消しの確認、新しい Apply のファイル一覧の確認。
-2. **[実機・利用者]** V-MY-3: レンダー比較（H-MY-8）。
-3. **[実機・利用者]** 余裕があれば: 30fps のシーンでの Maya プローブ（H-MY-5）、Maya 2023 / AE 2024 での再確認。
-4. GitHub Actions（Python 3.9 を含む）の結果を確認する（2026-10-16 に初回 push 済み、結果は未確認）。
-5. Phase 1 の準備: V-AE-3（CEP → localhost の WebSocket）、サーバーの最小実装。
+1. **Phase 1-B:** Maya クライアント（標準ライブラリの WebSocket、受信は別スレッド → `executeDeferred` でメインスレッド）と
+   最小 UI（接続状態、AE へ送る／AE から受ける）。export / apply の要求に Phase 0 の `exchange` の処理で応える。
+   実機確認は Maya 2024（H-MY-14）。その後 1-C（CEP パネル、PlayerDebugMode は利用者が設定）、1-D（両方向の手動転送）。
+2. **[実機・利用者]** 余裕があれば: 30fps のシーンでの Maya プローブ（H-MY-5）、Maya 2023 / AE 2024 での再確認。
 
 ### 先送りにしたもの
+
+- **レンダー比較 V-MY-3（2026-10-16、利用者の判断）:** テストシーンの準備とレンダリングに時間がかかるため、Phase 1 を先に進める。
+  未確認のまま残るのは H-MY-8（Maya のバッチレンダーに Scene Time Warp がかかるか）と、レンダー開始フレームと
+  AE のソース 0 秒の対応が実際の素材で正しいか。実制作で使う前、遅くとも Phase 2 の終わりまでに行う。手順は PHASE0_RESEARCH.md の V-MY-3。
 
 - **Precision モードの実機転送テスト（2026-10-16、利用者の判断）:** UI で作った Scene Time Warp は Editable で
   両方向とも誤差 0 だったため、優先度を下げた。Precision モード自体は実装済みで、単体テストと selftest では合格している。

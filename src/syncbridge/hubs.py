@@ -36,7 +36,7 @@ class HubInfo:
     def __init__(self, pid: int, port: Optional[int] = None, token: Optional[str] = None,
                  version: Optional[str] = None, started: Optional[str] = None,
                  executable: Optional[str] = None, file: Optional[str] = None,
-                 recorded_image: Optional[str] = None):
+                 recorded_image: Optional[str] = None, log_file: Optional[str] = None):
         self.pid = pid
         self.port = port
         self.token = token
@@ -45,6 +45,7 @@ class HubInfo:
         self.executable = executable
         self.file = file
         self.recorded_image = recorded_image   # the image the hub saw for itself
+        self.log_file = log_file
         self.alive = False
         self.image: Optional[str] = None
         self.verified = False
@@ -56,7 +57,7 @@ class HubInfo:
         """Everything except the token."""
         return {"pid": self.pid, "port": self.port, "version": self.version, "started": self.started,
                 "executable": self.executable, "file": self.file, "alive": self.alive,
-                "image": self.image, "verified": self.verified, "current": self.current,
+                "image": self.image, "log_file": self.log_file, "verified": self.verified, "current": self.current,
                 "state": self.state, "clients": (self.health or {}).get("clients")}
 
     def __repr__(self):
@@ -84,7 +85,8 @@ def discover(health_timeout: float = 0.5, scan_processes: bool = True) -> List[H
 
 def _from_file(data: dict, path: Optional[str]) -> HubInfo:
     return HubInfo(data["pid"], data.get("port"), data.get("token"), data.get("version"),
-                   data.get("started"), data.get("executable"), path, data.get("image"))
+                   data.get("started"), data.get("executable"), path, data.get("image"),
+                   data.get("log_file"))
 
 
 def _inspect(hub: HubInfo, health_timeout: float) -> None:

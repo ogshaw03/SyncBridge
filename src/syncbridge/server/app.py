@@ -29,6 +29,7 @@ CLOSE_AUTH = 4401        # application close codes (4000-4999)
 CLOSE_PROTOCOL = 4400
 CLOSE_REPLACED = 4409
 LOGGERS = ("syncbridge", "uvicorn.error")   # what the monitor sees (not uvicorn.access)
+LOG_FORMAT = "%(asctime)s %(name)s %(levelname)s %(message)s"
 
 
 def create_app(token: str, idle_timeout: Optional[float] = None,
@@ -36,9 +37,13 @@ def create_app(token: str, idle_timeout: Optional[float] = None,
                export_timeout: Optional[float] = None,
                apply_timeout: Optional[float] = None,
                on_shutdown: Optional[Callable[[], None]] = None,
-               port: Optional[int] = None) -> FastAPI:
+               port: Optional[int] = None,
+               log_file: Optional[str] = None) -> FastAPI:
     """Build the app. `on_idle` is called once no client has been connected for `idle_timeout` s;
-    `on_shutdown` by POST /admin/shutdown."""
+    `on_shutdown` by POST /admin/shutdown. `log_file` also receives the log lines the monitor sees.
+
+    The log handlers are attached in the lifespan: uvicorn reconfigures its loggers when it
+    starts and would drop handlers attached earlier."""
     manager = ConnectionManager()
     bus = hubstate.EventBus()
     logbuf = hubstate.LogBuffer(bus)
@@ -56,8 +61,17 @@ def create_app(token: str, idle_timeout: Optional[float] = None,
     @contextlib.asynccontextmanager
     async def lifespan(_app):
         bus.bind(asyncio.get_running_loop())
+        handlers = [logbuf]
+        if log_file:
+            try:
+                fh = logging.FileHandler(log_file, encoding="utf-8")
+                fh.setFormatter(logging.Formatter(LOG_FORMAT))
+                handlers.append(fh)
+            except OSError as exc:
+                log.warning("cannot write the log file %s: %s", log_file, exc)
         for name in LOGGERS:
-            logging.getLogger(name).addHandler(logbuf)
+            for h in handlers:
+                logging.getLogger(name).addHandler(h)
         if log.getEffectiveLevel() > logging.INFO:
             log.setLevel(logging.INFO)          # the monitor shows connects and transfers
         task = None
@@ -69,7 +83,10 @@ def create_app(token: str, idle_timeout: Optional[float] = None,
             if task is not None:
                 task.cancel()
             for name in LOGGERS:
-                logging.getLogger(name).removeHandler(logbuf)
+                for h in handlers:
+                    logging.getLogger(name).removeHandler(h)
+            for h in handlers[1:]:
+                h.close()
 
     app = FastAPI(title="SyncBridge Sync Server", version=__version__, lifespan=lifespan)
     app.state.manager = manager

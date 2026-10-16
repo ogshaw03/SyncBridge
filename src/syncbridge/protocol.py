@@ -42,6 +42,8 @@ E_APP = "app_error"
 E_CONVERSION = "conversion_failed"
 E_BUSY = "busy"
 E_REPLACED = "replaced"          # a newer connection from the same process took over
+E_HUB_STOPPING = "hub_stopping"  # the hub was stopped from the monitor (P-B)
+E_DISCONNECTED_BY_ADMIN = "disconnected_by_admin"   # the monitor disconnected this app (P-A)
 
 # request kind -> reply kind
 REPLIES = {

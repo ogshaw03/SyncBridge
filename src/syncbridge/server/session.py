@@ -30,6 +30,7 @@ from typing import List, Optional
 
 SESSION_FILE = "session.json"
 HUBS_DIR = "hubs"
+LOGS_DIR = "logs"
 ENV_DIR = "SYNCBRIDGE_SESSION_DIR"
 
 
@@ -55,6 +56,10 @@ def hubs_dir() -> str:
     return os.path.join(session_dir(), HUBS_DIR)
 
 
+def logs_dir() -> str:
+    return os.path.join(session_dir(), LOGS_DIR)
+
+
 def hub_path(pid: int) -> str:
     return os.path.join(hubs_dir(), "%d.json" % pid)
 
@@ -76,7 +81,7 @@ def _own_image() -> Optional[str]:
         return None
 
 
-def write_session(port: int, token: str, version: str) -> str:
+def write_session(port: int, token: str, version: str, log_file: Optional[str] = None) -> str:
     """Write session.json and hubs/<pid>.json atomically; return the session.json path."""
     data = {
         "port": port,
@@ -88,6 +93,7 @@ def write_session(port: int, token: str, version: str) -> str:
         # The real process image: in a venv on Windows sys.executable is a launcher that
         # starts the base python as a child, so the hub runs under another file.
         "image": _own_image(),
+        "log_file": log_file,
     }
     _write_json_atomic(hub_path(os.getpid()), data)
     _write_json_atomic(session_path(), data)

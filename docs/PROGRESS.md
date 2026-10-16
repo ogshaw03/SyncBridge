@@ -34,6 +34,7 @@
 | プロトコル（Phase 1） | `protocol.py` | ✅ テスト済 |
 | Local Sync Server（認証、二重起動防止、自動終了、手動転送の手順） | `server/`, `syncbridge-server.cmd` | ✅ 偽クライアントで 18 件のテスト。実際の Maya/AE とは未接続 |
 | ハブの管理 API、転送の履歴、ログ、ハブごとのセッションファイル、ハブの発見・強制終了（P-A） | `server/admin.py`, `server/hubstate.py`, `hubs.py` | ✅ テスト済（16 件）。実際のハブで発見と停止を確認。インストール版では未確認 |
+| モニター（ハブの一覧、接続中のアプリ、履歴、ログ、停止・強制終了・切断）、ハブのログファイル（P-B） | `monitor/`, `syncbridge-monitor.cmd` | ✅ テスト済（Qt は offscreen）。利用者の画面では未確認 |
 | クライアント（stdlib の WebSocket、SyncClient、サーバーの自動起動） | `client/` | ✅ テスト済（stdlib のテストサーバーと本物のサーバーの両方） |
 | Maya の接続（service）と最小パネル（ui） | `maya_plugin/.../service.py`, `ui.py` | ✅ Maya 2024 で V-P1B 合格（AE は代役）。その後のログ表示の改善は Maya で未確認 |
 | AE の代役 | `tools/fake_ae.py` | ✅ 本物のサーバーと実データで両方向を確認 |
@@ -42,6 +43,17 @@
 ## テスト結果
 
 ### 2026-10-16（Windows 11, Python 3.10.6）
+
+- **P-B（モニター、D-15）:** `monitor/model.py`（Qt なし）、`monitor/window.py`（PySide6-Essentials 6.11.2 を `.venv` に追加、
+  `requirements-monitor.txt`）、`syncbridge-monitor.cmd`。ハブのログファイル `logs/hub-<pid>.log`、停止時にアプリへ `hub_stopping` を通知。
+  テスト **195 件 OK**（`.venv`、画面は offscreen の Qt で確認）、システムの py 3.10 では 52 件スキップで OK。
+  実際のハブ（`python -m syncbridge.server`）と偽の Maya / AE で転送してから、モニターの画面を offscreen で撮影し、
+  一覧・接続中のアプリ・履歴・ログが日本語で表示されることを確認。**利用者の画面での操作（停止、強制終了、切断）は未確認。**
+  - 利用者の確認の途中: Maya のパネルはインストール版 0.1.1 の `SyncServer.exe` を起動するため、管理 API がなく
+    「404 Not Found」とだけ出た → 古い版のハブだと日本語で説明し、「停止」を無効にした（強制終了は可能）。
+    テスト 196 件（1 件はこの PC で動いている `SyncServer.exe` が一覧に出て行数が合わず失敗 → 自分のハブの行を探すように修正し、モニターのテスト 8 件 OK）。
+  - ポート 8765 を `python -m http.server`（SyncBridge と無関係）が使っていて、Maya の接続が英語の「port 8765 is used by another program」で止まった。
+    日本語にしてプロセス名を出す改善は未着手。
 
 - **P-A（ハブの管理 API・履歴・ログ、D-15）:** `server/admin.py`（管理 API、トークン必須）、`server/hubstate.py`（転送の履歴、
   ログの保持、イベント配信）、ハブごとのセッションファイル `hubs/<pid>.json`、`hubs.py`（ハブの発見、確認、強制終了、片付け）。
@@ -155,9 +167,9 @@
 
 1. **[実機・利用者]** 0.1.1 を GitHub Releases から入れて確認する（0.1.0 からの更新、保存・復元・範囲変更、
    素材が短いときの日本語メッセージ）。Python のない PC での確認（H-PKG-2）も残っている。
-2. **ハブ・ランチャー・モニター（D-15、`docs/PLATFORM_DESIGN.md`）:** P-A は実装済み（11 章）。次は P-B（モニター、PySide6 の
-   普通のウィンドウ: ハブの一覧、接続中のアプリ、履歴、ログ、停止・強制終了・切断）→ P-C（ランチャー）→ P-D（アップデーター）。
-   P-B と合わせて、ハブのログのファイル出力と、停止時に接続中のアプリへ知らせる処理を入れる。
+2. **ハブ・ランチャー・モニター（D-15、`docs/PLATFORM_DESIGN.md`）:** P-A・P-B は実装済み（11・12 章）。
+   **[利用者]** `.\syncbridge-monitor.cmd` でモニターを開き、Maya / AE をつないだ状態で一覧・履歴・ログ・停止・切断を確認する。
+   次は P-C（ランチャー、モニターと合わせて `SyncBridge.exe` に）→ P-D（アップデーター）。
 3. **Phase 2（基本設定の同期）:** FPS、解像度、ピクセルアスペクト比、フレーム範囲（Maya の再生範囲・アニメーション範囲・
    レンダー範囲 ⇔ AE のコンプの長さ・ワークエリア）、現在フレーム（SPEC 6 章）。Maya 側の読み取りは Phase 0 で実装済み。
 3. **[実機・利用者]** 余裕があれば: 30fps のシーンでの Maya プローブ（H-MY-5）、Maya 2023 / AE 2024 での再確認。

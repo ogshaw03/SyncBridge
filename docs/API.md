@@ -116,7 +116,8 @@ mapping: --mode editable|precision --tol 0.1 --origin F --maya-in-origin F --may
 | `apply.request` / `apply.result` | サーバー ⇔ アプリ | `{apply: <apply エンベロープ>}` / `{status, after?: <適用後の export エンベロープ>, backup?, message?}` |
 | `error` | どちらでも | `code`, `message`（要求への応答なら `reply_to` 付き） |
 
-エラーコード: `bad_message`, `auth_failed`, `no_peer`, `timeout`, `peer_disconnected`, `app_error`, `conversion_failed`, `busy`。
+エラーコード: `bad_message`, `auth_failed`, `no_peer`, `timeout`, `peer_disconnected`, `app_error`, `conversion_failed`, `busy`,
+`replaced`, `hub_stopping`（モニターから停止）, `disconnected_by_admin`（モニターから切断）。
 
 ### 転送の規則
 
@@ -137,7 +138,7 @@ mapping: --mode editable|precision --tol 0.1 --origin F --maya-in-origin F --may
 | `GET /admin/transfers?limit=50` | `{transfers: [{id, started, finished, requester, direction, data_type, source, target, status, error_code, message, conversion_max_error, readback_max_error, readback_passed}]}`（古い順、`status` は running / applied / cancelled / failed / error） |
 | `GET /admin/log?tail=200` | `{lines: [{time, level, logger, message}]}`（古い順） |
 | `WS /admin/events` | 最初に `{event: "status", status}`、以降 `client.connected` / `client.disconnected`（`client`）、`transfer.started` / `transfer.finished`（`transfer`）、`log`（`entry`） |
-| `POST /admin/shutdown` | `{status: "stopping"}` の後に正常終了 |
+| `POST /admin/shutdown` | 接続中のアプリに `error hub_stopping` を送り、`{status: "stopping"}` を返した後に正常終了 |
 | `POST /admin/clients/{client_id}/disconnect` | アプリに `error disconnected_by_admin` を送って close 4410。`{status: "disconnected"}`、いなければ 404 |
 
 `syncbridge.hubs`（標準ライブラリのみ）: `discover()` → `[HubInfo]`（`state`: running / not_responding / stale / unknown）、

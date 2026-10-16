@@ -28,7 +28,10 @@ from .. import __version__, protocol
 AUTH_TIMEOUT = 10.0
 CLOSE_AUTH = 4401
 CLOSE_BY_ADMIN = 4410
-E_DISCONNECTED_BY_ADMIN = "disconnected_by_admin"
+E_DISCONNECTED_BY_ADMIN = protocol.E_DISCONNECTED_BY_ADMIN
+# Shown as is in the Maya and AE panel logs ("error: <message>").
+MSG_STOPPING = "SyncBridge のハブがモニターから停止されました。もう一度接続すると新しいハブが起動します。"
+MSG_DISCONNECTED = "SyncBridge のモニターから切断されました。"
 
 
 def create_admin_router(token: str, state, on_shutdown: Optional[Callable[[], None]] = None) -> APIRouter:
@@ -75,6 +78,11 @@ def create_admin_router(token: str, state, on_shutdown: Optional[Callable[[], No
         if on_shutdown is None:
             raise HTTPException(status_code=501, detail="this hub cannot be stopped through the API")
         state.log.info("shutdown requested through the admin API")
+        for client in list(state.manager.clients.values()):      # tell the apps first (5.2)
+            try:
+                await client.send_text(protocol.encode(protocol.error(protocol.E_HUB_STOPPING, MSG_STOPPING)))
+            except Exception:
+                pass
         # Answer first, then stop.
         asyncio.get_running_loop().call_later(0.2, on_shutdown)
         return {"status": "stopping"}
@@ -88,7 +96,7 @@ def create_admin_router(token: str, state, on_shutdown: Optional[Callable[[], No
         state.log.info("disconnecting %s (admin request)", client_id)
         try:
             await client.send_text(protocol.encode(protocol.error(
-                E_DISCONNECTED_BY_ADMIN, "disconnected from the SyncBridge monitor")))
+                E_DISCONNECTED_BY_ADMIN, MSG_DISCONNECTED)))
             if client.close is not None:
                 await client.close(code=CLOSE_BY_ADMIN)
         except Exception:

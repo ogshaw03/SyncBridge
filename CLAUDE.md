@@ -20,6 +20,8 @@ Maya の Scene Time Warp と After Effects の Time Remap を双方向に転送�
 | `src/syncbridge/client/` | サーバーへのクライアント（WebSocket、SyncClient、サーバー起動）。標準ライブラリのみ（Maya 内で動く） |
 | `tools/fake_ae.py` | 開発用の AE の代役（AE パネルなしで Maya 側を試す） |
 | `src/syncbridge/server/` | Local Sync Server（FastAPI、`.venv` が必要）。`session.py` だけは標準ライブラリのみ |
+| `src/syncbridge/hubs.py` | ハブの発見・確認・強制終了、管理 API の呼び出し（標準ライブラリのみ、D-15） |
+| `src/syncbridge/monitor/` | モニター（P-B）。`model.py` は Qt なし、`window.py` は PySide6（`requirements-monitor.txt`） |
 | `src/syncbridge/updater/` | Phase 6（未実装） |
 | `maya_plugin/scripts/syncbridge_maya/` | Maya アダプタ。`maya/` という名前は使わない（D-1） |
 | `after_effects/` | CEP 拡張機能のルート（`CSXS/manifest.xml`、`panel/`）。`jsx/` は ExtendScript。詳細は `after_effects/README.md` |
@@ -33,11 +35,13 @@ py -3 -m unittest discover -s tests -t .          # 標準ライブラリだけ�
 .\.venv\Scripts\python -m unittest discover -s tests -t .   # サーバーを含む全テスト
 .\syncbridge.cmd selftest                          # CLI（参照カーブの往復テスト）
 .\syncbridge-server.cmd                            # Local Sync Server を起動
+.\syncbridge-monitor.cmd                           # モニターを起動（PySide6 が必要）
 .\.venv\Scripts\python packaging\build_release.py  # 配布用 zip を作る（docs/RELEASE.md）
 ```
 
-- 新しい PC では最初に `.venv` を作る: `py -3.10 -m venv .venv` → `.venv\Scripts\python -m pip install -r requirements-server.txt`
+- 新しい PC では最初に `.venv` を作る: `py -3.10 -m venv .venv` → `.venv\Scripts\python -m pip install -r requirements-server.txt -r requirements-monitor.txt`
   （PC の Python 本体には入れない、D-11）。
+- Qt の画面をスクリーンショットで確認するときは `QT_QPA_PLATFORM=offscreen` と `QT_QPA_FONTDIR=C:/Windows/Fonts`（指定しないと日本語が □ になる）。
 
 - `python` コマンドが Windows ストアの仮のコマンドの PC があるため、`py -3` か `syncbridge.cmd` を使う。pytest は未インストール（unittest で書く）。
 - Git Bash から `cmd //c syncbridge.cmd` を呼ぶとカレントフォルダが解決されないことがある。CLI の確認は PowerShell で行う。

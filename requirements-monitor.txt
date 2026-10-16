@@ -1,0 +1,5 @@
+# Monitor / launcher (P-B, docs/PLATFORM_DESIGN.md). Install into the repository venv on top of
+# requirements-server.txt:
+#   .venv\Scripts\python -m pip install -r requirements-monitor.txt
+# Essentials only (QtCore/QtGui/QtWidgets); the add-ons (WebEngine, 3D, ...) are not needed.
+PySide6-Essentials==6.11.2

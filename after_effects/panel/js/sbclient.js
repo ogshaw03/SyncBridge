@@ -65,6 +65,11 @@
         remap_off: function (p) {
             return 'レイヤー「' + p.layer + '」のタイムリマップが有効になっていません。';
         },
+        out_of_source: function (p) {
+            return 'レイヤー「' + p.layer + '」の素材は ' + Number(p.duration).toFixed(2) + ' 秒ですが、送られてきたキーには素材の ' +
+                Number(p.min).toFixed(2) + '〜' + Number(p.max).toFixed(2) + ' 秒が必要です。' +
+                '素材が短いか、原点フレームが合っていません。何も変更していません。';
+        },
         no_server: function () {
             return 'SyncBridge サーバーが起動していません。Maya のパネルで Connect を押すか、syncbridge-server.cmd で起動してください。';
         }

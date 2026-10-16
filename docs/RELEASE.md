@@ -50,6 +50,20 @@
 - 2024 年 11 月の Adobe の既知の問題（KnownIssue2024: 拡張機能内のシンボリックリンクと UPIA）を避けるため、
   リンクを含めない（ビルドで確認）・Windows で署名・UPIA ではなく自前で展開してインストールする。
 
+### 開発用 PC でインストーラーを試すとき
+
+開発中の設定（AE パネルの開発用リンク、PlayerDebugMode、開発用サーバー）が残っていると、インストール版を正しく確認できない。
+切り替えはスクリプトで行う（レジストリを変えるので開発者が自分で実行する。Maya と AE は終了しておく）。
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\dev_env_off.ps1   # 未インストールの利用者と同じ状態へ
+# ... dist の zip を解凍して Install.bat → 確認 → %LOCALAPPDATA%\Programs\SyncBridge\Uninstall.bat ...
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\dev_env_on.ps1    # 開発用の状態へ戻す
+```
+
+Python と `.venv` はこの PC から消せないので、Python のない PC での動作（H-PKG-2）は別の PC で確認する。
+この PC ではタスクマネージャーに `SyncServer.exe` が出ていれば、インストール版のサーバーが動いている。
+
 ## 5. 未確認（実機で確認する）
 
 | ID | 内容 | 確認方法 |
@@ -63,4 +77,14 @@
 
 | バージョン | 日付 | 内容 |
 |---|---|---|
-| 0.1.0 | 2026-10-16 | 先行配布。手動の両方向転送（Editable / Precision）、Maya のシェルフボタン、AE パネル（署名済み）。zip 10.7MB |
+| 0.1.0 | 2026-10-16 | 先行配布。手動の両方向転送（Editable / Precision）、Maya のシェルフボタン、AE パネル（署名済み）。zip 10.7MB。GitHub Releases（pre-release）、タグ v0.1.0 = a7df2ac |
+
+### 0.1.0 の利用者テストで見つかった問題（次の版で修正）
+
+- インストール版の AE パネルは PlayerDebugMode なしで読み込まれ、Maya と接続できた（H-AE-18 は動作から確認）。
+- Maya → AE で、素材より長い時間が必要なタイムワープを送ると、AE の `setValueAtTime` が「値 7.26 は 0 から 2 の範囲外」で失敗した
+  （R-16）。書き込みの途中で止まるので、レイヤーが一部だけ変わり得る（取り消し 1 回で戻る）。
+  → 送る前にサーバーと AE の両方で素材の長さを確認し、日本語で理由を出すよう修正（未リリース）。
+- Scene Time Warp の値の範囲は作成時に決まり、範囲を変えるには作り直しが必要（H-MY-18）。作り直すと調整したワープが消える
+  → 利用者の要望で、Maya のパネルに **保存・復元・範囲変更** を追加（未リリース。復元は自動バックアップからも可能、
+  範囲変更は時間方向の伸縮で形と値を保つ）。Maya の確認ダイアログとエラーを日本語に。

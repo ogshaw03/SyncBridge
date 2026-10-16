@@ -42,6 +42,13 @@
 
 ### 2026-10-16（Windows 11, Python 3.10.6）
 
+- **タイムワープの保存・復元・範囲変更（利用者の要望）:** `core/warp_edit.py`（時間方向の伸縮、fps 変換）、
+  `syncbridge_maya/snapshots.py`（保存先 `<userAppDir>/SyncBridge/snapshots`、自動バックアップも復元対象）、
+  Maya のパネルに「保存」「復元…」「範囲変更…」。書き込みは転送と同じ安全策（確認、バックアップ、undo 1 回、読み戻し）。
+  Maya の確認ダイアログとエラーを日本語に。テスト **163 件 OK**。Maya では未確認。
+- **0.1.0 の利用者テスト（この PC、GitHub Releases からダウンロード）:** インストール版の AE パネルが PlayerDebugMode なしで
+  読み込まれ、Maya と接続。Maya → AE で素材が短いと AE がエラー（R-16 が実際に発生）→ サーバーと AE の両方で事前に確認し、
+  日本語で理由を出すよう修正。テスト **151 件 OK**。0.1.1 として配布し直す必要あり（RELEASE.md）。
 - **先行配布 0.1.0（D-14）:** PyInstaller で `SyncServer.exe`（onedir、21MB）、`launcher` がインストール版の exe を優先、
   Maya のドラッグ＆ドロップ用ファイル（シェルフにボタン、再ドラッグで置き換え、`.mel` の予備）とアイコン、
   AE パネルを自己署名した ZXP（タイムスタンプ付き、検証 OK）、`Install.bat` / `Uninstall.bat`（PowerShell、日本語の案内）、

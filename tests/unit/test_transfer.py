@@ -162,6 +162,14 @@ class EvaluationRangeTest(unittest.TestCase):
         self.assertEqual(res.native["preInfinity"], "constant")
 
 
+class SourceRangeTest(unittest.TestCase):
+    def test_output_range_includes_bezier_overshoot(self):
+        from syncbridge.core import jobs
+        lo, hi = jobs.output_range(testcurves.nonmonotonic_bezier(), FPS)
+        self.assertGreater(hi, 1.0)        # the curve overshoots its last key value (1.0)
+        self.assertAlmostEqual(lo, 0.0, places=6)
+
+
 class ValidationTest(unittest.TestCase):
     def test_error_in_frames(self):
         rep = compare_samples([0.0, 1.0], [0.0, 1.0 + 0.5 / 24], lambda t: t, FPS, 0.1)

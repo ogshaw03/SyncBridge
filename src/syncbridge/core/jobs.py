@@ -15,7 +15,7 @@ from typing import Optional, Tuple
 from . import ae_codec, envelope, maya_codec, transfer
 from .mapping import MappingContext
 from .timebase import FrameRate
-from .validation import DEFAULT_TOLERANCE_FRAMES, ErrorReport, compare_samples
+from .validation import DEFAULT_TOLERANCE_FRAMES, ErrorReport, compare_samples, sample_times
 
 
 @dataclass
@@ -104,6 +104,8 @@ def maya_to_ae_job(maya_data: dict, ae_data: Optional[dict], opts: TransferOptio
     t_range = _maya2ae_range(opts, ctx, maya_data, ae_data)
     result = transfer.maya_to_ae(native, ctx, opts.mode, opts.tolerance_frames, target_fps,
                                  maya_data.get("samples"), opts.key_subdivision, t_range)
+    if ae_data:
+        check_source_range(result.curve, ae_data, target_fps, ctx)
     apply_data = {
         "mode": opts.mode,
         "context": ctx.to_json(),
@@ -112,6 +114,40 @@ def maya_to_ae_job(maya_data: dict, ae_data: Optional[dict], opts: TransferOptio
         "report": result.to_json(),
     }
     return JobResult("ae.timeremap.apply", apply_data, result)
+
+
+class SourceRangeError(ValueError):
+    """The time warp needs source time outside the AE layer's source (footage / precomp)."""
+
+
+def output_range(curve, fps, oversample: int = 8) -> Tuple[float, float]:
+    """Min and max output time of a curve over its keys, Bezier overshoot included."""
+    lo_t, hi_t = curve.domain
+    values = [curve.evaluate(t) for t in sample_times(lo_t, hi_t, fps, oversample, curve.breakpoints())]
+    return min(values), max(values)
+
+
+def check_source_range(curve, ae_data: dict, comp_fps, ctx: MappingContext) -> None:
+    """AE accepts Time Remap values only within 0 .. the layer source duration (R-16,
+    confirmed on AE 26.5: setValueAtTime "value 7.26 is out of range 0 to 2").
+    Refuse before anything is sent to AE, with an explanation for the user."""
+    layer = ae_data.get("layer") or {}
+    source = layer.get("source") or {}
+    duration = source.get("duration")
+    if duration is None:
+        return
+    duration = float(duration)
+    lo, hi = output_range(curve, comp_fps)
+    if lo >= -1e-6 and hi <= duration + 1e-6:
+        return
+    src_fps = FrameRate.from_ae(source["frameRate"]) if source.get("frameRate") else FrameRate(comp_fps)
+    raise SourceRangeError(
+        "AE のレイヤー「%s」の素材は %.2f 秒（%g フレーム）ですが、このタイムワープには素材の %.2f〜%.2f 秒"
+        "（%g〜%g フレーム）が必要です。素材（Maya のレンダー）が短いか、原点フレーム（Origin frame = %g）が"
+        "合っていません。AE には何も変更していません。"
+        % (layer.get("name", "?"), duration, round(src_fps.seconds_to_frames(duration), 2), lo, hi,
+           round(src_fps.seconds_to_frames(lo), 2), round(src_fps.seconds_to_frames(hi), 2),
+           ctx.maya_output_origin_frame))
 
 
 def ae_to_maya_job(ae_data: dict, maya_data: Optional[dict], opts: TransferOptions) -> JobResult:

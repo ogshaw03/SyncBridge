@@ -92,19 +92,19 @@ def apply_envelope(apply_env: dict, confirm: bool = True, origin: str = "") -> d
     try:
         curve, _ = scene_timewarp.find_curve()
     except scene_timewarp.SceneTimeWarpNotFound:
-        raise RuntimeError("This scene has no Scene Time Warp. Create one first "
-                           "(Key > Scene Time Warp), then send again.")
+        raise RuntimeError(u"このシーンには Scene Time Warp がありません。"
+                           u"先に Scene Time Warp を作成してから、もう一度実行してください。")
 
     if confirm:
-        source = (" from %s" % origin) if origin else ""
+        source = (u"%s の " % origin) if origin else u""
         answer = cmds.confirmDialog(
             title="SyncBridge",
-            message="Replace the keys of Scene Time Warp curve '%s' with %d keys%s (%s mode)?\n"
-                    "A JSON backup is written first. One undo restores the previous curve."
-                    % (curve, len(native["keys"]), source, data["mode"]),
-            button=["Apply", "Cancel"], defaultButton="Apply", cancelButton="Cancel",
-            dismissString="Cancel")
-        if answer != "Apply":
+            message=u"Scene Time Warp「%s」のキーを、%s%d キーで置き換えますか？\n"
+                    u"先にバックアップを保存します。元に戻すときは取り消し（Ctrl+Z）を 1 回押してください。"
+                    % (curve, source, len(native["keys"])),
+            button=[u"適用", u"キャンセル"], defaultButton=u"適用", cancelButton=u"キャンセル",
+            dismissString=u"キャンセル")
+        if answer != u"適用":
             print("SyncBridge: apply cancelled")
             return {"status": "cancelled"}
 

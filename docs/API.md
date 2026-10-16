@@ -85,6 +85,8 @@ mapping: --mode editable|precision --tol 0.1 --origin F --maya-in-origin F --may
 | `syncbridge_maya.ui.show()` | Maya の最小パネル（接続、モード、原点フレーム、許容誤差、2 つの送信ボタン、ログ） |
 | `syncbridge_maya.exchange.apply_envelope(env, confirm=True)` | apply エンベロープを適用（確認、バックアップ、undo、読み戻し）。`{status, backup, after, app_readback}` を返す |
 | `tools/fake_ae.py --export <AE export>` | 開発用の AE の代役（AE 側のパネルができるまでの確認用） |
+| `syncbridge.core.warp_edit.retime(native, start, end)` | Scene Time Warp を時間方向に伸縮・移動（値は保持、形は保持）。`to_scene_fps` で fps 変換 |
+| `syncbridge_maya.snapshots` | `save(name)`, `entries()`（保存と自動バックアップ、新しい順）, `restore(path, new_range)`, `retime_current(start, end)`。書き込みは `apply_envelope` 経由（確認、バックアップ、undo、読み戻し） |
 
 ## 7. Local Sync Server（Phase 1、1-A 実装済み）
 

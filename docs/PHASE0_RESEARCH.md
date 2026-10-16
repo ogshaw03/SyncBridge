@@ -122,6 +122,11 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 **実機で確認した事実（Maya 2024）:**
 - `setInfinity <animCurveノード> -q -preInfinite` は `None` を返す（一時 animCurveTT とシーンの `timewarp` の両方）。→ `anim_curve.query_infinity()` でノード属性から読む。
 - UI で作った Scene Time Warp は **前後とも Linear 外挿** だった（このシーンの場合）。AE の Time Remap は範囲外で値を保持するだけなので、キーの範囲外は一致しない（R-20）。
+- （利用者の観察、2026-10-16）Scene Time Warp の値の範囲は **作成した時点で決まる**。キーのタイミング（横方向）をずらしても値は変わらず、
+  再生範囲を変えた場合は作り直しが必要だった。例: キー (1→0)、(16→174.1)、(48→220) で再生範囲 1〜47 のシーン。
+  作成時に再生範囲の両端へ「値 = 時刻」のキーが作られる、という推定（H-MY-18 ❓、作成時の範囲を変えて確認する）。
+  グラフエディタでキーの値（縦方向）を直接変えて済むかは未確認。
+  影響: タイムワープの値の範囲 = AE で必要な素材の範囲。素材（ワープなしのレンダー）より広いと AE に適用できない（R-16）。
 
 ### After Effects
 
@@ -161,7 +166,7 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 | R-13 | 会社 PC・リポジトリの利用規程 | 要確認 | 社内規程を確認してから会社 PC で clone・push する |
 | R-14 | NTSC・ドロップフレーム。AE の 29.97 は 2997/100 で、Maya や 30000/1001 と一致しない（H-AE-9） | 中（1 時間でおよそ 0.1 フレームのずれ） | 時間は有理数の fps と秒で扱う。AE の fps は `FrameRate.from_ae()` で `frameDuration` に最も合う値を選ぶ（実装済み）。Maya の 29.97fps の内部値は未確認。29.97df は表示上の問題 |
 | R-15 | stretch ≠ 100%、ネストしたプリコンポジション | 中 | Phase 0 は stretch = 100% を前提とし、違えば確認を出す。ネストは 1 段のみ |
-| R-16 | Time Remap の値がソースの長さでクランプされる可能性、最終フレームの扱い（既定の最後のキーはソース長そのもの、H-AE-10） | 中 | 範囲チェックと警告（Phase 3） |
+| R-16 | Time Remap の値がソースの長さでクランプされる可能性、最終フレームの扱い（既定の最後のキーはソース長そのもの、H-AE-10） | 高（**実際に発生**） | 2026-10-16、0.1.0 の利用者テストで発生: AE は 0〜素材の長さの外の値で `setValueAtTime` が例外（「値 7.26 は 0 から 2 の範囲外」、H-AE-19 ✅）。書き込みの途中で失敗し得る。→ サーバーが変換後のカーブ全体（Bezier の行き過ぎを含む）を素材の長さと比べ、超えていれば AE に送らず日本語で理由を返す（`jobs.check_source_range`）。AE 側も書き込み前に全キーを確認（`SB.checkSourceRange`）。0.1.1 で修正 |
 | R-17 | Maya の pre/post infinity が cycle などの場合 | 低 | 警告を出して constant として扱う（実装済み） |
 | R-20 | Scene Time Warp が Linear 外挿で、キーの範囲外にコンプやレンダー範囲がある | 中 | 対応済み（2026-10-16）: 転送に評価範囲（`t_range`）を追加。Precision は範囲外の外挿をキーに焼き込み、Editable は警告して不合格にする。CLI は既定で Maya の再生範囲／AE のコンプ範囲を使う（`--range`、`--no-range`）。外挿の傾きは外側の接線（H-MY-11 で確認） |
 | R-19 | 文書化されたクエリが実機では期待した値を返さない（例: `setInfinity -q` が `None`） | 中 | クエリ結果が空なら明確なエラーにする（`_query_list`）。代替手段を用意し、ダミーの cmds で回帰テストする |

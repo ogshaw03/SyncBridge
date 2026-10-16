@@ -290,6 +290,24 @@ SB.keyRange = function (keys, layer) {
     return [layer.inPoint, layer.outPoint];
 };
 
+// AE accepts Time Remap values only within 0 .. source duration (setValueAtTime throws
+// otherwise, possibly after some keys were already set). Check every key before writing.
+// The server checks the full curve first; this is the last line of defence.
+SB.checkSourceRange = function (layer, keys) {
+    var duration = layer.source ? layer.source.duration : null, lo = null, hi = null, i, v;
+    if (duration === null) { return; }
+    for (i = 0; i < keys.length; i++) {
+        v = keys[i].value;
+        if (lo === null || v < lo) { lo = v; }
+        if (hi === null || v > hi) { hi = v; }
+    }
+    if (lo !== null && (lo < -1e-6 || hi > duration + 1e-6)) {
+        throw SB.userError('The source of layer "' + layer.name + '" is ' + duration + ' s long, but the keys need ' +
+            lo + ' to ' + hi + ' s. Nothing was changed.', 'out_of_source',
+            { layer: layer.name, duration: duration, min: lo, max: hi });
+    }
+};
+
 // Apply the data of an "ae.timeremap.apply" envelope to `layer` (SPEC 5 safety rules):
 // confirmation, JSON backup, one undo group, then an export taken after applying.
 // Returns {status: "applied"|"cancelled", backup: path|null, after: export envelope|null}.
@@ -300,6 +318,7 @@ SB.applyToLayer = function (comp, layer, data, origin) {
         throw SB.userError('Time Remap cannot be enabled on layer "' + layer.name + '" ' +
             '(use a footage or precomp layer).', 'cannot_remap', { layer: layer.name });
     }
+    SB.checkSourceRange(layer, keys);
     if (Math.abs(comp.frameRate - data.comp_fps[0] / data.comp_fps[1]) > 1e-3) {
         msg = 'Comp frame rate ' + comp.frameRate + ' differs from the payload (' +
             data.comp_fps[0] + '/' + data.comp_fps[1] + '). Continue?';

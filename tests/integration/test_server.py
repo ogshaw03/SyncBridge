@@ -318,6 +318,26 @@ class ServerTest(ServerFixture):
         self.assertEqual(len(new.apply_requests), 1)
         self.assertEqual(old.apply_requests, [])
 
+    def test_source_too_short_is_refused_before_apply(self):
+        # 0.1.0 on AE 26.5: "setValueAtTime ... value 7.26 is out of range 0 to 2" (R-16).
+        short = ae_export()
+        short["data"]["layer"]["source"] = {"name": "src", "duration": 2.0, "frameRate": 24.0}
+        maya = self.client("maya", export_env=maya_export())     # speed ramp reaches 6 s of source
+        ae = self.client("ae", export_env=short)
+        reply = maya.transfer("maya2ae")
+        self.assertEqual(reply["kind"], "error")
+        self.assertEqual(reply["data"]["code"], protocol.E_CONVERSION)
+        self.assertIn("素材は 2.00 秒（48 フレーム）", reply["data"]["message"])
+        self.assertIn("何も変更していません", reply["data"]["message"])
+        self.assertEqual(ae.apply_requests, [])
+
+    def test_source_long_enough_is_applied(self):
+        long_enough = ae_export()
+        long_enough["data"]["layer"]["source"] = {"name": "src", "duration": 10.0, "frameRate": 24.0}
+        maya = self.client("maya", export_env=maya_export())
+        self.client("ae", export_env=long_enough)
+        self.assertEqual(maya.transfer("maya2ae")["data"]["status"], "applied")
+
     def test_bad_options(self):
         maya = self.client("maya", export_env=maya_export())
         self.client("ae", export_env=ae_export())

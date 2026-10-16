@@ -41,6 +41,7 @@ E_DISCONNECTED = "peer_disconnected"
 E_APP = "app_error"
 E_CONVERSION = "conversion_failed"
 E_BUSY = "busy"
+E_REPLACED = "replaced"          # a newer connection from the same process took over
 
 # request kind -> reply kind
 REPLIES = {

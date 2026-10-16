@@ -2,8 +2,8 @@
 
 ## 現在の状態
 
-- **フェーズ:** **Phase 1（通信基盤）**。1-A（サーバー本体）、1-B（Maya クライアント、Maya 2024 で V-P1B 合格）完了。
-  次は 1-C（AE の CEP パネル）。計画と確認手順は `docs/PHASE1_PLAN.md`。
+- **フェーズ:** **Phase 1（通信基盤）完了**（2026-10-16）。Maya 2024 と AE 26.5 のパネルから、ローカルサーバー経由で
+  両方向の手動転送ができる（V-P1C 合格）。次は Phase 2（基本設定の同期）。詳細は `docs/PHASE1_PLAN.md`。
   Phase 0 は P0-1〜P0-4 合格、P0-5 は Editable のみ合格、Precision の実機転送とレンダー比較（P0-6）は先送り（下の「先送りにしたもの」）
 - **最終更新:** 2026-10-16
 
@@ -35,11 +35,21 @@
 | クライアント（stdlib の WebSocket、SyncClient、サーバーの自動起動） | `client/` | ✅ テスト済（stdlib のテストサーバーと本物のサーバーの両方） |
 | Maya の接続（service）と最小パネル（ui） | `maya_plugin/.../service.py`, `ui.py` | ✅ Maya 2024 で V-P1B 合格（AE は代役）。その後のログ表示の改善は Maya で未確認 |
 | AE の代役 | `tools/fake_ae.py` | ✅ 本物のサーバーと実データで両方向を確認 |
+| AE の CEP パネル（manifest、画面、通信、ExtendScript の窓口） | `after_effects/CSXS`, `panel/`, `jsx/syncbridge_cep_host.jsx` | ✅ AE 26.5 で V-P1C 合格（両方向、取り消し、日本語の警告、切断）。通信部分は Node のテストも |
 
 ## テスト結果
 
 ### 2026-10-16（Windows 11, Python 3.10.6）
 
+- **V-P1C（AE 26.5 + Maya 2024）合格 → Phase 1 完了:** パネルの読み込みと接続、Maya → AE、AE → Maya
+  （確認ダイアログ、取り消し 1 回で復元）、日本語の警告、Disconnect 後に送れないことを確認。途中で 3 件を修正:
+  Time Remap が無効な適用先を拒否していた、警告が英語で Phase 0 用の説明が混ざっていた（コード化して日本語に）、
+  モジュールの読み込み直しで古い Maya の接続が残っていた（サーバーが同じプロセスの古い接続を置き換え、Maya 側も前回の接続を切断）。
+  テスト **142 件 OK**。詳細は PHASE1_PLAN.md 7 章。
+- **Phase 1-C:** CEP 拡張機能（ルートは `after_effects/`）を実装。AE の適用処理を `SB.applyToLayer` に共通化し、
+  Phase 0 の `syncbridge_ae.jsx` もこれを使う。パネルの通信部分 `sbclient.js` は CEP・DOM に依存しない形にして、
+  Node（組み込みの WebSocket）から本物のサーバーにつなぐテストを追加（Maya → AE、AE → Maya、AE 側のエラー、トークン違い）。
+  パネルの見た目はブラウザで確認（AE の外なので未接続の表示）。テスト: `.venv` で **137 件 OK**、標準 Python で 137 件 OK（28 件スキップ）。
 - **V-P1B（Maya 2024 + AE の代役）合格:** サーバーの自動起動、接続中も Maya が固まらない、Maya → AE、AE → Maya
   （確認ダイアログ、バックアップ、読み戻し誤差 0、Undo 1 回で復元）、キャンセル、切断を確認（H-MY-14/15/16）。
   パネルのログに AE 側から送られたときの結果と AE の接続・切断を出すよう改善（**132 件 OK**）。詳細は PHASE1_PLAN.md 7 章。
@@ -120,8 +130,8 @@
 
 ## 次にやること
 
-1. Phase 1-C: 最小 CEP パネル（PlayerDebugMode は利用者が設定）、V-AE-3。
-2. Phase 1-D: Maya と本物の AE で両方向の手動転送（P1-3〜P1-7）。
+1. **Phase 2（基本設定の同期）:** FPS、解像度、ピクセルアスペクト比、フレーム範囲（Maya の再生範囲・アニメーション範囲・
+   レンダー範囲 ⇔ AE のコンプの長さ・ワークエリア）、現在フレーム（SPEC 6 章）。Maya 側の読み取りは Phase 0 で実装済み。
 3. **[実機・利用者]** 余裕があれば: 30fps のシーンでの Maya プローブ（H-MY-5）、Maya 2023 / AE 2024 での再確認。
 
 ### 先送りにしたもの

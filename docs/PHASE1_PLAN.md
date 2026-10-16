@@ -1,12 +1,13 @@
 # Phase 1 計画: 通信基盤
 
-作成: 2026-10-16 / 状態: **1-A 完了**、**1-B 完了**（2026-10-16、Maya 2024 で V-P1B 合格）、1-C から未着手
+作成: 2026-10-16 / 状態: **Phase 1 完了**（2026-10-16、Maya 2024 + AE 26.5 で V-P1C 合格、P1-1〜P1-8 を満たす）
 
 | 段階 | 状態 |
 |---|---|
 | 1-A | ✅ プロトコル、サーバー、セッション、二重起動防止、自動終了、転送の手順、テスト（実機なし）。P1-1、P1-2、P1-8 を満たす |
 | 1-B | ✅ 標準ライブラリの WebSocket クライアント、`SyncClient`、サーバーの自動起動、Maya の `service` と最小 UI、AE の代役 `tools/fake_ae.py`。Maya 2024 で V-P1B 合格（7 章）。AE 側は代役なので P1-3〜P1-5 は 1-D で本物の AE と確認する |
-| 1-C〜1-D | 未着手 |
+| 1-C | ✅ CEP の manifest、パネル（`panel/`）、ExtendScript の窓口（`jsx/syncbridge_cep_host.jsx`）、適用処理の共通化（`SB.applyToLayer`）、日本語の警告。AE 26.5 で V-P1C 合格 |
+| 1-D | ✅ V-P1C で確認（Maya と本物の AE で両方向、P1-3〜P1-7）。古い接続が残る問題を修正（同じプロセスの新しい接続が古い接続を置き換える） |
 
 仕様 12 章の Phase 1 は「FastAPI / WebSocket サーバー、Maya Adapter、AE Adapter、接続管理、JSON 送受信、手動転送」。
 Phase 0 でファイル経由（CLI）で確認した Maya ⇔ AE の手動転送を、ローカルサーバー経由のボタン操作に置き換えるのが目標。
@@ -29,7 +30,7 @@ Phase 0 でファイル経由（CLI）で確認した Maya ⇔ AE の手動転�
 
 ```
 Maya (メインスレッド)                         AE
-  syncbridge_maya.service / ui ─WebSocket─┐  after_effects/cep (HTML/JS, Chromium の WebSocket)
+  syncbridge_maya.service / ui ─WebSocket─┐  after_effects/panel (CEP: HTML/JS, Chromium の WebSocket)
    syncbridge.client.sync_client / ws      │        │ evalScript
    (標準ライブラリだけ、受信は別スレッド →  │     after_effects/jsx/syncbridge_ae_lib.jsxinc（Phase 0 のまま再利用）
     executeDeferred でメインへ)             │
@@ -90,6 +91,10 @@ UI はこの段階では最小限（Phase 6 で作り込む）。
 - **未確認の仕様（新しい仮説）:**
   - H-AE-8: CEP パネルから `ws://127.0.0.1:8765` に接続できる（1-C で確認）
   - H-AE-13: AE 26.5 で CEP 拡張がまだ動く（CEP 廃止の時期は要確認）
+  - H-AE-14: AE 26.5 の PlayerDebugMode は `HKCU\Software\Adobe\CSXS.<N>` のどれか（N は未確認。11〜13 を設定する）
+  - H-AE-15: パネルの JS から `window.__adobe_cep__.evalScript(script, callback)` で ExtendScript を呼べる（CSInterface.js を使わない）
+  - H-AE-16: evalScript から呼んだ ExtendScript の `confirm()` が AE のダイアログとして表示される
+  - H-AE-17: ExtendScript の `$.getenv("LOCALAPPDATA")` でセッションファイルの場所がわかる
   - H-MY-14: Maya の Python で `socket` / `threading` の別スレッド受信と `executeDeferred` の組み合わせが UI を固めない
     → ✅ Maya 2024（接続中の再生・スクラブに問題なし、利用者の操作で確認）
   - H-MY-15: Maya から起動したサーバー（`.venv` の Python）が、Maya の `PYTHONHOME` / `PYTHONPATH` を外せば正常に動く → ✅ Maya 2024
@@ -125,6 +130,47 @@ UI はこの段階では最小限（Phase 6 で作り込む）。
 8. **切断:** パネルの **Disconnect**。Maya を閉じても、10 分接続がなければサーバーは自動で終了する。
    サーバーのログは `%LOCALAPPDATA%\SyncBridge\server.log`。
 
+### V-P1C: AE パネル（AE 26.5）+ Maya 2024（1-C と 1-D を同時に確認）
+
+**準備 A（利用者が行う、初回のみ）: 未署名の拡張機能を読み込めるようにする**
+
+PlayerDebugMode はレジストリの設定（システム設定の変更）なので、ツールではなく利用者が実行する。
+AE 26.5 が使う CSXS のバージョンは未確認（H-AE-14）なので、11〜13 を設定する。不要なキーが増えるだけで害はない。
+
+```powershell
+foreach ($n in 11, 12, 13) { reg add "HKCU\Software\Adobe\CSXS.$n" /v PlayerDebugMode /t REG_SZ /d 1 /f }
+```
+
+元に戻すときは `/d 0` で同じコマンドを実行するか、値を削除する。
+
+**準備 B（利用者が行う、初回のみ）: 拡張機能フォルダにリポジトリへのリンクを作る**
+
+```powershell
+New-Item -ItemType Directory -Force "$env:APPDATA\Adobe\CEP\extensions" | Out-Null
+New-Item -ItemType Junction -Path "$env:APPDATA\Adobe\CEP\extensions\com.syncbridge.panel" -Target "E:\OG_Tools\SyncBridge\after_effects"
+```
+
+ジャンクションなので、リポジトリを更新すればパネルも更新される（AE の再起動かパネルの開き直しが必要）。
+削除するときはジャンクションだけを消す: `(Get-Item "$env:APPDATA\Adobe\CEP\extensions\com.syncbridge.panel").Delete()`
+（`Remove-Item -Recurse` はリンク先のリポジトリまで消すおそれがあるので使わない）。
+
+**手順**
+
+1. AE を再起動し、「ウィンドウ → エクステンション（または Extensions (Legacy)）→ SyncBridge」でパネルを開く（H-AE-13、H-AE-14）。
+   パネルが出ない・真っ白な場合は、その状態を報告する。
+2. Maya で V-P1B と同じくパネルを開いて **Connect**（サーバーが起動する）。
+3. AE のパネルで **Connect**。「Server: connected (ae-N)」「Maya: connected (...)」になる（H-AE-8、H-AE-15、H-AE-17）。
+4. AE で Phase 0 の `SB_test` コンプを開き、`SB_src` レイヤーを選ぶ。パネルに「SB_test / SB_src」と出て、2 つのボタンが押せる。
+5. **Maya → AE（Maya のパネルから）:** Maya のパネルの **Maya → AE** → AE に確認ダイアログ（H-AE-16）→ OK →
+   AE のパネルに「applied N keys」、Maya のパネルに「maya2ae applied ... readback 0.0000 f」（**本物の AE の読み戻し**）。
+   AE で「編集 → 取り消し」1 回で戻ることを確認する。
+6. **AE → Maya（AE のパネルから）:** AE のパネルの **AE → Maya** → Maya に確認ダイアログ → Apply →
+   AE のパネルに「ae2maya applied ... readback 0.0000 f」、Maya のパネルに「AE → Maya applied ...」。Maya で Ctrl+Z 1 回で戻ることを確認する。
+7. **エラー（P1-7）:**
+   - AE でレイヤーの選択を外して Maya → AE → Maya のパネルに「Select exactly one layer ...」が返る
+   - どちらかの確認ダイアログで Cancel → 両方のパネルに cancelled
+   - Maya のパネルで Disconnect → AE のパネルに「Maya disconnected」、ボタンが押せなくなる
+
 ## 7. 実機での確認記録
 
 ### 2026-10-16 V-P1B — Maya 2024 + AE の代役（`tools/fake_ae.py`、データは `v2_ae_before.json`）
@@ -144,3 +190,28 @@ UI はこの段階では最小限（Phase 6 で作り込む）。
   → `service` が適用後に `applied` イベントを出し、パネルに「applied N keys, readback PASS」「cancelled」「failed」を表示
 - AE の接続・切断がログに残らなかった → パネルに「After Effects connected / disconnected」を表示
 （この 2 点の修正は Maya では未確認。テストはダミーの maya で確認）
+
+### 2026-10-16 V-P1C 途中経過 — AE 26.5 + Maya 2024
+
+- パネルが AE に読み込まれ、サーバーに接続し、`export.request` に対して AE の中で JSX が実行された
+  → PlayerDebugMode の設定が有効（H-AE-14: CSXS.11〜13 のいずれか）、H-AE-8、H-AE-13、H-AE-15、H-AE-17 は動作から確認
+- Maya → AE が「Time Remap is not enabled on layer "SB_src"」で失敗した。適用先として書き出すときも Phase 0 の書き出し関数が
+  Time Remap の無効なレイヤーを拒否していたため（設計の誤り。適用時には Time Remap を自動で有効にする）
+  → パネルからの書き出しは Time Remap が無効でも受け付ける（keys は空）。AE → Maya でキーがない場合は
+  「the AE layer ... has no Time Remap to send」と返す。テストを追加（139 件 OK）
+- 次: 修正版で手順 5 から再開
+- 利用者の要望: レイヤー未選択などの警告を日本語にする（Maya に届いた警告が英語で、Phase 0 用の説明も混ざっていた）
+  → JSX の `SB.userError(message, code, params)` にコードを付け、日本語の文はパネルの `sbclient.js`（`MESSAGES`）で組み立てる。
+  JSX は ASCII のみの規則を維持（英語の文は Phase 0 のスクリプト用に残す）。サーバーの前置きは `ae-4:` から `After Effects:` に変更。
+  パネル上部のレイヤー表示も日本語にした。テスト 140 件 OK。AE 26.5 で日本語の警告が表示されることを利用者が確認
+- 手順 5（Maya → AE）・6（AE → Maya）: ✅ 利用者が確認（本物の AE で両方向、確認ダイアログ、取り消し 1 回で復元）
+- 手順 7: Maya のパネルで Disconnect した後も、AE から Maya へ送れてしまった。
+  サーバーのログでは maya-1・maya-3 が切断されずに残り、AE → Maya は残っていた maya-3 に届いていた。
+  原因: 手順のスクリプトは syncbridge のモジュールを捨てて読み込み直すため、古いモジュールの接続が残る。Disconnect は新しい接続だけを切る
+  → (1) サーバー: 同じプロセス（pid）・同じアプリから新しい接続が来たら、古い接続に `replaced` を送って閉じる（close 4409）
+  → (2) Maya: 接続を `__main__` にも記録し、`service` の読み込み時と Connect 時に前回の接続を切断する
+  テストを追加（142 件 OK）。サーバーを再起動して再確認: ✅ Disconnect 後は AE から送れない（利用者が確認）
+- **結論: V-P1C 合格。** Maya 2024 と AE 26.5 で、両方向の手動転送、確認ダイアログ、取り消し、日本語の警告、
+  未接続・切断時の扱いを確認。1-C と 1-D を完了
+- 対象の決め方（利用者の質問への回答として明記）: AE でアクティブなコンポの、選択中の 1 レイヤー（フッテージかプリコン）。
+  名前の指定はない（手順書の SB_test / SB_src はテスト用の名前）。対応づけを記憶して選択を不要にする方式は将来の拡張

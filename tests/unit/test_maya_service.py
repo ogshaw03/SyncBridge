@@ -100,6 +100,30 @@ class MayaServiceTest(unittest.TestCase):
         sent["callback"]({"kind": "error", "data": {"message": "no ae client is connected"}})
         self.assertIn("no ae client", self.cmds.warnings[-1])
 
+    def test_reload_closes_previous_connection(self):
+        import __main__
+
+        class OldClient:
+            connected = True
+            client_id = "maya-1"
+            closed = False
+
+            def disconnect(self):
+                self.closed = True
+
+        old = OldClient()
+        setattr(__main__, self.service._REGISTRY_KEY, old)
+        try:
+            # What a reload does: a fresh module object runs its import-time cleanup.
+            for k in [k for k in sys.modules if k.startswith("syncbridge_maya")]:
+                del sys.modules[k]
+            from syncbridge_maya import service as reloaded
+            self.assertTrue(old.closed)
+            self.assertIsNone(reloaded._registered())
+        finally:
+            if hasattr(__main__, self.service._REGISTRY_KEY):
+                delattr(__main__, self.service._REGISTRY_KEY)
+
     def test_ui_module_parses(self):
         with open(os.path.join(MAYA_SCRIPTS, "syncbridge_maya", "ui.py"), encoding="utf-8") as f:
             ast.parse(f.read())

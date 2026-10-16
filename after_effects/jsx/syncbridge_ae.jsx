@@ -23,44 +23,13 @@
         var file = SB.pickFile('SyncBridge: apply Time Remap', SB.listWorkFiles(/apply/i, /_after\.json$/i));
         if (!file) { return; }
         var data = SB.checkEnvelope(SB.readJSON(file), 'ae.timeremap.apply');
-        var keys = data.keys, msg, stamp, backup, after;
-
-        if (!layer.canSetTimeRemapEnabled) {
-            throw SB.userError('Time Remap cannot be enabled on layer "' + layer.name + '" ' +
-                '(use a footage or precomp layer).');
-        }
-        if (Math.abs(comp.frameRate - data.comp_fps[0] / data.comp_fps[1]) > 1e-3) {
-            msg = 'Comp frame rate ' + comp.frameRate + ' differs from the payload (' +
-                data.comp_fps[0] + '/' + data.comp_fps[1] + '). Continue?';
-            if (!confirm(msg)) { return; }
-        }
-        if (layer.stretch !== 100) {
-            if (!confirm('Layer stretch is ' + layer.stretch + '% (Phase 0 assumes 100%). Continue?')) { return; }
-        }
-        msg = 'Replace Time Remap of layer "' + layer.name + '" with ' + keys.length +
-            ' keys (' + data.mode + ' mode)?' +
-            (layer.timeRemapEnabled ? '' : '\nTime Remap will be enabled.') +
-            '\nA JSON backup is written first.';
-        if (!confirm(msg)) { return; }
-
-        stamp = SB.isoNow().replace(/[:\-]/g, '').replace('+0000', '');
-        if (layer.timeRemapEnabled) {
-            backup = new File(SB.backupFolder().fsName + '/timeremap_' + stamp + '.json');
-            SB.writeJSON(backup, SB.buildExport(comp, layer, 4));
-        }
-
-        app.beginUndoGroup('SyncBridge apply Time Remap');
-        try {
-            if (!layer.timeRemapEnabled) { layer.timeRemapEnabled = true; }
-            SB.applyKeys(SB.timeRemapProp(layer), keys);
-        } finally {
-            app.endUndoGroup();
-        }
+        var result = SB.applyToLayer(comp, layer, data, null), after;
+        if (result.status !== 'applied') { return; }
 
         after = new File(file.fsName.replace(/\.json$/i, '') + '_after.json');
-        SB.writeJSON(after, SB.buildExport(comp, layer, 8));
-        alert('SyncBridge: applied ' + keys.length + ' keys.\n' +
-            (backup ? 'Backup: ' + backup.fsName + '\n' : '') +
+        SB.writeJSON(after, result.after);
+        alert('SyncBridge: applied ' + data.keys.length + ' keys.\n' +
+            (result.backup ? 'Backup: ' + result.backup + '\n' : '') +
             'Readback: ' + after.fsName);
     }
 

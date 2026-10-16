@@ -150,6 +150,15 @@ class ExtendScriptJsonTest(unittest.TestCase):
             out = subprocess.run(["node", "-e", body], capture_output=True, encoding="utf-8", timeout=60)
             self.assertEqual(out.returncode, 0, "%s: %s" % (name, out.stderr))
 
+    def test_panel_js_parses(self):
+        """The CEP panel scripts (browser JavaScript, not ExtendScript)."""
+        panel_js = os.path.join(REPO, "after_effects", "panel", "js")
+        for name in sorted(os.listdir(panel_js)):
+            if name.endswith(".js"):
+                out = subprocess.run(["node", "--check", os.path.join(panel_js, name)],
+                                     capture_output=True, encoding="utf-8", timeout=60)
+                self.assertEqual(out.returncode, 0, "%s: %s" % (name, out.stderr))
+
     def test_rejects_non_json(self):
         out = self.run_js("try { SBJSON.parse('alert(1)'); process.stdout.write('accepted'); }"
                           " catch (e) { process.stdout.write('rejected'); }")

@@ -22,7 +22,7 @@ Maya の Scene Time Warp と After Effects の Time Remap を双方向に転送�
 | `src/syncbridge/server/` | Local Sync Server（FastAPI、`.venv` が必要）。`session.py` だけは標準ライブラリのみ |
 | `src/syncbridge/updater/` | Phase 6（未実装） |
 | `maya_plugin/scripts/syncbridge_maya/` | Maya アダプタ。`maya/` という名前は使わない（D-1） |
-| `after_effects/jsx/` | ExtendScript。`after_effects/cep/` は Phase 1 |
+| `after_effects/` | CEP 拡張機能のルート（`CSXS/manifest.xml`、`panel/`）。`jsx/` は ExtendScript。詳細は `after_effects/README.md` |
 | `schemas/` | 交換形式の JSON Schema |
 | `tests/unit`, `tests/integration` | DCC 不要のテスト |
 
@@ -51,6 +51,8 @@ py -3 -m unittest discover -s tests -t .          # 標準ライブラリだけ�
 - **JSX:** ExtendScript = ES3。`let`/`const`、アロー関数、`forEach`/`map`/`indexOf`、組み込み `JSON` は使わない（`SBJSON` を使う）。
   **ファイルは ASCII のみ**（U+2028 などが正規表現リテラルに入ると構文エラーになる）。テストが Node で構文と ASCII を確認する。
 - 変換ロジックは Python に一元化する（D-2）。JSX に Bezier の変換を書かない。
+- AE パネル経由の利用者向けメッセージは日本語。JSX はコード付きの `SB.userError` を投げ、日本語の文は
+  `after_effects/panel/js/sbclient.js` の `MESSAGES` で作る（after_effects/README.md）。
 - 時間は内部ですべて秒、fps は `FrameRate`（有理数）。フレームと秒の変換はアプリとの境界だけで行う。
 - コードのコメントと識別子は英語、ドキュメントは日本語。
 

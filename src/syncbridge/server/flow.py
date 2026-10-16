@@ -39,6 +39,9 @@ class TransferFlow:
             except RequestFailed as exc:
                 await self._answer_error(requester, request, exc.code, exc.message)
                 return
+            except ValueError as exc:  # unusable input (no Scene Time Warp, no Time Remap, ...)
+                await self._answer_error(requester, request, protocol.E_CONVERSION, str(exc))
+                return
             except Exception as exc:  # report, never kill the connection loop
                 await self._answer_error(requester, request, protocol.E_CONVERSION,
                                          "%s: %s" % (type(exc).__name__, exc))

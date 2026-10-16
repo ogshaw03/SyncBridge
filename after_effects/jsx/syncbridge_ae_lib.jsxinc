@@ -20,9 +20,14 @@ SB.TIME_EPS = 1e-6;
 // ---------------------------------------------------------------- errors
 // An error caused by the current state in AE (selection, settings, chosen file),
 // not by a bug. It is shown as plain guidance, without a line number.
-SB.userError = function (message) {
+// `code` / `params` (optional) let the CEP panel show its own localized text
+// (after_effects/panel/js/sbclient.js MESSAGES); `message` is the English fallback
+// used by the Phase 0 scripts. JSX stays ASCII-only, so no Japanese text here.
+SB.userError = function (message, code, params) {
     var e = new Error(message);
     e.sbUser = true;
+    e.sbCode = code || null;
+    e.sbParams = params || null;
     return e;
 };
 
@@ -157,13 +162,15 @@ SB.backupFolder = function () {
 SB.activeCompAndLayer = function () {
     var comp = app.project.activeItem;
     if (!(comp instanceof CompItem)) {
-        throw SB.userError('Open a composition (click its timeline), select one layer, then run SyncBridge again.');
+        throw SB.userError('Open a composition (click its timeline), select one layer, then run SyncBridge again.',
+            'no_comp');
     }
     if (comp.selectedLayers.length !== 1) {
         throw SB.userError('Select exactly one layer in comp "' + comp.name + '" (currently ' +
             comp.selectedLayers.length + ' selected), then run SyncBridge again.\n\n' +
             'Export: the layer must have Time Remap enabled.\n' +
-            'For the Phase 0 probe, run probe_ae.jsx instead (no selection needed).');
+            'For the Phase 0 probe, run probe_ae.jsx instead (no selection needed).',
+            'select_one_layer', { comp: comp.name, count: comp.selectedLayers.length });
     }
     return { comp: comp, layer: comp.selectedLayers[0] };
 };
@@ -283,19 +290,72 @@ SB.keyRange = function (keys, layer) {
     return [layer.inPoint, layer.outPoint];
 };
 
+// Apply the data of an "ae.timeremap.apply" envelope to `layer` (SPEC 5 safety rules):
+// confirmation, JSON backup, one undo group, then an export taken after applying.
+// Returns {status: "applied"|"cancelled", backup: path|null, after: export envelope|null}.
+// `origin` (optional) names the sender in the confirmation text.
+SB.applyToLayer = function (comp, layer, data, origin) {
+    var keys = data.keys, msg, stamp, backup = null, after;
+    if (!layer.canSetTimeRemapEnabled) {
+        throw SB.userError('Time Remap cannot be enabled on layer "' + layer.name + '" ' +
+            '(use a footage or precomp layer).', 'cannot_remap', { layer: layer.name });
+    }
+    if (Math.abs(comp.frameRate - data.comp_fps[0] / data.comp_fps[1]) > 1e-3) {
+        msg = 'Comp frame rate ' + comp.frameRate + ' differs from the payload (' +
+            data.comp_fps[0] + '/' + data.comp_fps[1] + '). Continue?';
+        if (!confirm(msg)) { return { status: 'cancelled', backup: null, after: null }; }
+    }
+    if (layer.stretch !== 100) {
+        if (!confirm('Layer stretch is ' + layer.stretch + '% (SyncBridge assumes 100%). Continue?')) {
+            return { status: 'cancelled', backup: null, after: null };
+        }
+    }
+    msg = 'Replace Time Remap of layer "' + layer.name + '" with ' + keys.length +
+        ' keys (' + data.mode + ' mode)' + (origin ? ' from ' + origin : '') + '?' +
+        (layer.timeRemapEnabled ? '' : '\nTime Remap will be enabled.') +
+        '\nA JSON backup is written first. One undo restores the previous keys.';
+    if (!confirm(msg)) { return { status: 'cancelled', backup: null, after: null }; }
+
+    stamp = SB.isoNow().replace(/[:\-]/g, '').replace('+0000', '');
+    if (layer.timeRemapEnabled) {
+        backup = new File(SB.backupFolder().fsName + '/timeremap_' + stamp + '.json');
+        SB.writeJSON(backup, SB.buildExport(comp, layer, 4));
+    }
+
+    app.beginUndoGroup('SyncBridge apply Time Remap');
+    try {
+        if (!layer.timeRemapEnabled) { layer.timeRemapEnabled = true; }
+        SB.applyKeys(SB.timeRemapProp(layer), keys);
+    } finally {
+        app.endUndoGroup();
+    }
+    after = SB.buildExport(comp, layer, 8);
+    return { status: 'applied', backup: backup ? backup.fsName : null, after: after };
+};
+
 // Build the "ae.timeremap.export" envelope for a layer.
-SB.buildExport = function (comp, layer, oversample) {
+// allowDisabled: a layer that can use Time Remap but has it off is exported with
+// keys [] and samples null. The server only needs the comp / layer settings of a
+// Maya -> AE target, and applying enables Time Remap (V-P1C, 2026-10-16).
+SB.buildExport = function (comp, layer, oversample, allowDisabled) {
     var prop, keys, range, samples = null;
     if (!layer.timeRemapEnabled) {
+        if (allowDisabled && layer.canSetTimeRemapEnabled) {
+            return SB.makeEnvelope('ae.timeremap.export', {
+                comp: SB.compInfo(comp), layer: SB.layerInfo(layer), keys: [], samples: null
+            });
+        }
         if (!layer.canSetTimeRemapEnabled) {
             // e.g. solids, text, shape and camera layers have no source time to remap.
             throw SB.userError('Layer "' + layer.name + '" cannot use Time Remap ' +
                 '(solid, text, shape, camera and light layers have no source time).\n' +
                 'Select a footage or precomp layer, e.g. the Maya render sequence.\n\n' +
-                'For the Phase 0 probe, run probe_ae.jsx instead (no selection needed).');
+                'For the Phase 0 probe, run probe_ae.jsx instead (no selection needed).',
+                'cannot_remap', { layer: layer.name });
         }
         throw SB.userError('Time Remap is not enabled on layer "' + layer.name + '".\n' +
-            'Enable it (Layer > Time > Enable Time Remapping) before Export, or use Apply.');
+            'Enable it (Layer > Time > Enable Time Remapping) before Export, or use Apply.',
+            'remap_off', { layer: layer.name });
     }
     prop = SB.timeRemapProp(layer);
     keys = SB.readKeys(prop);

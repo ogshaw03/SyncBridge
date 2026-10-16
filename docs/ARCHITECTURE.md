@@ -6,7 +6,7 @@
 
 ```
 ┌──────────── Maya (Python 3.9+) ────────────┐        ┌──────── After Effects ────────┐
-│ maya_plugin/scripts/syncbridge_maya        │        │ after_effects/cep  (Phase 1)  │
+│ maya_plugin/scripts/syncbridge_maya        │        │ after_effects/panel (CEP)     │
 │   scene_timewarp  : Scene Time Warp の特定  │        │   HTML/JS: WebSocket 通信     │
 │   anim_curve      : animCurveTT 読み書き    │        │        │ evalScript           │
 │   exchange        : export / apply         │        │ after_effects/jsx             │

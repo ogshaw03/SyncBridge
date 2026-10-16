@@ -12,6 +12,8 @@ from .. import protocol
 
 Send = Callable[[str], Awaitable[None]]
 
+APP_LABELS = {"maya": "Maya", "ae": "After Effects"}
+
 
 class RequestFailed(Exception):
     def __init__(self, code: str, message: str):
@@ -31,6 +33,11 @@ class Client:
     connected_at: str = ""
     seq: int = 0
     pending: Dict[str, asyncio.Future] = field(default_factory=dict)
+    close: Optional[Callable[[int, str], Awaitable[None]]] = None
+
+    def label(self) -> str:
+        """Name for messages shown to users, e.g. "After Effects"."""
+        return APP_LABELS.get(self.app, self.client_id)
 
     def summary(self) -> dict:
         return {"client_id": self.client_id, "app": self.app, "version": self.version,
@@ -44,7 +51,7 @@ class ConnectionManager:
         self.idle_since: Optional[float] = time.monotonic()
 
     # -- registry -------------------------------------------------------------
-    def add(self, hello: dict, send_text: Send) -> Client:
+    def add(self, hello: dict, send_text: Send, close=None) -> Client:
         data = hello["data"]
         n = next(self._ids)
         client = Client(
@@ -56,10 +63,23 @@ class ConnectionManager:
             document=str(data.get("document", "")),
             connected_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
             seq=n,
+            close=close,
         )
         self.clients[client.client_id] = client
         self.idle_since = None
         return client
+
+    def superseded_by(self, client: Client) -> List[Client]:
+        """Older connections of the same app from the same process as `client`.
+
+        One Maya / AE process has one live connection. An older one from the same
+        pid is left over (e.g. Maya reloaded the SyncBridge modules without
+        disconnecting: V-P1C, 2026-10-16) and would keep receiving transfers.
+        """
+        if client.pid is None:
+            return []
+        return [c for c in self.clients.values()
+                if c is not client and c.app == client.app and c.pid == client.pid]
 
     def remove(self, client: Client) -> None:
         self.clients.pop(client.client_id, None)
@@ -113,7 +133,7 @@ class ConnectionManager:
             client.pending.pop(msg["event_id"], None)
         if reply["kind"] == "error":
             raise RequestFailed(reply["data"].get("code", protocol.E_APP),
-                                "%s: %s" % (client.client_id, reply["data"].get("message", "")))
+                                "%s: %s" % (client.label(), reply["data"].get("message", "")))
         return reply
 
     def resolve(self, client: Client, msg: dict) -> bool:

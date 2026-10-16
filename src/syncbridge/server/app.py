@@ -23,6 +23,7 @@ log = logging.getLogger("syncbridge.server")
 HELLO_TIMEOUT = 10.0
 CLOSE_AUTH = 4401        # application close codes (4000-4999)
 CLOSE_PROTOCOL = 4400
+CLOSE_REPLACED = 4409
 
 
 def create_app(token: str, idle_timeout: Optional[float] = None,
@@ -72,8 +73,11 @@ def create_app(token: str, idle_timeout: Optional[float] = None,
             await _reject(ws, protocol.E_AUTH, "invalid session token", CLOSE_AUTH)
             return
 
-        client = manager.add(hello, ws.send_text)
+        client = manager.add(hello, ws.send_text, ws.close)
         log.info("connected %s (%s)", client.client_id, client.document or "-")
+        for old in manager.superseded_by(client):
+            log.info("closing %s: replaced by %s from the same process", old.client_id, client.client_id)
+            await _replace(old, client)
         tasks = set()
         try:
             await manager.send(client, protocol.message("welcome", {
@@ -110,6 +114,17 @@ def create_app(token: str, idle_timeout: Optional[float] = None,
 async def _transfer(flow: TransferFlow, client, msg) -> None:
     await flow.handle(client, msg)
     log.info("transfer by %s finished", client.client_id)
+
+
+async def _replace(old, new) -> None:
+    """Tell a stale connection it was replaced, then close it (its loop then removes it)."""
+    try:
+        await old.send_text(protocol.encode(protocol.error(
+            protocol.E_REPLACED, "replaced by a newer connection (%s) from the same process" % new.client_id)))
+        if old.close is not None:
+            await old.close(code=CLOSE_REPLACED)
+    except Exception:
+        pass
 
 
 async def _reject(ws: WebSocket, code: str, message: str, close_code: int) -> None:

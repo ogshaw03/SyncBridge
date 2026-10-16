@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SyncBridge CEP panel (Phase 1-C). Extension root = the after_effects folder of the repository,
+  linked into %APPDATA%\Adobe\CEP\extensions\com.syncbridge.panel (see docs/PHASE1_PLAN.md V-P1C).
+  Unsigned during development: needs PlayerDebugMode (set by the user, never by tools).
+-->
+<ExtensionManifest Version="7.0" ExtensionBundleId="com.syncbridge" ExtensionBundleVersion="0.0.1"
+                   ExtensionBundleName="SyncBridge" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <ExtensionList>
+    <Extension Id="com.syncbridge.panel" Version="0.0.1"/>
+  </ExtensionList>
+  <ExecutionEnvironment>
+    <HostList>
+      <Host Name="AEFT" Version="[17.0,99.9]"/>
+    </HostList>
+    <LocaleList>
+      <Locale Code="All"/>
+    </LocaleList>
+    <RequiredRuntimeList>
+      <RequiredRuntime Name="CSXS" Version="9.0"/>
+    </RequiredRuntimeList>
+  </ExecutionEnvironment>
+  <DispatchInfoList>
+    <Extension Id="com.syncbridge.panel">
+      <DispatchInfo>
+        <Resources>
+          <MainPath>./panel/index.html</MainPath>
+          <ScriptPath>./jsx/syncbridge_cep_host.jsx</ScriptPath>
+        </Resources>
+        <Lifecycle>
+          <AutoVisible>true</AutoVisible>
+        </Lifecycle>
+        <UI>
+          <Type>Panel</Type>
+          <Menu>SyncBridge</Menu>
+          <Geometry>
+            <Size>
+              <Height>460</Height>
+              <Width>320</Width>
+            </Size>
+            <MinSize>
+              <Height>300</Height>
+              <Width>260</Width>
+            </MinSize>
+          </Geometry>
+        </UI>
+      </DispatchInfo>
+    </Extension>
+  </DispatchInfoList>
+</ExtensionManifest>

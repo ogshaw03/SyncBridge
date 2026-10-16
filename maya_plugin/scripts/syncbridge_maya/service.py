@@ -26,6 +26,33 @@ from . import exchange
 _client: Optional[SyncClient] = None
 _listeners: List[Callable[[str, object], None]] = []
 
+# The live client is also remembered in __main__, which survives reloading these
+# modules. Reloading (e.g. deleting syncbridge* from sys.modules and importing again)
+# used to leave the old connection open and still receiving transfers (V-P1C).
+_REGISTRY_KEY = "_syncbridge_maya_client"
+
+
+def _registered() -> Optional[SyncClient]:
+    import __main__
+    return getattr(__main__, _REGISTRY_KEY, None)
+
+
+def _register(client_obj: Optional[SyncClient]) -> None:
+    import __main__
+    setattr(__main__, _REGISTRY_KEY, client_obj)
+
+
+def _close_previous() -> None:
+    """Disconnect a client left over from an earlier load of this module."""
+    old = _registered()
+    if old is not None and old is not _client:
+        try:
+            if old.connected:
+                print("SyncBridge: closing the connection of a previous load (%s)" % old.client_id)
+                old.disconnect()
+        finally:
+            _register(None)
+
 
 def add_listener(fn: Callable[[str, object], None]) -> None:
     """fn(event, payload) on the main thread: client events and "transfer_result"."""
@@ -90,6 +117,7 @@ def connect(start_server: bool = True, port: Optional[int] = None) -> dict:
     global _client
     if is_connected():
         return {"client_id": _client.client_id}
+    _close_previous()
     if start_server:
         launcher.ensure_server(port or protocol.DEFAULT_PORT)
     _client = SyncClient(
@@ -100,12 +128,16 @@ def connect(start_server: bool = True, port: Optional[int] = None) -> dict:
         version=cmds.about(version=True),
         document=lambda: cmds.file(q=True, sn=True) or "untitled",
     )
-    return _client.connect(port=port)
+    welcome = _client.connect(port=port)
+    _register(_client)
+    return welcome
 
 
 def disconnect() -> None:
     if _client is not None:
         _client.disconnect()
+    if _registered() is _client:
+        _register(None)
 
 
 def peers() -> list:
@@ -141,3 +173,7 @@ def send_to_ae(options: Optional[dict] = None, callback=None) -> str:
 def receive_from_ae(options: Optional[dict] = None, callback=None) -> str:
     """AE -> Maya: the selected AE layer's Time Remap replaces the Scene Time Warp."""
     return _transfer("ae2maya", options, callback)
+
+
+# A reload of this module must not leave the previous connection behind.
+_close_previous()

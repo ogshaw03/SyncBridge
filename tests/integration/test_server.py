@@ -284,6 +284,40 @@ class ServerTest(ServerFixture):
         self.assertFalse(data["report"]["conversion"]["passed"])
         self.assertEqual(ae.apply_requests, [])
 
+    def test_maya_to_ae_target_without_time_remap(self):
+        # V-P1C: the selected AE layer had Time Remap off; it is still a valid target.
+        off = ae_export()
+        off["data"]["keys"], off["data"]["samples"] = [], None
+        maya = self.client("maya", export_env=maya_export())
+        ae = self.client("ae", export_env=off)
+        data = maya.transfer("maya2ae")["data"]
+        self.assertEqual(data["status"], "applied", data)
+        self.assertEqual(len(ae.apply_requests), 1)
+
+    def test_ae_to_maya_without_time_remap_is_refused(self):
+        off = ae_export()
+        off["data"]["keys"], off["data"]["samples"] = [], None
+        maya = self.client("maya", export_env=maya_export())
+        ae = self.client("ae", export_env=off)
+        reply = ae.transfer("ae2maya")
+        self.assertEqual(reply["kind"], "error")
+        self.assertEqual(reply["data"]["code"], protocol.E_CONVERSION)
+        self.assertIn("has no Time Remap to send", reply["data"]["message"])
+        self.assertEqual(maya.apply_requests, [])
+
+    def test_new_connection_from_same_process_replaces_old_one(self):
+        # V-P1C: reloading the Maya modules left the old connection open; transfers went to it.
+        old = self.client("maya", export_env=maya_export())
+        ae = self.client("ae", export_env=ae_export())
+        self.assertTrue(self.wait_for(lambda: len(ae.peers) == 2))
+        new = self.client("maya", export_env=maya_export())     # same pid (this test process)
+        self.assertTrue(old.closed.wait(5), "the old connection was not closed")
+        self.assertTrue(self.wait_for(lambda: [p["client_id"] for p in ae.peers if p["app"] == "maya"]
+                                      == [new.client_id]))
+        self.assertEqual(ae.transfer("ae2maya")["data"]["status"], "applied")
+        self.assertEqual(len(new.apply_requests), 1)
+        self.assertEqual(old.apply_requests, [])
+
     def test_bad_options(self):
         maya = self.client("maya", export_env=maya_export())
         self.client("ae", export_env=ae_export())

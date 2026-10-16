@@ -115,6 +115,10 @@ def maya_to_ae_job(maya_data: dict, ae_data: Optional[dict], opts: TransferOptio
 
 
 def ae_to_maya_job(ae_data: dict, maya_data: Optional[dict], opts: TransferOptions) -> JobResult:
+    if not ae_data.get("keys"):
+        layer = (ae_data.get("layer") or {}).get("name", "?")
+        raise ValueError('the AE layer "%s" has no Time Remap to send '
+                         "(enable Time Remap on it first)" % layer)
     maya_fps = maya_data["scene"]["fps"] if maya_data else opts.maya_fps
     if maya_fps is None:
         raise ValueError("the Maya frame rate is unknown (no Maya export and no maya_fps option)")

@@ -1,0 +1,4 @@
+// SyncBridge: fallback for Maya versions that do not run a dropped .py file.
+// Drag this file onto a Maya viewport. It runs the installed drag_to_maya_SyncBridge.py
+// (%LOCALAPPDATA%\Programs\SyncBridge\maya), so run Install.bat first.
+python("import os, runpy\np = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs', 'SyncBridge', 'maya', 'drag_to_maya_SyncBridge.py')\nif os.path.isfile(p):\n    runpy.run_path(p, run_name='__main__')\nelse:\n    import maya.cmds as cmds\n    cmds.confirmDialog(title='SyncBridge', message='SyncBridge is not installed. Run Install.bat first.', button=['OK'])");

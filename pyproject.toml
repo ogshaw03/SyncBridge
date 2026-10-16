@@ -1,6 +1,6 @@
 [project]
 name = "syncbridge"
-version = "0.0.1"
+version = "0.1.0"
 description = "Maya <-> After Effects time warp / time remap sync tool"
 requires-python = ">=3.9"
 dependencies = []

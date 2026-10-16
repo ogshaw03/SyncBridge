@@ -33,6 +33,7 @@ py -3 -m unittest discover -s tests -t .          # 標準ライブラリだけ�
 .\.venv\Scripts\python -m unittest discover -s tests -t .   # サーバーを含む全テスト
 .\syncbridge.cmd selftest                          # CLI（参照カーブの往復テスト）
 .\syncbridge-server.cmd                            # Local Sync Server を起動
+.\.venv\Scripts\python packaging\build_release.py  # 配布用 zip を作る（docs/RELEASE.md）
 ```
 
 - 新しい PC では最初に `.venv` を作る: `py -3.10 -m venv .venv` → `.venv\Scripts\python -m pip install -r requirements-server.txt`

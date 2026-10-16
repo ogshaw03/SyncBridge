@@ -11,6 +11,11 @@ htmlcov/
 # Build
 build/
 dist/
+# Release packaging: downloaded tools, signing certificate and its password (never commit)
+packaging/tools/
+packaging/local/
+*.p12
+*.zxp
 *.spec.bak
 
 # Local / PC-specific (do not commit)

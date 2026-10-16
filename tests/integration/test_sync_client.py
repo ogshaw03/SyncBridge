@@ -167,6 +167,29 @@ class LauncherTest(unittest.TestCase):
     def test_repo_root(self):
         self.assertTrue(os.path.isfile(os.path.join(launcher.repo_root(), "src", "syncbridge", "__init__.py")))
 
+    def test_installed_exe_is_preferred(self):
+        tmp = tempfile.mkdtemp()
+        exe = os.path.join(tmp, launcher.SERVER_EXE)
+        open(exe, "w").close()
+        old = os.environ.get(launcher.ENV_SERVER_EXE)
+        os.environ[launcher.ENV_SERVER_EXE] = exe
+        try:
+            argv, env, cwd = launcher.server_command()
+            self.assertEqual(argv, [exe])
+            self.assertEqual(cwd, tmp)
+            self.assertNotIn("PYTHONHOME", env)
+        finally:
+            if old is None:
+                os.environ.pop(launcher.ENV_SERVER_EXE, None)
+            else:
+                os.environ[launcher.ENV_SERVER_EXE] = old
+            shutil.rmtree(tmp)
+
+    def test_development_fallback(self):
+        argv, env, cwd = launcher.server_command(python=sys.executable)
+        self.assertEqual(argv[1:], ["-m", "syncbridge.server"])
+        self.assertEqual(env["PYTHONPATH"], os.path.join(launcher.repo_root(), "src"))
+
     def test_missing_python(self):
         port = _free_port()
         with self.assertRaises(RuntimeError):

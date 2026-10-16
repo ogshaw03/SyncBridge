@@ -1,0 +1,6 @@
+# Release build (packaging/build_release.py). Install into the repository venv on top of
+# requirements-server.txt:
+#   .venv\Scripts\python -m pip install -r requirements-build.txt
+# ZXPSignCmd 4.1.3 (x64) is downloaded separately into packaging/tools/ (not in git), from
+#   https://github.com/Adobe-CEP/CEP-Resources/tree/master/ZXPSignCMD/4.1.3/x64
+pyinstaller==6.22.3

@@ -1,7 +1,11 @@
-"""Start the Local Sync Server from an application (development layout).
+"""Start the Local Sync Server from an application.
 
-Development: <repo>/.venv python runs `-m syncbridge.server` with <repo>/src
-on PYTHONPATH. Phase 6 replaces this with SyncServer.exe.
+Where the server comes from, first match wins (server_command):
+  1. SYNCBRIDGE_SERVER_EXE environment variable (a SyncServer.exe path)
+  2. installed release: <install root>/server/SyncServer.exe, where this file is
+     <install root>/maya/scripts/syncbridge/client/launcher.py
+  3. the default install folder %LOCALAPPDATA%/Programs/SyncBridge/server/SyncServer.exe
+  4. development: <repo>/.venv python with `-m syncbridge.server` and <repo>/src on PYTHONPATH
 
 The child must not inherit the host application's Python settings: Maya sets
 PYTHONHOME / PYTHONPATH for its own interpreter, which would make the venv
@@ -13,21 +17,38 @@ from __future__ import annotations
 import os
 import subprocess
 import time
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from .. import protocol
 from ..server import session
 
 _children = []
 
+SERVER_EXE = "SyncServer.exe"
+ENV_SERVER_EXE = "SYNCBRIDGE_SERVER_EXE"
+
 # Variables of the parent interpreter that must not leak into the server process.
 STRIP_ENV = ("PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONUSERBASE", "PYTHONNOUSERSITE",
              "PYTHONEXECUTABLE", "__PYVENV_LAUNCHER__")
 
 
+def _here() -> str:
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 def repo_root() -> str:
-    # <repo>/src/syncbridge/client/launcher.py
-    return os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
+    # development: <repo>/src/syncbridge/client/launcher.py
+    return os.path.normpath(os.path.join(_here(), "..", "..", ".."))
+
+
+def install_root() -> str:
+    # release: <install root>/maya/scripts/syncbridge/client/launcher.py
+    return os.path.normpath(os.path.join(_here(), "..", "..", "..", ".."))
+
+
+def default_install_root() -> Optional[str]:
+    base = os.environ.get("LOCALAPPDATA")
+    return os.path.join(base, "Programs", "SyncBridge") if base else None
 
 
 def venv_python(root: Optional[str] = None) -> str:
@@ -41,24 +62,48 @@ def server_env(base: Optional[dict] = None, root: Optional[str] = None) -> dict:
     env = dict(os.environ if base is None else base)
     for name in STRIP_ENV:
         env.pop(name, None)
-    env["PYTHONPATH"] = os.path.join(root or repo_root(), "src")
+    if root is not None:
+        env["PYTHONPATH"] = os.path.join(root, "src")
     return env
 
 
+def server_command(python: Optional[str] = None) -> Tuple[List[str], dict, str]:
+    """(argv prefix, environment, working folder) of the server to start.
+
+    `python` forces the development form with that interpreter (tests).
+    Raises RuntimeError when no server can be found.
+    """
+    if python is None:
+        candidates = [os.environ.get(ENV_SERVER_EXE),
+                      os.path.join(install_root(), "server", SERVER_EXE)]
+        default_root = default_install_root()
+        if default_root:
+            candidates.append(os.path.join(default_root, "server", SERVER_EXE))
+        for exe in candidates:
+            if exe and os.path.isfile(exe):
+                return [exe], server_env(), os.path.dirname(exe)
+        python = venv_python()
+        if not os.path.isfile(python):
+            raise RuntimeError("SyncBridge server not found. Run Install.bat of the SyncBridge "
+                               "release again (looked for %s and %s)." % (candidates[1], python))
+    if not os.path.isfile(python):
+        raise RuntimeError("server python not found: %s" % python)
+    root = repo_root()
+    return [python, "-m", "syncbridge.server"], server_env(root=root), root
+
+
 def ensure_server(port: int = protocol.DEFAULT_PORT, python: Optional[str] = None,
-                  idle_timeout: float = 600.0, wait: float = 15.0) -> dict:
+                  idle_timeout: float = 600.0, wait: float = 20.0) -> dict:
     """Return the running server's /health info, starting the server first if needed.
 
-    Raises RuntimeError when it cannot be started (no venv, port taken, timeout).
+    Raises RuntimeError when it cannot be started (not installed, port taken, timeout).
     """
     info = session.probe_server(port)
     if info:
         return info
     if session.port_in_use(port):
         raise RuntimeError("port %d is used by another program" % port)
-    python = python or venv_python()
-    if not os.path.isfile(python):
-        raise RuntimeError("server python not found: %s (create the .venv, see CLAUDE.md)" % python)
+    argv, env, cwd = server_command(python)
     log_dir = session.session_dir()
     os.makedirs(log_dir, exist_ok=True)
     log = open(os.path.join(log_dir, "server.log"), "a", encoding="utf-8")
@@ -71,9 +116,9 @@ def ensure_server(port: int = protocol.DEFAULT_PORT, python: Optional[str] = Non
     # Detached on purpose: the server outlives this call and stops itself when idle.
     # The handle is kept so it is not reported as a leaked running subprocess.
     _children.append(subprocess.Popen(
-        [python, "-m", "syncbridge.server", "--port", str(port), "--idle-timeout", str(idle_timeout)],
-        env=server_env(), stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-        close_fds=True, cwd=repo_root(), **kwargs))
+        argv + ["--port", str(port), "--idle-timeout", str(idle_timeout)],
+        env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+        close_fds=True, cwd=cwd, **kwargs))
     log.close()
     deadline = time.time() + wait
     while time.time() < deadline:
@@ -85,4 +130,4 @@ def ensure_server(port: int = protocol.DEFAULT_PORT, python: Optional[str] = Non
                        % (wait, os.path.join(log_dir, "server.log")))
 
 
-__all__ = ["ensure_server", "repo_root", "server_env", "venv_python"]
+__all__ = ["ensure_server", "install_root", "repo_root", "server_command", "server_env", "venv_python"]

@@ -142,7 +142,7 @@ class FakeApp:
 class ServerFixture(unittest.TestCase):
     """A real server on a free port, plus FakeApp helpers. Contains no tests itself."""
     def setUp(self):
-        self.app = create_app(TOKEN, export_timeout=5, apply_timeout=5)
+        self.app = create_app(TOKEN, export_timeout=5, apply_timeout=5, **self.app_options())
         config = uvicorn.Config(self.app, host="127.0.0.1", port=0, log_level="warning", ws="websockets-sansio")
         self.server = uvicorn.Server(config)
         self.thread = threading.Thread(target=self.server.run, daemon=True)
@@ -153,6 +153,9 @@ class ServerFixture(unittest.TestCase):
         self.port = self.server.servers[0].sockets[0].getsockname()[1]
         self.url = "ws://127.0.0.1:%d%s" % (self.port, protocol.WS_PATH)
         self.clients = []
+
+    def app_options(self):
+        return {}
 
     def tearDown(self):
         for c in self.clients:

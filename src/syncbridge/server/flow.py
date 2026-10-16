@@ -21,32 +21,44 @@ APPLY_TIMEOUT = 600.0   # the target app waits for the user's confirmation
 
 class TransferFlow:
     def __init__(self, manager: ConnectionManager, export_timeout: float = EXPORT_TIMEOUT,
-                 apply_timeout: float = APPLY_TIMEOUT):
+                 apply_timeout: float = APPLY_TIMEOUT, history=None):
         self.manager = manager
         self.export_timeout = export_timeout
         self.apply_timeout = apply_timeout
+        self.history = history          # hubstate.TransferHistory (optional)
         self._lock = asyncio.Lock()
+
+    @property
+    def busy(self) -> bool:
+        return self._lock.locked()
 
     async def handle(self, requester: Client, request: dict) -> None:
         """Run one transfer.request and answer it (never raises)."""
+        item = self.history.start(requester.client_id, request) if self.history else None
         if self._lock.locked():
-            await self._answer_error(requester, request, protocol.E_BUSY,
-                                     "another transfer is in progress")
+            await self._fail(item, requester, request, protocol.E_BUSY, "another transfer is in progress")
             return
         async with self._lock:
             try:
                 result = await self._run(requester, request)
             except RequestFailed as exc:
-                await self._answer_error(requester, request, exc.code, exc.message)
+                await self._fail(item, requester, request, exc.code, exc.message)
                 return
             except ValueError as exc:  # unusable input (no Scene Time Warp, no Time Remap, ...)
-                await self._answer_error(requester, request, protocol.E_CONVERSION, str(exc))
+                await self._fail(item, requester, request, protocol.E_CONVERSION, str(exc))
                 return
             except Exception as exc:  # report, never kill the connection loop
-                await self._answer_error(requester, request, protocol.E_CONVERSION,
-                                         "%s: %s" % (type(exc).__name__, exc))
+                await self._fail(item, requester, request, protocol.E_CONVERSION,
+                                 "%s: %s" % (type(exc).__name__, exc))
                 return
+            if item is not None:
+                self.history.finish(item, result=result)
             await self.manager.send(requester, protocol.reply(request, result))
+
+    async def _fail(self, item, requester: Client, request: dict, code: str, message: str) -> None:
+        if item is not None:
+            self.history.finish(item, error_code=code, message=message)
+        await self._answer_error(requester, request, code, message)
 
     async def _run(self, requester: Client, request: dict) -> dict:
         data = request["data"]

@@ -41,7 +41,8 @@ def main(argv=None) -> int:
     def stop():
         holder["server"].should_exit = True
 
-    app = create_app(token, idle_timeout=args.idle_timeout or None, on_idle=stop)
+    app = create_app(token, idle_timeout=args.idle_timeout or None, on_idle=stop,
+                     on_shutdown=stop, port=args.port)
     # Loopback only (SPEC 8). Never bind 0.0.0.0.
     config = uvicorn.Config(app, host=protocol.HOST, port=args.port, log_level=args.log_level,
                             ws="websockets-sansio")

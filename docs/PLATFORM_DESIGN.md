@@ -1,6 +1,6 @@
 # プラットフォーム設計: ハブ・ランチャー・モニター（案）
 
-作成: 2026-10-16 / 状態: **設計確定（未実装）**。9 章の決定を反映済み。次は P-A（10 章）。
+作成: 2026-10-16 / 状態: **設計確定、P-A 実装済み**（2026-10-16、11 章）。次は P-B（モニター）。
 
 ## 1. 背景と目的
 
@@ -102,7 +102,9 @@
 普段は 1 ユーザーに 1 つ。ただし実際には、開発版とインストール版、異常終了後の残り、ポート違いなどで複数が動き得る
 （Phase 1 の確認で実際に起きた）。モニターで見つけて止められるよう、セッションファイルを **ハブごと** にする。
 
-- `%LOCALAPPDATA%\SyncBridge\hubs\<pid>.json`（ポート、トークン、バージョン、起動時刻、実行ファイル）
+- `%LOCALAPPDATA%\SyncBridge\hubs\<pid>.json`（ポート、トークン、バージョン、起動時刻、実行ファイル、実際のプロセスのイメージ）
+  - 開発環境の venv では `sys.executable`（`.venv\Scripts\python.exe`）は基の python を子として起動するランチャーで、
+    ハブのプロセスは別のファイル（基の `python.exe`）で動く。そのため、ハブが自分のイメージを `image` として記録する（P-A で判明）。
 - `session.json` は「今使うハブ」を指すものとして残す（0.1.x のアダプターとの互換）
 
 ## 5. モニター
@@ -199,3 +201,20 @@
 
 - **決定した順番: P-A → P-B（モニター）→ P-C（ランチャー）→ P-D（アップデーター）。** P-E は P-A と並行して進められる。
 - 仕様の Phase 2（設定の同期）は新しいデータ種別 `scene_settings` になるので、Phase 2 の前に P-E を終えておく。
+
+## 11. P-A の実装（2026-10-16）
+
+| 部品 | 場所 | 内容 |
+|---|---|---|
+| ハブごとのセッションファイル | `server/session.py` | `write_session` が `hubs/<pid>.json` と `session.json` の両方を書く。`read_hub_files()`、`remove_session(pid)` は両方を消す |
+| 履歴・ログ・イベント | `server/hubstate.py` | `TransferHistory`（直近 200 件）、`LogBuffer`（直近 2,000 行、`syncbridge` と `uvicorn.error` のロガー）、`EventBus`（購読者ごとに 1,000 件、溢れたら古いものから捨てる） |
+| 管理 API | `server/admin.py` | 5.3 の表のとおり。HTTP は `Authorization: Bearer <token>`、`WS /admin/events` は最初のメッセージ `{"token": ...}`（URL にトークンを入れない: アクセスログに残るため） |
+| ハブの発見・強制終了 | `hubs.py`（標準ライブラリのみ） | `discover()`、`verify()`、`force_kill()`、`remove_stale()`、`admin_call()`。Windows のプロセス API は ctypes |
+
+- **状態:** `running`（`/health` に応答し、確認済み）/ `not_responding`（プロセスはあるが応答しない、または確認できない）/
+  `stale`（ファイルだけ残っている）/ `unknown`（ファイルのない `SyncServer.exe`）。
+- **強制終了の確認（5.2）:** プロセスのイメージが `SyncServer.exe` か、ファイルに記録された `image` / `executable` と一致し、
+  かつプロセスの作成時刻がファイルの `started` の 5 分前から 5 秒後までの間にあること（PID の再利用対策）。満たさなければ `ValueError` で何もしない。
+- **未実装:** 停止時に接続中のアプリへ通知すること（5.2）。今はハブが閉じて、アプリ側は切断として扱う。
+  ログのファイル出力（5.3）も P-B でモニターと合わせて行う。
+- **0.1.x のハブ:** `session.json` しか書かないので、`discover()` は `session.json` も読む（`image` がないので、`SyncServer.exe` 以外は確認できず `not_responding` になる）。

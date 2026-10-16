@@ -96,7 +96,7 @@ mapping: --mode editable|precision --tol 0.1 --origin F --maya-in-origin F --may
 |---|---|
 | 待ち受け | `127.0.0.1` のみ（既定ポート 8765）。`GET /health` → `{app: "syncbridge", version, protocol, clients}`（秘密情報なし） |
 | WebSocket | `ws://127.0.0.1:<port>/ws`。JSON テキストフレーム 1 つ = エンベロープ 1 つ |
-| セッションファイル | `%LOCALAPPDATA%\SyncBridge\session.json` = `{port, token, pid, version, started}`。クライアントはここから port と token を読む。`SYNCBRIDGE_SESSION_DIR` で場所を変更可 |
+| セッションファイル | `%LOCALAPPDATA%\SyncBridge\session.json` = `{port, token, pid, version, started, executable, image}`。クライアントはここから port と token を読む。同じ内容をハブごとに `hubs\<pid>.json` にも書く（P-A）。`SYNCBRIDGE_SESSION_DIR` で場所を変更可 |
 | 認証 | 最初のメッセージは `hello`（10 秒以内）。トークンが違えば `error auth_failed` を返して close 4401 |
 | 二重起動 | 起動時に `/health` を確認し、SyncBridge が動いていれば何もせず終了（終了コード 0）。別のプログラムがポートを使っていれば 3 |
 | 自動終了 | 接続が `--idle-timeout` 秒（既定 600、0 で無効）なければ終了し、セッションファイルを消す |
@@ -125,3 +125,20 @@ mapping: --mode editable|precision --tol 0.1 --origin F --maya-in-origin F --may
 - 変換が許容誤差を超えたら **転送先に何も送らない**（`status: failed` と誤差レポートを返す、SPEC 5 章）。
 - 転送は同時に 1 つだけ（2 つ目は `busy`）。export は 60 秒、apply は利用者の確認を待つため 600 秒でタイムアウト。
 - `apply.result` に `after` があれば、サーバーが読み戻しを検証して `readback` に入れる。
+
+### 管理 API（P-A、`server/admin.py`、D-15）
+
+モニターとランチャー用。ループバックのみ。HTTP はヘッダー `Authorization: Bearer <token>` が必要（ないか違えば 401）。
+`WS /admin/events` は接続後の最初のメッセージ `{"token": "<token>"}` で認証する（違えば `{"event": "error"}` を送って close 4401）。
+
+| API | 応答 |
+|---|---|
+| `GET /admin/status` | `{app, version, protocol, pid, port, started, uptime_s, clients: [peers と同じ], transfer_running, transfers_recorded}` |
+| `GET /admin/transfers?limit=50` | `{transfers: [{id, started, finished, requester, direction, data_type, source, target, status, error_code, message, conversion_max_error, readback_max_error, readback_passed}]}`（古い順、`status` は running / applied / cancelled / failed / error） |
+| `GET /admin/log?tail=200` | `{lines: [{time, level, logger, message}]}`（古い順） |
+| `WS /admin/events` | 最初に `{event: "status", status}`、以降 `client.connected` / `client.disconnected`（`client`）、`transfer.started` / `transfer.finished`（`transfer`）、`log`（`entry`） |
+| `POST /admin/shutdown` | `{status: "stopping"}` の後に正常終了 |
+| `POST /admin/clients/{client_id}/disconnect` | アプリに `error disconnected_by_admin` を送って close 4410。`{status: "disconnected"}`、いなければ 404 |
+
+`syncbridge.hubs`（標準ライブラリのみ）: `discover()` → `[HubInfo]`（`state`: running / not_responding / stale / unknown）、
+`admin_call(hub, method, path)`、`force_kill(hub)`（SyncBridge のハブと確認できなければ `ValueError`）、`remove_stale(hub)`。

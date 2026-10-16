@@ -2,6 +2,7 @@
 
     GET /health   {"app": "syncbridge", "version", "protocol", "clients"}   (no secrets)
     WS  /ws       first message must be `hello` with the session token
+    /admin/*      admin API for the monitor, token required (admin.py, D-15)
 """
 from __future__ import annotations
 
@@ -10,11 +11,14 @@ import contextlib
 import hmac
 import logging
 import time
+import types
 from typing import Callable, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from .. import __version__, protocol
+from . import hubstate
+from .admin import create_admin_router
 from .connections import ConnectionManager
 from .flow import TransferFlow
 
@@ -24,33 +28,54 @@ HELLO_TIMEOUT = 10.0
 CLOSE_AUTH = 4401        # application close codes (4000-4999)
 CLOSE_PROTOCOL = 4400
 CLOSE_REPLACED = 4409
+LOGGERS = ("syncbridge", "uvicorn.error")   # what the monitor sees (not uvicorn.access)
 
 
 def create_app(token: str, idle_timeout: Optional[float] = None,
                on_idle: Optional[Callable[[], None]] = None,
                export_timeout: Optional[float] = None,
-               apply_timeout: Optional[float] = None) -> FastAPI:
-    """Build the app. `on_idle` is called once no client has been connected for `idle_timeout` s."""
+               apply_timeout: Optional[float] = None,
+               on_shutdown: Optional[Callable[[], None]] = None,
+               port: Optional[int] = None) -> FastAPI:
+    """Build the app. `on_idle` is called once no client has been connected for `idle_timeout` s;
+    `on_shutdown` by POST /admin/shutdown."""
     manager = ConnectionManager()
+    bus = hubstate.EventBus()
+    logbuf = hubstate.LogBuffer(bus)
+    history = hubstate.TransferHistory(bus)
     flow_args = {}
     if export_timeout is not None:
         flow_args["export_timeout"] = export_timeout
     if apply_timeout is not None:
         flow_args["apply_timeout"] = apply_timeout
-    flow = TransferFlow(manager, **flow_args)
+    flow = TransferFlow(manager, history=history, **flow_args)
+    state = types.SimpleNamespace(manager=manager, flow=flow, history=history, logbuf=logbuf, bus=bus,
+                                  started=time.monotonic(), started_iso=hubstate.now_iso(),
+                                  port=port, log=log)
 
     @contextlib.asynccontextmanager
     async def lifespan(_app):
+        bus.bind(asyncio.get_running_loop())
+        for name in LOGGERS:
+            logging.getLogger(name).addHandler(logbuf)
+        if log.getEffectiveLevel() > logging.INFO:
+            log.setLevel(logging.INFO)          # the monitor shows connects and transfers
         task = None
         if idle_timeout and on_idle:
             task = asyncio.create_task(_idle_watch(manager, idle_timeout, on_idle))
-        yield
-        if task is not None:
-            task.cancel()
+        try:
+            yield
+        finally:
+            if task is not None:
+                task.cancel()
+            for name in LOGGERS:
+                logging.getLogger(name).removeHandler(logbuf)
 
     app = FastAPI(title="SyncBridge Sync Server", version=__version__, lifespan=lifespan)
     app.state.manager = manager
     app.state.flow = flow
+    app.state.hub = state
+    app.include_router(create_admin_router(token, state, on_shutdown))
 
     @app.get("/health")
     async def health():
@@ -75,6 +100,7 @@ def create_app(token: str, idle_timeout: Optional[float] = None,
 
         client = manager.add(hello, ws.send_text, ws.close)
         log.info("connected %s (%s)", client.client_id, client.document or "-")
+        bus.publish({"event": "client.connected", "client": client.summary()})
         for old in manager.superseded_by(client):
             log.info("closing %s: replaced by %s from the same process", old.client_id, client.client_id)
             await _replace(old, client)
@@ -94,7 +120,7 @@ def create_app(token: str, idle_timeout: Optional[float] = None,
                 if msg.get("reply_to") and manager.resolve(client, msg):
                     continue
                 if msg["kind"] == "transfer.request":
-                    log.info("%s requests %s", client.client_id, msg["data"]["direction"])
+                    log.info("%s requests %s", client.client_id, msg["data"].get("direction"))
                     task = asyncio.create_task(_transfer(flow, client, msg))
                     tasks.add(task)
                     task.add_done_callback(tasks.discard)
@@ -106,6 +132,7 @@ def create_app(token: str, idle_timeout: Optional[float] = None,
         finally:
             manager.remove(client)
             log.info("disconnected %s", client.client_id)
+            bus.publish({"event": "client.disconnected", "client": client.summary()})
             await manager.broadcast_peers()
 
     return app

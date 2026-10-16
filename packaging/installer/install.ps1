@@ -1,6 +1,7 @@
 # SyncBridge installer (per user, no administrator rights). Run through Install.bat.
 #
 #   server : <InstallRoot>\server\SyncServer.exe
+#   monitor: <InstallRoot>\app\SyncBridge.exe, Start menu "SyncBridge モニター" (per user)
 #   Maya   : <InstallRoot>\maya  (the user drags drag_to_maya_SyncBridge.py onto a Maya viewport)
 #   AE     : <CepRoot>\com.syncbridge.panel   (extracted from the signed ZXP)
 #
@@ -9,6 +10,7 @@
 param(
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'Programs\SyncBridge'),
     [string]$CepRoot = (Join-Path $env:APPDATA 'Adobe\CEP\extensions'),
+    [string]$ProgramsDir = [Environment]::GetFolderPath('Programs'),
     [switch]$Quiet
 )
 $ErrorActionPreference = 'Stop'
@@ -24,18 +26,18 @@ function Show-Message([string]$text, [string]$icon = 'Information') {
 try {
     $version = (Get-Content (Join-Path $payload 'version.json') -Raw | ConvertFrom-Json).version
 
-    # 1. Stop a running SyncBridge server of an earlier install (its files are replaced).
-    Get-Process -Name SyncServer -ErrorAction SilentlyContinue |
+    # 1. Stop a running SyncBridge server and monitor of an earlier install (their files are replaced).
+    Get-Process -Name SyncServer, SyncBridge -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -and $_.Path.StartsWith($InstallRoot, [StringComparison]::OrdinalIgnoreCase) } |
         Stop-Process -Force
     Start-Sleep -Milliseconds 500
 
     # 2. Program files.
     New-Item -ItemType Directory -Force $InstallRoot | Out-Null
-    foreach ($part in 'server', 'maya') {
+    foreach ($part in 'server', 'app', 'maya') {
         $target = Join-Path $InstallRoot $part
         if (Test-Path $target) { Remove-Item -Recurse -Force $target }
-        Copy-Item -Recurse (Join-Path $payload $part) $target
+        if (Test-Path (Join-Path $payload $part)) { Copy-Item -Recurse (Join-Path $payload $part) $target }
     }
     foreach ($file in 'version.json', 'uninstall.ps1', 'Uninstall.bat', 'README_SyncBridge.txt') {
         $source = Join-Path $payload $file
@@ -59,9 +61,23 @@ try {
     Remove-Item $zip
     Get-ChildItem -Recurse -File $extension | Unblock-File
 
-    # 4. Install record (read by the uninstaller).
+    # 4. Start menu shortcut of the monitor (the user's own Start menu, no administrator rights).
+    $shortcut = $null
+    $monitorExe = Join-Path $InstallRoot 'app\SyncBridge.exe'
+    if (Test-Path $monitorExe) {
+        New-Item -ItemType Directory -Force $ProgramsDir | Out-Null
+        $shortcut = Join-Path $ProgramsDir 'SyncBridge モニター.lnk'
+        $link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
+        $link.TargetPath = $monitorExe
+        $link.WorkingDirectory = Split-Path -Parent $monitorExe
+        $link.Description = 'SyncBridge のサーバー、接続中のアプリ、転送の履歴、ログを確認する'
+        $link.Save()
+    }
+
+    # 5. Install record (read by the uninstaller).
     @{ version = $version; installed = (Get-Date).ToString('s'); install_root = $InstallRoot;
-       extension = $extension } | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $InstallRoot 'install.json')
+       extension = $extension; shortcut = $shortcut } | ConvertTo-Json |
+        Set-Content -Encoding UTF8 (Join-Path $InstallRoot 'install.json')
 
     $running = @()
     if (Get-Process -Name AfterFX -ErrorAction SilentlyContinue) { $running += 'After Effects' }
@@ -75,7 +91,8 @@ try {
         "次の 2 つを行ってください:`n" +
         "1. Maya: このあと開くフォルダの「drag_to_maya_SyncBridge.py」を Maya のビューポートにドラッグ＆ドロップ" +
         "（シェルフに SyncBridge ボタンが追加されます。Maya のバージョンごとに 1 回）`n" +
-        "2. After Effects: 「ウィンドウ」→「エクステンション」→「SyncBridge」でパネルを開く" + $restart)
+        "2. After Effects: 「ウィンドウ」→「エクステンション」→「SyncBridge」でパネルを開く`n`n" +
+        "サーバーの状態や転送の履歴は、スタートメニューの「SyncBridge モニター」で確認できます。" + $restart)
     if (-not $Quiet) { Start-Process explorer.exe "/select,`"$dragFile`"" }
     exit 0
 }

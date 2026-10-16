@@ -2,7 +2,7 @@
 
     .venv\\Scripts\\python packaging\\build_release.py [--skip-tests] [--no-timestamp]
 
-Needs: requirements-server.txt + requirements-build.txt in .venv, and
+Needs: requirements-server.txt + requirements-monitor.txt + requirements-build.txt in .venv, and
 packaging/tools/ZXPSignCmd.exe (Adobe CEP-Resources, ZXPSignCMD 4.1.3 x64).
 
 Output (dist/ is not in git):
@@ -10,6 +10,7 @@ Output (dist/ is not in git):
         Install.bat, README_SyncBridge.txt
         payload/install.ps1, uninstall.ps1, Uninstall.bat, version.json, README_SyncBridge.txt
         payload/server/SyncServer.exe (+ _internal)        PyInstaller onedir
+        payload/app/SyncBridge.exe (+ _internal)           the monitor (PySide6), PyInstaller onedir, windowed
         payload/maya/drag_to_maya_SyncBridge.py/.mel, icons/, scripts/{syncbridge, syncbridge_maya}
         payload/ae/com.syncbridge.panel.zxp                 signed with a self-signed certificate
     dist/SyncBridge-<version>.zip
@@ -67,6 +68,23 @@ def build_server(payload, work):
          "--collect-submodules", "uvicorn", "--collect-submodules", "websockets",
          os.path.join(PACKAGING, "server_entry.py")], cwd=ROOT, stdout=subprocess.DEVNULL)
     shutil.copytree(os.path.join(work, "dist", "SyncServer"), os.path.join(payload, "server"))
+
+
+# Not used by the monitor; keeps PyInstaller from pulling them in through optional imports.
+MONITOR_EXCLUDES = ("fastapi", "uvicorn", "starlette", "pydantic", "websockets", "httpx", "tkinter",
+                    "PySide6.QtNetwork", "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtSql",
+                    "PySide6.QtOpenGL", "PySide6.QtPdf", "PySide6.QtSvg")
+
+
+def build_monitor(payload, work):
+    argv = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--onedir", "--windowed",
+            "--name", "SyncBridge", "--distpath", os.path.join(work, "dist"),
+            "--workpath", os.path.join(work, "work"), "--specpath", work,
+            "--paths", os.path.join(ROOT, "src")]
+    for name in MONITOR_EXCLUDES:
+        argv += ["--exclude-module", name]
+    run(argv + [os.path.join(PACKAGING, "monitor_entry.py")], cwd=ROOT, stdout=subprocess.DEVNULL)
+    shutil.copytree(os.path.join(work, "dist", "SyncBridge"), os.path.join(payload, "app"))
 
 
 def build_maya(payload):
@@ -182,6 +200,7 @@ def main(argv=None) -> int:
     if not args.skip_tests:
         run_tests()
     build_server(payload, work)
+    build_monitor(payload, work)
     build_maya(payload)
     build_ae(payload, work, timestamp=not args.no_timestamp)
     build_installer(release, payload, ver)

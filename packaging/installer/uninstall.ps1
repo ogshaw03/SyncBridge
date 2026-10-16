@@ -26,9 +26,16 @@ function Ask([string]$text) {
 try {
     if (-not (Ask 'SyncBridge をアンインストールしますか？')) { exit 0 }
 
-    Get-Process -Name SyncServer -ErrorAction SilentlyContinue |
+    Get-Process -Name SyncServer, SyncBridge -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -and $_.Path.StartsWith($InstallRoot, [StringComparison]::OrdinalIgnoreCase) } |
         Stop-Process -Force
+
+    # Start menu shortcut of the monitor (0.1.3 and later record it in install.json).
+    $record = Join-Path $InstallRoot 'install.json'
+    if (Test-Path $record) {
+        $shortcut = (Get-Content $record -Raw | ConvertFrom-Json).shortcut
+        if ($shortcut -and $shortcut.EndsWith('.lnk') -and (Test-Path $shortcut)) { Remove-Item -Force $shortcut }
+    }
 
     # After Effects panel: only our own folder (its manifest names our extension).
     $extension = Join-Path $CepRoot $extensionId

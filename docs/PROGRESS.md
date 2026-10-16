@@ -44,6 +44,13 @@
 
 ### 2026-10-16（Windows 11, Python 3.10.6）
 
+- **0.1.2 のインストール（会社 PC、利用者）:** 問題なし。
+- **0.1.3（モニターの配布）:** 会社 PC には開発環境がないため、モニターを `SyncBridge.exe`（PyInstaller、windowed）にして
+  インストーラーに追加（`app\`、スタートメニュー「SyncBridge モニター」、アンインストールで削除）。P-C のランチャーも同じ EXE に入れる予定。
+  テスト 196 件 OK。一時フォルダにインストールし、インストールした `SyncServer.exe` と `SyncBridge.exe`（offscreen）を起動して
+  モニターがハブの `/admin/events` に接続することを確認、アンインストールでショートカットとフォルダが消えることを確認。
+  **利用者の画面でのモニターの操作は未確認。**
+
 - **P-B（モニター、D-15）:** `monitor/model.py`（Qt なし）、`monitor/window.py`（PySide6-Essentials 6.11.2 を `.venv` に追加、
   `requirements-monitor.txt`）、`syncbridge-monitor.cmd`。ハブのログファイル `logs/hub-<pid>.log`、停止時にアプリへ `hub_stopping` を通知。
   テスト **195 件 OK**（`.venv`、画面は offscreen の Qt で確認）、システムの py 3.10 では 52 件スキップで OK。
@@ -168,7 +175,7 @@
 1. **[実機・利用者]** 0.1.1 を GitHub Releases から入れて確認する（0.1.0 からの更新、保存・復元・範囲変更、
    素材が短いときの日本語メッセージ）。Python のない PC での確認（H-PKG-2）も残っている。
 2. **ハブ・ランチャー・モニター（D-15、`docs/PLATFORM_DESIGN.md`）:** P-A・P-B は実装済み（11・12 章）。
-   **[利用者]** `.\syncbridge-monitor.cmd` でモニターを開き、Maya / AE をつないだ状態で一覧・履歴・ログ・停止・切断を確認する。
+   **[利用者]** 0.1.3 を入れ、スタートメニューの「SyncBridge モニター」を開き、Maya / AE をつないだ状態で一覧・履歴・ログ・停止・切断を確認する。
    次は P-C（ランチャー、モニターと合わせて `SyncBridge.exe` に）→ P-D（アップデーター）。
 3. **Phase 2（基本設定の同期）:** FPS、解像度、ピクセルアスペクト比、フレーム範囲（Maya の再生範囲・アニメーション範囲・
    レンダー範囲 ⇔ AE のコンプの長さ・ワークエリア）、現在フレーム（SPEC 6 章）。Maya 側の読み取りは Phase 0 で実装済み。

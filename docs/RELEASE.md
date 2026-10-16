@@ -1,6 +1,6 @@
 # 配布（リリース）
 
-最終更新: 2026-10-16 / 現在の配布: **0.1.2（先行配布、Phase 1 の機能のみ）**
+最終更新: 2026-10-16 / 現在の配布: **0.1.3（先行配布、Phase 1 の機能のみ）**
 
 ## 1. 先行配布 0.1.0 の範囲（D-14）
 
@@ -20,6 +20,7 @@
 | もの | 場所 |
 |---|---|
 | サーバー `SyncServer.exe`（PyInstaller onedir） | `%LOCALAPPDATA%\Programs\SyncBridge\server\` |
+| モニター `SyncBridge.exe`（PySide6、PyInstaller onedir、0.1.3 から） | `%LOCALAPPDATA%\Programs\SyncBridge\app\`。スタートメニュー（利用者ごと）に「SyncBridge モニター」 |
 | Maya のスクリプト、アイコン、ドラッグ用ファイル | `%LOCALAPPDATA%\Programs\SyncBridge\maya\` |
 | AE パネル（署名済み ZXP を展開） | `%APPDATA%\Adobe\CEP\extensions\com.syncbridge.panel\` |
 | アンインストーラー、`install.json` | `%LOCALAPPDATA%\Programs\SyncBridge\` |
@@ -80,6 +81,7 @@ Python と `.venv` はこの PC から消せないので、Python のない PC �
 | 0.1.0 | 2026-10-16 | 先行配布。手動の両方向転送（Editable / Precision）、Maya のシェルフボタン、AE パネル（署名済み）。zip 10.7MB。GitHub Releases（pre-release）、タグ v0.1.0 = a7df2ac |
 | 0.1.1 | 2026-10-16 | 素材の長さの事前確認（R-16）、タイムワープの保存・復元・範囲変更、Maya の日本語化。zip 10.7MB、SHA-256 60f1eeed…。タグ v0.1.1 = 7a092e9（0.1.0 と同じ署名用証明書） |
 | 0.1.2 | 2026-10-16 | ハブの管理 API（モニター用、P-A）、ハブのログファイル、停止・切断の通知（P-B）。転送の機能は 0.1.1 と同じ。zip 10.7MB、SHA-256 b9f26450…。ビルドした SyncServer.exe で発見・管理 API・停止・ログファイルを確認。タグ v0.1.2 |
+| 0.1.3 | 2026-10-16 | SyncBridge モニター（`SyncBridge.exe`、スタートメニュー）。zip 45.1MB（PySide6 を含むため）、SHA-256 1097c9a7…。一時フォルダへのインストール・モニターの起動（ハブの `/admin/events` に接続）・アンインストール（ショートカットも削除）を確認。タグ v0.1.3 |
 
 ### 0.1.0 の利用者テストで見つかった問題（次の版で修正）
 

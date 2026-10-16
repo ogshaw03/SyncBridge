@@ -70,6 +70,16 @@ Maya の「Scene Time Warp」と After Effects の「タイムリマップ」を
   ・どれも確認ダイアログが出て、適用前にバックアップを取り、取り消し（Ctrl+Z）1 回で元に戻せます。
 
 
+■ SyncBridge モニター（スタートメニュー →「SyncBridge モニター」）
+
+  SyncBridge のサーバー（Maya と AE の間で転送を仲介する、画面のないプログラム）の様子を確認します。
+  ・動作中のサーバーの一覧、接続中のアプリ（Maya / After Effects）、転送の履歴、ログ
+  ・「停止」: サーバーを止めます（Maya や AE から再び Connect すると、新しく起動します）
+  ・「強制終了…」: 応答しなくなったサーバーを止めます
+  ・「切断…」: 選んだアプリをサーバーから切断します
+  モニターを閉じても、サーバーや転送には影響しません。
+
+
 ■ 困ったとき
 
   ・「素材は ○ 秒ですが、○〜○ 秒が必要です」/「値 ○ は 0 から ○ の範囲外です」:
@@ -84,7 +94,7 @@ Maya の「Scene Time Warp」と After Effects の「タイムリマップ」を
   ・「レイヤーを 1 つだけ選択してください」: AE で、送り先のコンポを開いてレイヤーを 1 つ選んでください。
   ・After Effects のメニューにパネルが出ない / 真っ白: After Effects を再起動してください。
     それでも出ない場合は、下のログと一緒に担当者へ連絡してください。
-  ・ログ: %LOCALAPPDATA%\SyncBridge\server.log
+  ・ログ: SyncBridge モニターの「ログ」タブ、または %LOCALAPPDATA%\SyncBridge\logs（モニターの「ログフォルダを開く」）
 
 
 ■ アンインストール
@@ -92,6 +102,7 @@ Maya の「Scene Time Warp」と After Effects の「タイムリマップ」を
   「%LOCALAPPDATA%\Programs\SyncBridge」の「Uninstall.bat」をダブルクリックします。
   （エクスプローラーのアドレス欄に上の文字をそのまま入れると開けます）
   Maya のシェルフのボタンは、ボタンを右クリック →「削除」で消してください。
+  スタートメニューの「SyncBridge モニター」も一緒に消えます。
 
 
 ■ 更新

@@ -39,7 +39,9 @@ class CepClientTest(ServerFixture):
         self.maya = SyncClient("maya", {
             "export.request": lambda msg: {"export": maya_export()},
             "apply.request": self._maya_apply,
+            "guide.apply.request": self._maya_guide,
         })
+        self.guides = []
         self.maya.connect(port=self.port, token=TOKEN)
         self.procs = []
 
@@ -59,6 +61,12 @@ class CepClientTest(ServerFixture):
         env = msg["data"]["apply"]
         self.applied.append(env)
         return {"status": "applied", "after": _maya_after(env["data"]["native"])}
+
+    def _maya_guide(self, msg):
+        guide = msg["data"]["guide"]
+        self.guides.append(guide)
+        return {"status": "applied", "camera": "persp", "render": [2112, 1188],
+                "comp": [guide["width"], guide["height"]], "warnings": []}
 
     def driver(self, *args, export=None):
         p = subprocess.Popen(["node", DRIVER, str(self.port), TOKEN, export or self.export_path] + list(args),
@@ -101,6 +109,24 @@ class CepClientTest(ServerFixture):
         self.assertEqual(result["data"]["status"], "applied")
         self.assertTrue(result["data"]["readback"]["passed"])
         self.assertEqual(len(self.applied), 1)
+
+    def test_panel_sends_the_comp_guide(self):
+        # D-16: "解像度の枠を Maya へ" -> guide.request -> Maya draws the frame.
+        p, events = self.driver("guide")
+        self.assertEqual(p.wait(30), 0, events)
+        reply = [e for e in events if e["event"] == "result"][0]["reply"]
+        self.assertEqual(reply["kind"], "guide.result", reply)
+        self.assertEqual((reply["data"]["status"], reply["data"]["camera"]), ("applied", "persp"))
+        self.assertEqual(reply["data"]["target"]["client_id"], self.maya.client_id)
+        self.assertEqual(self.guides, [{"name": "Comp 1", "width": 1920, "height": 1080, "pixelAspect": 1.0}])
+
+    def test_comp_guide_without_a_comp(self):
+        p, events = self.driver("guide", export="ERROR")
+        self.assertEqual(p.wait(30), 0, events)
+        reply = [e for e in events if e["event"] == "result"][0]["reply"]
+        self.assertEqual(reply["kind"], "error")
+        self.assertIn("コンポジションを開いてください", reply["data"]["message"])
+        self.assertEqual(self.guides, [])
 
     def test_host_error_reaches_maya(self):
         p, events = self.driver("serve", export="ERROR")

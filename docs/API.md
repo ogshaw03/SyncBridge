@@ -114,6 +114,9 @@ mapping: --mode editable|precision --tol 0.1 --origin F --maya-in-origin F --may
 | `transfer.result` | サーバー → 要求元 | `status`（applied / cancelled / failed）, `direction`, `source`, `target`, `report`（変換の誤差）, `readback`, `backup`, `message` |
 | `export.request` / `export.result` | サーバー ⇔ アプリ | `{}` / `{export: <maya.timewarp.export か ae.timeremap.export のエンベロープ>}` |
 | `apply.request` / `apply.result` | サーバー ⇔ アプリ | `{apply: <apply エンベロープ>}` / `{status, after?: <適用後の export エンベロープ>, backup?, message?}` |
+| `guide.request` | クライアント（AE）→ サーバー | `comp: {name, width, height, pixelAspect}`, 省略可 `target`（Maya の client_id）。D-16 |
+| `guide.apply.request` / `guide.apply.result` | サーバー ⇔ Maya | `{guide: {name, width, height, pixelAspect}}` / `{status, camera, render: [w, h], comp: [w, h], warnings}` |
+| `guide.result` | サーバー → 要求元 | `guide.apply.result` の内容 + `source`, `target`, `message`（注意の要約） |
 | `error` | どちらでも | `code`, `message`（要求への応答なら `reply_to` 付き） |
 
 エラーコード: `bad_message`, `auth_failed`, `no_peer`, `timeout`, `peer_disconnected`, `app_error`, `conversion_failed`, `busy`,

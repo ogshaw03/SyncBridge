@@ -21,6 +21,7 @@ from . import hubstate
 from .admin import create_admin_router
 from .connections import ConnectionManager
 from .flow import TransferFlow
+from .guide_flow import GuideFlow
 
 log = logging.getLogger("syncbridge.server")
 
@@ -54,6 +55,8 @@ def create_app(token: str, idle_timeout: Optional[float] = None,
     if apply_timeout is not None:
         flow_args["apply_timeout"] = apply_timeout
     flow = TransferFlow(manager, history=history, **flow_args)
+    guides = GuideFlow(manager, history=history,
+                       **({"timeout": export_timeout} if export_timeout is not None else {}))
     state = types.SimpleNamespace(manager=manager, flow=flow, history=history, logbuf=logbuf, bus=bus,
                                   started=time.monotonic(), started_iso=hubstate.now_iso(),
                                   port=port, log=log)
@@ -136,9 +139,13 @@ def create_app(token: str, idle_timeout: Optional[float] = None,
                     continue
                 if msg.get("reply_to") and manager.resolve(client, msg):
                     continue
-                if msg["kind"] == "transfer.request":
-                    log.info("%s requests %s", client.client_id, msg["data"].get("direction"))
-                    task = asyncio.create_task(_transfer(flow, client, msg))
+                if msg["kind"] in ("transfer.request", "guide.request"):
+                    if msg["kind"] == "transfer.request":
+                        log.info("%s requests %s", client.client_id, msg["data"].get("direction"))
+                        task = asyncio.create_task(_transfer(flow, client, msg))
+                    else:
+                        log.info("%s sends the comp guide %s", client.client_id, msg["data"].get("comp"))
+                        task = asyncio.create_task(_transfer(guides, client, msg))
                     tasks.add(task)
                     task.add_done_callback(tasks.discard)
                     continue
@@ -155,7 +162,7 @@ def create_app(token: str, idle_timeout: Optional[float] = None,
     return app
 
 
-async def _transfer(flow: TransferFlow, client, msg) -> None:
+async def _transfer(flow, client, msg) -> None:
     await flow.handle(client, msg)
     log.info("transfer by %s finished", client.client_id)
 

@@ -5,6 +5,7 @@ thread through maya.utils.executeDeferred (H-MY-14):
 
     export.request -> exchange.build_export(allow_missing=True)
     apply.request  -> exchange.apply_envelope(...)   (confirmation dialog, backup, undo, readback)
+    guide.apply.request -> comp_guide.show(...)      (AE comp frame in the active view, D-16)
 
     import syncbridge_maya.service as svc
     svc.connect(start_server=True)
@@ -21,7 +22,7 @@ from syncbridge import protocol
 from syncbridge.client import launcher
 from syncbridge.client.sync_client import ConnectError, SyncClient
 
-from . import exchange
+from . import comp_guide, exchange
 
 _client: Optional[SyncClient] = None
 _listeners: List[Callable[[str, object], None]] = []
@@ -104,6 +105,19 @@ def _handle_apply(msg: dict) -> dict:
     return result
 
 
+def _handle_guide(msg: dict) -> dict:
+    """Show the AE comp's frame in the active view; the panel hears about it ("guide" event)."""
+    guide = dict(msg["data"]["guide"])
+    guide["name"] = ("AE %s" % guide.get("name", "")).strip()     # the label says it came from AE
+    try:
+        result = comp_guide.show(guide)
+    except Exception as exc:
+        _notify("guide", {"status": "failed", "message": str(exc)})
+        raise
+    _notify("guide", dict(result, name=msg["data"]["guide"].get("name")))
+    return result
+
+
 def client() -> Optional[SyncClient]:
     return _client
 
@@ -122,7 +136,8 @@ def connect(start_server: bool = True, port: Optional[int] = None) -> dict:
         launcher.ensure_server(port or protocol.DEFAULT_PORT)
     _client = SyncClient(
         "maya",
-        handlers={"export.request": _handle_export, "apply.request": _handle_apply},
+        handlers={"export.request": _handle_export, "apply.request": _handle_apply,
+                  "guide.apply.request": _handle_guide},
         dispatch=maya.utils.executeDeferred,
         on_event=_on_event,
         version=cmds.about(version=True),

@@ -53,7 +53,7 @@ var SBCep = (function () {
                 comp: null, layer: null
             };
             if (comp instanceof CompItem) {
-                out.comp = { name: comp.name, frameRate: comp.frameRate };
+                out.comp = { name: comp.name, frameRate: comp.frameRate, width: comp.width, height: comp.height };
                 if (comp.selectedLayers.length === 1) {
                     out.layer = {
                         name: comp.selectedLayers[0].name,
@@ -87,10 +87,23 @@ var SBCep = (function () {
         } catch (e) { return fail(e); }
     }
 
+    // guide.request (D-16): size of the active comp, shown as a frame in the Maya view.
+    // CompItem.width / height / pixelAspect (H-AE-20, documented; not yet run).
+    function compInfo() {
+        try {
+            var comp = app.project.activeItem;
+            if (!(comp instanceof CompItem)) {
+                throw SB.userError('Open a composition first (click its timeline).', 'no_comp');
+            }
+            return ok({ name: comp.name, width: comp.width, height: comp.height, pixelAspect: comp.pixelAspect });
+        } catch (e) { return fail(e); }
+    }
+
     return {
         readSession: readSession,
         info: info,
         exportSelected: exportSelected,
-        applyEnvelope: applyEnvelope
+        applyEnvelope: applyEnvelope,
+        compInfo: compInfo
     };
 }());

@@ -159,6 +159,27 @@
         return msg.event_id;
     };
 
+    // Comp guide (D-16): the active comp's size, drawn as a frame in the Maya view.
+    // callback(reply) gets guide.result or error; a problem in AE (no comp) comes back
+    // as an error message without asking the server.
+    SBPanelClient.prototype.sendGuide = function (callback) {
+        var self = this;
+        if (!this.connected()) { throw new Error('not connected'); }
+        this.host.call('compInfo', [], function (comp) {
+            if (comp.error) {
+                callback(message('error', { code: 'app_error', message: userMessage(comp) }));
+                return;
+            }
+            if (!self.connected()) {
+                callback(message('error', { code: 'peer_disconnected', message: 'not connected' }));
+                return;
+            }
+            var msg = message('guide.request', { comp: comp });
+            self.pending[msg.event_id] = callback;
+            self.ws.send(JSON.stringify(msg));
+        });
+    };
+
     SBPanelClient.prototype._send = function (msg) {
         if (this.ws && this.ws.readyState === 1) { this.ws.send(JSON.stringify(msg)); }
     };

@@ -18,7 +18,7 @@ except ImportError:
     from shiboken2 import wrapInstance
 
 from syncbridge import __version__, protocol
-from . import service, snapshots
+from . import comp_guide, service, snapshots
 
 WINDOW_NAME = "SyncBridgePanel"
 _window = None
@@ -73,6 +73,24 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.restore_btn.clicked.connect(self.restore_warp)
         self.retime_btn.clicked.connect(self.retime_warp)
 
+        width, height = comp_guide.last_size()
+        self.guide_width, self.guide_height = QtWidgets.QSpinBox(), QtWidgets.QSpinBox()
+        for box, value in ((self.guide_width, width), (self.guide_height, height)):
+            box.setRange(1, 32768)
+            box.setValue(value)
+        self.guide_preset = QtWidgets.QComboBox()
+        self.guide_preset.addItem(u"プリセット…")
+        for name, w, h in comp_guide.PRESETS:
+            self.guide_preset.addItem(u"%s  %d x %d" % (name, w, h), (w, h))
+        self.guide_preset.activated.connect(self.apply_guide_preset)
+        self.show_guide_btn = QtWidgets.QPushButton(u"枠を表示")
+        self.show_guide_btn.setToolTip(u"この大きさの枠を、最後にクリックしたビューのカメラに表示します\n"
+                                       u"（Maya のレンダー解像度の中央に等倍）")
+        self.show_guide_btn.clicked.connect(self.show_guide)
+        self.clear_guide_btn = QtWidgets.QPushButton(u"枠を消す")
+        self.clear_guide_btn.setToolTip(u"表示中の解像度の枠をビューから消します")
+        self.clear_guide_btn.clicked.connect(self.clear_guide)
+
         self.log = QtWidgets.QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(500)
@@ -97,6 +115,21 @@ class SyncBridgePanel(QtWidgets.QDialog):
         for button in (self.save_btn, self.restore_btn, self.retime_btn):
             warp_row.addWidget(button)
         layout.addWidget(warp_box)
+        guide_box = QtWidgets.QGroupBox(u"解像度の枠")
+        guide_layout = QtWidgets.QVBoxLayout(guide_box)
+        size_row = QtWidgets.QHBoxLayout()
+        size_row.addWidget(QtWidgets.QLabel(u"幅"))
+        size_row.addWidget(self.guide_width)
+        size_row.addWidget(QtWidgets.QLabel(u"高さ"))
+        size_row.addWidget(self.guide_height)
+        size_row.addWidget(self.guide_preset, 1)
+        action_row = QtWidgets.QHBoxLayout()
+        action_row.addWidget(QtWidgets.QLabel(u"AE のパネルの「解像度の枠を Maya へ」でも表示できます"), 1)
+        action_row.addWidget(self.show_guide_btn)
+        action_row.addWidget(self.clear_guide_btn)
+        guide_layout.addLayout(size_row)
+        guide_layout.addLayout(action_row)
+        layout.addWidget(guide_box)
         layout.addWidget(self.log, 1)
 
         service.add_listener(self.on_event)
@@ -192,6 +225,33 @@ class SyncBridgePanel(QtWidgets.QDialog):
         else:
             self.write(u"%sをキャンセルしました（何も変更していません）" % label)
 
+    def apply_guide_preset(self, index):
+        size = self.guide_preset.itemData(index)
+        if size:
+            self.guide_width.setValue(size[0])
+            self.guide_height.setValue(size[1])
+        self.guide_preset.setCurrentIndex(0)
+
+    def show_guide(self):
+        width, height = self.guide_width.value(), self.guide_height.value()
+        try:
+            result = comp_guide.show_size(width, height)
+        except Exception as exc:
+            self.write(u"枠を表示できませんでした: %s" % exc)
+            return
+        self.write(u"%dx%d の枠を、カメラ %s のビューに表示しました（Maya のレンダー %dx%d）。"
+                   % (width, height, result["camera"], result["render"][0], result["render"][1]))
+        for w in result.get("warnings") or []:
+            self.write(u"注意: %s" % w)
+
+    def clear_guide(self):
+        try:
+            count = comp_guide.clear()
+        except Exception as exc:
+            self.write(u"枠を消せませんでした: %s" % exc)
+            return
+        self.write(u"枠を消しました。" if count else u"表示中の枠はありません。")
+
     # -- events (main thread) ----------------------------------------------------------
     def on_event(self, event, payload):
         if event == "transfer_result":
@@ -225,6 +285,15 @@ class SyncBridgePanel(QtWidgets.QDialog):
                 self.write("AE → Maya cancelled (nothing changed)")
             else:
                 self.write("AE → Maya failed: %s" % payload.get("message"))
+        elif event == "guide":
+            if payload.get("status") == "applied":
+                self.write(u"AE のコンプ「%s」（%dx%d）の枠を、カメラ %s のビューに表示しました（Maya のレンダー %dx%d）。"
+                           % (payload.get("name") or "", payload["comp"][0], payload["comp"][1], payload["camera"],
+                              payload["render"][0], payload["render"][1]))
+                for w in payload.get("warnings") or []:
+                    self.write(u"注意: %s" % w)
+            else:
+                self.write(u"枠を表示できませんでした: %s" % payload.get("message"))
         elif event == "peers":
             ae_now = [p for p in payload if p["app"] == "ae"]
             if bool(ae_now) != self._had_ae:

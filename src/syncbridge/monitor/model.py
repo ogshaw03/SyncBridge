@@ -21,6 +21,7 @@ STATE_LABELS = {
 }
 APP_LABELS = {"maya": "Maya", "ae": "After Effects", "test": "テスト"}
 DIRECTION_LABELS = {"maya2ae": "Maya → After Effects", "ae2maya": "After Effects → Maya"}
+DATA_TYPE_LABELS = {"comp_guide": "解像度の枠"}      # "timewarp" needs no label
 STATUS_LABELS = {
     "running": "実行中",
     "applied": "適用",
@@ -91,9 +92,12 @@ def transfer_row(item: dict) -> List[str]:
         status += "（%s）" % item["error_code"]
     passed = item.get("readback_passed")
     readback = "" if passed is None else ("合格 " if passed else "不合格 ") + _frames(item.get("readback_max_error"))
+    direction = DIRECTION_LABELS.get(item.get("direction"), item.get("direction") or "")
+    if item.get("data_type") in DATA_TYPE_LABELS:
+        direction = "%s %s" % (DATA_TYPE_LABELS[item["data_type"]], direction)
     return [
         local_time(item.get("started")),
-        DIRECTION_LABELS.get(item.get("direction"), item.get("direction") or ""),
+        direction,
         status,
         item.get("source") or "",
         item.get("target") or "",

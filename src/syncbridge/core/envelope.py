@@ -30,6 +30,11 @@ KINDS = (
     "export.result",
     "apply.request",
     "apply.result",
+    # comp guide (D-16)
+    "guide.request",
+    "guide.result",
+    "guide.apply.request",
+    "guide.apply.result",
     "error",
 )
 

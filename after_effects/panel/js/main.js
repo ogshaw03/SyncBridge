@@ -57,6 +57,8 @@
         tolerance: el('input', { type: 'number', step: '0.05', min: '0.001', value: '0.1' }),
         toAe: el('button', { 'class': 'send', text: 'Maya → AE' }),
         toMaya: el('button', { 'class': 'send', text: 'AE → Maya' }),
+        guide: el('button', { title: 'アクティブなコンポの幅と高さを、Maya のビューに枠で表示します（レンダー解像度の中央に等倍）',
+                              text: '解像度の枠を Maya へ' }),
         log: el('div', { id: 'log' })
     };
 
@@ -69,6 +71,7 @@
         field('Origin frame (Maya)', ui.origin),
         field('Tolerance (frames)', ui.tolerance),
         el('div', { 'class': 'row' }, [ui.toAe, ui.toMaya]),
+        el('div', { 'class': 'row' }, [ui.guide]),
         ui.log
     ].forEach(function (node) { app.appendChild(node); });
 
@@ -104,6 +107,7 @@
     // -- client ----------------------------------------------------------------------
     var busy = false;
     var layerOk = false;
+    var compOk = false;
     var client = new SBPanelClient({
         host: host,
         WebSocketImpl: window.WebSocket,
@@ -123,14 +127,21 @@
         var enabled = connected && maya.length > 0 && layerOk && !busy;
         ui.toAe.disabled = !enabled;
         ui.toMaya.disabled = !enabled;
+        ui.guide.disabled = !(connected && maya.length > 0 && compOk && !busy);
         if (!connected) { busy = false; }
     }
 
     function updateInfo() {
         host.call('info', [], function (info) {
-            if (info.error) { ui.target.textContent = SBPanelClient.userMessage(info); layerOk = false; refresh(); return; }
+            if (info.error) {
+                ui.target.textContent = SBPanelClient.userMessage(info);
+                layerOk = compOk = false;
+                refresh();
+                return;
+            }
             client.version = info.aeVersion;
             client.document = info.project;
+            compOk = !!info.comp;
             if (!info.comp) {
                 ui.target.textContent = 'コンポジションを開いてください';
                 layerOk = false;
@@ -183,6 +194,30 @@
         }
     }
 
+    function sendGuide() {
+        busy = true;
+        refresh();
+        try {
+            client.sendGuide(function (reply) {
+                busy = false;
+                if (reply.kind === 'error') {
+                    log('解像度の枠を送れませんでした: ' + reply.data.message);
+                } else {
+                    var d = reply.data;
+                    log('解像度の枠（' + d.comp[0] + 'x' + d.comp[1] + '）を Maya のカメラ ' + d.camera +
+                        ' に表示しました（Maya のレンダー ' + d.render[0] + 'x' + d.render[1] + '）');
+                    (d.warnings || []).forEach(function (w) { log('注意: ' + w); });
+                }
+                refresh();
+            });
+        } catch (e) {
+            busy = false;
+            log('解像度の枠を送れませんでした: ' + e.message);
+            refresh();
+        }
+    }
+
+    ui.guide.addEventListener('click', sendGuide);
     ui.connect.addEventListener('click', function () {
         if (client.ws) { client.disconnect(); } else { connect(); }
     });

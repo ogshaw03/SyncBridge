@@ -11,7 +11,7 @@ Output (dist/ is not in git):
         payload/install.ps1, uninstall.ps1, Uninstall.bat, version.json, README_SyncBridge.txt
         payload/server/SyncServer.exe (+ _internal)        PyInstaller onedir
         payload/app/SyncBridge.exe (+ _internal)           the monitor (PySide6), PyInstaller onedir, windowed
-        payload/maya/drag_to_maya_SyncBridge.py/.mel, icons/, scripts/{syncbridge, syncbridge_maya}
+        payload/maya/drag_to_maya_SyncBridge.py/.mel, icons/, plug-ins/, scripts/{syncbridge, syncbridge_maya}
         payload/ae/com.syncbridge.panel.zxp                 signed with a self-signed certificate
     dist/SyncBridge-<version>.zip
 
@@ -94,6 +94,7 @@ def build_maya(payload):
     for name in ("drag_to_maya_SyncBridge.py", "drag_to_maya_SyncBridge.mel"):
         shutil.copy2(os.path.join(ROOT, "maya_plugin", name), maya)
     shutil.copytree(os.path.join(ROOT, "maya_plugin", "icons"), os.path.join(maya, "icons"), ignore=IGNORE)
+    shutil.copytree(os.path.join(ROOT, "maya_plugin", "plug-ins"), os.path.join(maya, "plug-ins"), ignore=IGNORE)
     shutil.copytree(os.path.join(ROOT, "maya_plugin", "scripts", "syncbridge_maya"),
                     os.path.join(scripts, "syncbridge_maya"), ignore=IGNORE)
     shutil.copytree(os.path.join(ROOT, "src", "syncbridge"), os.path.join(scripts, "syncbridge"), ignore=IGNORE)

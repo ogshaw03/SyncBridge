@@ -4,6 +4,7 @@
  *
  *   node cep_driver.js <port> <token> <export.json|ERROR> serve
  *   node cep_driver.js <port> <token> <export.json|ERROR> request <maya2ae|ae2maya>
+ *   node cep_driver.js <port> <token> <export.json|ERROR> guide     (comp guide; ERROR = no comp)
  *
  * Prints one JSON object per line: {event: "connected"|"peers"|"apply"|"result"|"log", ...}.
  * "serve" runs until stdin closes.
@@ -35,6 +36,12 @@ const host = {
                 } else {
                     callback(JSON.parse(fs.readFileSync(exportFile, 'utf8')));
                 }
+            } else if (name === 'compInfo') {
+                if (exportFile === 'ERROR') {
+                    callback({ error: 'Open a composition first', user: true, code: 'no_comp', params: null });
+                } else {
+                    callback({ name: 'Comp 1', width: 1920, height: 1080, pixelAspect: 1 });
+                }
             } else if (name === 'applyEnvelope') {
                 const env = JSON.parse(args[0]);
                 out({ event: 'apply', keys: env.data.keys.length, kind: env.kind, origin: args[1] });
@@ -63,7 +70,18 @@ const client = new SBPanelClient({
 });
 client.connect({ port: Number(port), token });
 
-if (mode === 'request') {
+if (mode === 'guide') {
+    const timer = setInterval(() => {
+        if (client.connected() && client.hasPeer('maya')) {
+            clearInterval(timer);
+            client.sendGuide((reply) => {
+                out({ event: 'result', reply });
+                client.disconnect();
+                setTimeout(() => process.exit(0), 100);
+            });
+        }
+    }, 50);
+} else if (mode === 'request') {
     const timer = setInterval(() => {
         if (client.connected() && client.hasPeer('maya')) {
             clearInterval(timer);

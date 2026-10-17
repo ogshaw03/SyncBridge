@@ -14,6 +14,10 @@ Manual transfer (docs/PHASE1_PLAN.md 2):
     server -> app     export.request {}           app -> server export.result {export}
     server -> app     apply.request  {apply}       app -> server apply.result  {status, after?, ...}
     server -> client  transfer.result {status, report, readback, ...}
+Comp guide (D-16), AE comp frame shown in the Maya view:
+    client -> server  guide.request {comp: {name, width, height, pixelAspect}, target?}
+    server -> maya    guide.apply.request {guide: comp}   maya -> server guide.apply.result {status, camera, ...}
+    server -> client  guide.result {status, camera, render, comp, warnings, source, target}
 A reply carries `reply_to` = the request's event_id. Failures are `error`
 {code, message} with `reply_to` when they answer a request.
 """
@@ -50,6 +54,8 @@ REPLIES = {
     "transfer.request": "transfer.result",
     "export.request": "export.result",
     "apply.request": "apply.result",
+    "guide.request": "guide.result",
+    "guide.apply.request": "guide.apply.result",
 }
 
 # required data fields per kind (minimal structural validation)
@@ -63,6 +69,10 @@ REQUIRED = {
     "export.result": ("export",),
     "apply.request": ("apply",),
     "apply.result": ("status",),
+    "guide.request": ("comp",),
+    "guide.result": ("status",),
+    "guide.apply.request": ("guide",),
+    "guide.apply.result": ("status",),
     "error": ("code", "message"),
 }
 
@@ -71,6 +81,7 @@ APPLIED = "applied"
 CANCELLED = "cancelled"
 FAILED = "failed"
 STATUSES = (APPLIED, CANCELLED, FAILED)
+RESULT_KINDS = ("apply.result", "transfer.result", "guide.result", "guide.apply.result")
 
 
 class ProtocolError(ValueError):
@@ -139,7 +150,7 @@ def decode(text) -> dict:
         raise ProtocolError(E_BAD_MESSAGE, "event_id must be a string")
     if kind == "transfer.request" and data["direction"] not in DIRECTIONS:
         raise ProtocolError(E_BAD_MESSAGE, "direction must be one of %s" % sorted(DIRECTIONS))
-    if kind in ("apply.result", "transfer.result") and data["status"] not in STATUSES:
+    if kind in RESULT_KINDS and data["status"] not in STATUSES:
         raise ProtocolError(E_BAD_MESSAGE, "status must be one of %s" % (STATUSES,))
     if kind == "hello" and data["app"] not in APPS:
         raise ProtocolError(E_BAD_MESSAGE, "app must be one of %s" % (APPS,))

@@ -1,6 +1,6 @@
 # 配布（リリース）
 
-最終更新: 2026-10-16 / 現在の配布: **0.1.5（先行配布、Phase 1 の機能のみ）**
+最終更新: 2026-10-16 / 現在の配布: **0.1.6（先行配布、Phase 1 の機能のみ）**
 
 ## 1. 先行配布 0.1.0 の範囲（D-14）
 
@@ -21,7 +21,7 @@
 | もの | 場所 |
 |---|---|
 | サーバー `SyncServer.exe`（PyInstaller onedir） | `%LOCALAPPDATA%\Programs\SyncBridge\server\` |
-| モニター `SyncBridge.exe`（PySide6、PyInstaller onedir、0.1.3 から） | `%LOCALAPPDATA%\Programs\SyncBridge\app\`。スタートメニュー（利用者ごと）に「SyncBridge モニター」 |
+| モニター `SyncBridge.exe`（PySide6、PyInstaller onedir、0.1.3 から） | `%LOCALAPPDATA%\Programs\SyncBridge\app\`。スタートメニュー（利用者ごと）に「SyncBridge Monitor」（0.1.5 までは「SyncBridge モニター」。0.1.6 のインストーラーが古い名前の項目を消す） |
 | Maya のスクリプト、アイコン、ドラッグ用ファイル | `%LOCALAPPDATA%\Programs\SyncBridge\maya\` |
 | AE パネル（署名済み ZXP を展開） | `%APPDATA%\Adobe\CEP\extensions\com.syncbridge.panel\` |
 | アンインストーラー、`install.json` | `%LOCALAPPDATA%\Programs\SyncBridge\` |
@@ -86,6 +86,7 @@ Python と `.venv` はこの PC から消せないので、Python のない PC �
 | 0.1.3 | 2026-10-16 | SyncBridge モニター（`SyncBridge.exe`、スタートメニュー）。zip 45.1MB（PySide6 を含むため）、SHA-256 1097c9a7…。一時フォルダへのインストール・モニターの起動（ハブの `/admin/events` に接続）・アンインストール（ショートカットも削除）を確認。タグ v0.1.3 |
 | 0.1.4 | 2026-10-17 | AE の解像度の枠を Maya のビューに表示（AE から送る、Maya のパネルで大きさを入力）、Maya のプラグイン `syncbridge_guide.py` を追加（D-16）。zip 45.2MB、SHA-256 3e1390ff…。利用者の PC（Maya 2023 + AE 26.5）でインストール版を確認。タグ v0.1.4 |
 | 0.1.5 | 2026-10-19 | Install.bat が Maya の専用タブ「SyncBridge」を置く（ドラッグ＆ドロップ不要、D-17）、アンインストールで削除。zip 45.2MB、SHA-256 c57b5130…。利用者の PC（Maya 2023）でインストール版を確認。タグ v0.1.5 |
+| 0.1.6 | 2026-10-20 | AE のタイムリマップのキーを Maya のマーカーに（D-18）、ポート 8765 が使われていても空きポートで接続（D-19）、Maya の確認ダイアログがパネルの裏に隠れる問題の修正、新しいアイコン（シェルフ、パネル、Monitor、EXE、スタートメニュー）、SyncBridge Monitor（名前を英語に）のダークテーマ、停止済みのハブの記録の自動の片付け。zip 45.7MB、SHA-256 3a4d3c20…。テスト 252 件と mayapy 2023 / 2024 で確認。**GUI の Maya / AE での確認の一部（マーカーの表示、確認ダイアログ、スタートメニューとタスクバーのアイコン）は未確認のまま、利用者の判断でリリース**。タグ v0.1.6 |
 
 ### 0.1.0 の利用者テストで見つかった問題（次の版で修正）
 

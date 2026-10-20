@@ -19,28 +19,33 @@ Node ID 0x0007F5B0 is in the range Autodesk leaves for in-house plug-ins.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 
 import maya.api.OpenMaya as om
+import maya.api.OpenMayaAnim as oma
 import maya.api.OpenMayaRender as omr
 import maya.api.OpenMayaUI as omui
 
 comp_guide = None     # syncbridge.core.comp_guide, imported in initializePlugin()
+core_markers = None   # syncbridge.core.markers (key markers overlay, D-18)
 
 
 def _import_core(plugin_dir):
     """The plug-in sits next to the scripts folder: <install>/maya/{plug-ins,scripts/syncbridge}
     in a release, maya_plugin/{plug-ins,scripts} + src/syncbridge in the repository.
     Maya runs this file without __file__ (Maya 2024), so the folder comes from MFnPlugin.loadPath()."""
-    global comp_guide
+    global comp_guide, core_markers
     maya_dir = os.path.dirname(os.path.normpath(plugin_dir))
     for path in (os.path.join(maya_dir, "scripts"), os.path.join(os.path.dirname(maya_dir), "src")):
         has_package = any(os.path.isdir(os.path.join(path, p)) for p in ("syncbridge", "syncbridge_maya"))
         if has_package and path not in sys.path:
             sys.path.append(path)
     from syncbridge.core import comp_guide as module
+    from syncbridge.core import markers as markers_module
     comp_guide = module
+    core_markers = markers_module
 
 
 NODE_NAME = "syncBridgeCompGuide"
@@ -289,30 +294,171 @@ class CompGuideDrawOverride(omr.MPxDrawOverride):
             _warn_once("SyncBridge guide: drawing failed: %s" % exc)
 
 
-# Saving: take the guides out just before and put them back just after, so the file has no
-# `requires "syncbridge_guide.py"` (setDoNotWrite alone keeps the nodes out but not the
-# requires line, Maya 2024; H-MY-22). The work is in syncbridge_maya.comp_guide.
+# ---- key markers overlay (D-18) -------------------------------------------------------------
+# A second locator: shows "AE キー 3/8  素材 36f" in the top-left corner of all views while the
+# current frame is on an AE key. Drawn in screen space (2D), so it needs no camera. The markers
+# are read from the scene's syncBridgeKeyMarkers network node on every draw (no connection:
+# a new transfer replaces that node, and an undo brings the old one back).
+# Not yet run in the GUI (H-MY-24): MUIDrawManager.text2d / circle2d,
+# MFrameContext.getViewportDimensions. MAnimControl (in OpenMayaAnim) works in mayapy 2023 / 2024.
+
+MARKER_NODE_NAME = "syncBridgeKeyMarker"
+MARKER_NODE_ID = om.MTypeId(0x0007F5B1)
+MARKER_CLASSIFICATION = "drawdb/geometry/syncBridgeKeyMarker"
+MARKER_REGISTRANT = "SyncBridgeKeyMarkerPlugin"
+
+
+MARKER_DATA_NODE = "syncBridgeKeyMarkers"      # syncbridge_maya.key_markers.DATA_NODE
+_parsed = {"text": None, "markers": []}
+
+
+class KeyMarkerNode(omui.MPxLocatorNode):
+    @staticmethod
+    def creator():
+        return KeyMarkerNode()
+
+    @staticmethod
+    def initialize():
+        pass
+
+    def isBounded(self):
+        return False          # screen-space overlay, never culled
+
+
+def _stored_markers():
+    """Markers of the scene's network node (parsed again only when its text changes)."""
+    sel = om.MSelectionList()
+    try:
+        sel.add(MARKER_DATA_NODE)
+    except RuntimeError:          # no markers in this scene
+        return []
+    text = _plug(om.MFnDependencyNode(sel.getDependNode(0)), "markers").asString()
+    if text != _parsed["text"]:
+        _parsed["text"] = text
+        _parsed["markers"] = (json.loads(text) or {}).get("markers") or [] if text else []
+    return _parsed["markers"]
+
+
+class KeyMarkerData(om.MUserData):
+    def __init__(self):
+        super().__init__(False)
+        self.text = ""
+
+
+def _current_frame():
+    return oma.MAnimControl.currentTime().asUnits(om.MTime.uiUnit())     # OpenMayaAnim, not OpenMaya
+
+
+# All views, not only the active one: Maya's default "Playback > Update View: Active"
+# (playbackOptions -view "active", checked in mayapy 2023 / 2024) redraws only the active view
+# while the time changes, so the marker showed there only. When the marker to show changes
+# (a key reached or left), every view is asked to redraw. The user's setting is not changed.
+_marker_state = {"label": None}
+
+
+def _refresh_all_views():
+    omui.M3dView.scheduleRefreshAllViews()
+
+
+def _time_changed(*_args):
+    try:
+        label = None
+        markers = _stored_markers()
+        if markers:
+            marker = core_markers.marker_at(markers, _current_frame())
+            label = marker["label"] if marker is not None else None
+        if label != _marker_state["label"]:
+            _marker_state["label"] = label
+            _refresh_all_views()
+    except Exception as exc:
+        _warn_once("SyncBridge key markers: %s" % exc)
+
+
+class KeyMarkerDrawOverride(omr.MPxDrawOverride):
+    @staticmethod
+    def creator(obj):
+        return KeyMarkerDrawOverride(obj)
+
+    @staticmethod
+    def draw(context, data):
+        return
+
+    def __init__(self, obj):
+        super().__init__(obj, KeyMarkerDrawOverride.draw, True)     # always dirty: follows the time
+        _debug("marker override created", om.MFnDependencyNode(obj).name())
+
+    def supportedDrawAPIs(self):
+        return omr.MRenderer.kAllDevices
+
+    def hasUIDrawables(self):
+        return True
+
+    def isBounded(self, obj_path, camera_path):
+        return False
+
+    def prepareForDraw(self, obj_path, camera_path, frame_context, old_data):
+        data = old_data if isinstance(old_data, KeyMarkerData) else KeyMarkerData()
+        data.text = ""
+        try:
+            marker = core_markers.marker_at(_stored_markers(), _current_frame())
+            if marker is not None:
+                data.text = marker["label"]
+            _debug("marker prepareForDraw", "frame=%g text=%r" % (_current_frame(), data.text))
+        except Exception as exc:
+            _warn_once("SyncBridge key markers: %s" % exc)
+        return data
+
+    def addUIDrawables(self, obj_path, draw_manager, frame_context, data):
+        if not isinstance(data, KeyMarkerData) or not data.text:
+            return
+        try:
+            x, y, width, height = frame_context.getViewportDimensions()
+            top = y + height - 36
+            draw_manager.beginDrawable()
+            draw_manager.setColor(COLOR)
+            draw_manager.circle2d(om.MPoint(x + 22, top + 6), 7.0, True)
+            draw_manager.text2d(om.MPoint(x + 36, top), data.text, omr.MUIDrawManager.kLeft)
+            draw_manager.endDrawable()
+            _debug("marker addUIDrawables", "drew %r" % data.text)
+        except Exception as exc:
+            _warn_once("SyncBridge key markers: drawing failed: %s" % exc)
+
+
+# Saving: take the guides and the marker overlay out just before and put them back just after,
+# so the file has no `requires "syncbridge_guide.py"` (setDoNotWrite alone keeps the nodes out
+# but not the requires line, Maya 2024; H-MY-22). The work is in syncbridge_maya.
 _callbacks = []
-_stash = []
+_stash = {}
 
 
 def _before_save(*_args):
+    _stash.clear()
     try:
-        from syncbridge_maya import comp_guide as maya_guide
-        _stash[:] = maya_guide.take_out_for_save()
+        from syncbridge_maya import comp_guide as maya_guide, key_markers
+        _stash["guides"] = maya_guide.take_out_for_save()
+        _stash["markers"] = key_markers.take_out_for_save()
     except Exception as exc:          # never block the user's save
-        _stash[:] = []
         om.MGlobal.displayWarning("SyncBridge guide: %s" % exc)
 
 
 def _after_save(*_args):
     try:
-        from syncbridge_maya import comp_guide as maya_guide
-        maya_guide.put_back_after_save(list(_stash))
+        from syncbridge_maya import comp_guide as maya_guide, key_markers
+        maya_guide.put_back_after_save(list(_stash.get("guides") or []))
+        key_markers.put_back_after_save(bool(_stash.get("markers")))
     except Exception as exc:
         om.MGlobal.displayWarning("SyncBridge guide: %s" % exc)
     finally:
-        _stash[:] = []
+        _stash.clear()
+
+
+def _after_open(*_args):
+    """A scene with stored key markers shows them again while this plug-in is loaded."""
+    try:
+        from syncbridge_maya import key_markers
+        key_markers.restore_overlay()
+    except Exception as exc:
+        om.MGlobal.displayWarning("SyncBridge key markers: %s" % exc)
 
 
 def _report(step):
@@ -330,8 +476,14 @@ def initializePlugin(obj):
                             om.MPxNode.kLocatorNode, DRAW_CLASSIFICATION)
         omr.MDrawRegistry.registerDrawOverrideCreator(DRAW_CLASSIFICATION, DRAW_REGISTRANT,
                                                       CompGuideDrawOverride.creator)
+        plugin.registerNode(MARKER_NODE_NAME, MARKER_NODE_ID, KeyMarkerNode.creator, KeyMarkerNode.initialize,
+                            om.MPxNode.kLocatorNode, MARKER_CLASSIFICATION)
+        omr.MDrawRegistry.registerDrawOverrideCreator(MARKER_CLASSIFICATION, MARKER_REGISTRANT,
+                                                      KeyMarkerDrawOverride.creator)
         _callbacks.append(om.MSceneMessage.addCallback(om.MSceneMessage.kBeforeSave, _before_save))
         _callbacks.append(om.MSceneMessage.addCallback(om.MSceneMessage.kAfterSave, _after_save))
+        _callbacks.append(om.MSceneMessage.addCallback(om.MSceneMessage.kAfterOpen, _after_open))
+        _callbacks.append(om.MEventMessage.addEventCallback("timeChanged", _time_changed))
     except Exception:
         _report("initializePlugin")
         raise
@@ -343,6 +495,8 @@ def uninitializePlugin(obj):
         for callback_id in _callbacks:
             om.MMessage.removeCallback(callback_id)
         del _callbacks[:]
+        omr.MDrawRegistry.deregisterDrawOverrideCreator(MARKER_CLASSIFICATION, MARKER_REGISTRANT)
+        plugin.deregisterNode(MARKER_NODE_ID)
         omr.MDrawRegistry.deregisterDrawOverrideCreator(DRAW_CLASSIFICATION, DRAW_REGISTRANT)
         plugin.deregisterNode(NODE_ID)
     except Exception:

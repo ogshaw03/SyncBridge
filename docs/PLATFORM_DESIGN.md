@@ -229,5 +229,7 @@
 | 停止の通知（5.2） | `server/admin.py` | `POST /admin/shutdown` は接続中のアプリに `error hub_stopping`（日本語の文）を送ってから止まる。切断は `error disconnected_by_admin`。Maya と AE のパネルはログに「error: <文>」と表示する（パネル側の変更なし） |
 
 - ハブとの通信はすべて作業スレッドで行い、結果は Qt のシグナルで画面のスレッドに戻す（応答しないハブで画面が固まらない）。
+- （2026-10-20）停止済みのハブのファイルは、ハブの起動時とモニターの更新時に自動で消す（`hubs.clean_stale_files()`）。
+  画面はダークテーマ（`monitor/theme.py`）。
 - 操作はすべて確認ダイアログを出す。強制終了は `hubs.verify()` が通ったハブだけ有効（通らなければボタンを無効にし、理由をツールチップで示す）。
 - **未確認:** インストール版（`SyncServer.exe`）での発見と強制終了、実際の Maya / AE パネルでの停止通知の表示。モニターの EXE 化は利用者の要望で先に行った（0.1.3、`packaging/monitor_entry.py` → `SyncBridge.exe`、スタートメニュー）。P-C でランチャーを同じ EXE に加える。

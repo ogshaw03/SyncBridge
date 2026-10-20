@@ -9,17 +9,25 @@ import threading
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
+import html
+
+from PySide6.QtGui import QColor, QIcon, QPalette, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QHBoxLayout,
+                               QStyledItemDelegate,
                                QHeaderView, QLabel, QMainWindow, QMessageBox, QPlainTextEdit,
                                QPushButton, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget,
                                QVBoxLayout, QWidget)
 
 from .. import __version__, hubs
 from ..server import session
-from . import model
+from . import model, theme
 
 REFRESH_MS = 5000
-TITLE = "SyncBridge モニター"
+TITLE = "SyncBridge Monitor"          # English name (the user's request, 2026-10-20)
+# Made by packaging/make_icon.py; SyncBridge.exe carries it as data (packaging/build_release.py).
+ICON_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "syncbridge_icon.png")
+LOGO_SIZE = 36
+ROW_HEIGHT = 32
 
 
 class Bridge(QObject):
@@ -35,33 +43,78 @@ def _run(target, *args) -> None:
     threading.Thread(target=target, args=args, daemon=True).start()
 
 
+class _KeepColorDelegate(QStyledItemDelegate):
+    """Selected rows keep the color of a colored cell (hub state, transfer result)."""
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        brush = index.data(Qt.ForegroundRole)
+        if brush is not None:
+            option.palette.setColor(QPalette.HighlightedText, brush.color())
+
+
 def _table(columns: List[str]) -> QTableWidget:
     t = QTableWidget(0, len(columns))
+    t.setItemDelegate(_KeepColorDelegate(t))
     t.setHorizontalHeaderLabels(columns)
     t.setSelectionBehavior(QAbstractItemView.SelectRows)
     t.setSelectionMode(QAbstractItemView.SingleSelection)
     t.setEditTriggers(QAbstractItemView.NoEditTriggers)
     t.verticalHeader().setVisible(False)
+    t.verticalHeader().setDefaultSectionSize(ROW_HEIGHT)
     t.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
     t.horizontalHeader().setStretchLastSection(True)
+    t.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+    t.setShowGrid(False)
+    t.setAlternatingRowColors(True)
+    t.setWordWrap(False)
     return t
 
 
-def _fill(table: QTableWidget, rows: List[List[str]], keys: Optional[List[object]] = None) -> None:
+def _section(text: str) -> QLabel:
+    label = QLabel(text)
+    label.setObjectName("section")
+    return label
+
+
+def _fill(table: QTableWidget, rows: List[List[str]], keys: Optional[List[object]] = None,
+          first_colors: Optional[List[str]] = None, colors: Optional[Dict[int, List[str]]] = None) -> None:
+    """first_colors: a color per row for the first column, shown with a dot (hub state);
+    colors: {column: color per row} for other colored cells (transfer result)."""
     table.setRowCount(len(rows))
     for r, row in enumerate(rows):
         for c, text in enumerate(row):
+            if c == 0 and first_colors is not None:
+                text = u"\u25cf  " + text
             item = QTableWidgetItem(text)
+            if c == 0 and first_colors is not None:
+                item.setForeground(QColor(first_colors[r]))
+            elif colors and c in colors:
+                item.setForeground(QColor(colors[c][r]))
             if keys is not None and c == 0:
                 item.setData(Qt.UserRole, keys[r])
             table.setItem(r, c, item)
+
+
+def _log_html(entry: dict) -> str:
+    """One log line with the level in color (theme.LEVEL_COLORS)."""
+    level = entry.get("level", "")
+    return ('<span style="color:#5f6b7e">%s</span>&nbsp;&nbsp;<span style="color:%s;font-weight:600">%-7s</span>'
+            '&nbsp;<span style="color:#5f6b7e">%s</span>&nbsp;&nbsp;<span style="color:%s">%s</span>' % (
+                html.escape(model.local_time(entry.get("time"))), theme.LEVEL_COLORS.get(level, theme.TEXT),
+                html.escape(level), html.escape(entry.get("logger", "")),
+                theme.LEVEL_COLORS.get(level, theme.TEXT) if level in ("WARNING", "ERROR", "CRITICAL") else theme.TEXT,
+                html.escape(entry.get("message", ""))))
 
 
 class MonitorWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("%s %s" % (TITLE, __version__))
-        self.resize(1100, 720)
+        self.resize(1100, 740)
+        app = QApplication.instance()
+        if app is not None:
+            theme.apply(app)
         self.bridge = Bridge()
         self.bridge.hubs_found.connect(self._on_hubs_found)
         self.bridge.hub_loaded.connect(self._on_hub_loaded)
@@ -85,19 +138,43 @@ class MonitorWindow(QMainWindow):
     # ---- layout ----------------------------------------------------------------------
     def _build(self) -> None:
         root = QWidget()
-        layout = QVBoxLayout(root)
+        outer = QVBoxLayout(root)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        top = QHBoxLayout()
-        top.addWidget(QLabel("動作中のハブ"))
+        header = QWidget()
+        header.setObjectName("header")
+        top = QHBoxLayout(header)
+        top.setContentsMargins(18, 14, 18, 14)
+        logo = QLabel()                                  # top left
+        pixmap = QPixmap(ICON_FILE)
+        if not pixmap.isNull():
+            logo.setPixmap(pixmap.scaled(LOGO_SIZE, LOGO_SIZE, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        top.addWidget(logo)
+        top.addSpacing(8)
+        title = QLabel(TITLE)
+        title.setObjectName("title")
+        version = QLabel(__version__)
+        version.setObjectName("version")
+        top.addWidget(title)
+        top.addWidget(version)
         top.addStretch(1)
         self.auto = QCheckBox("自動更新（5 秒）")
         self.auto.setChecked(True)
         self.auto.toggled.connect(lambda on: self.timer.start(REFRESH_MS) if on else self.timer.stop())
         top.addWidget(self.auto)
+        top.addSpacing(8)
         refresh = QPushButton("更新")
+        refresh.setObjectName("primary")
         refresh.clicked.connect(self.refresh)
         top.addWidget(refresh)
-        layout.addLayout(top)
+        outer.addWidget(header)
+
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(18, 14, 18, 10)
+        layout.setSpacing(8)
+        outer.addWidget(body, 1)
 
         self.hub_table = _table(model.HUB_COLUMNS)
         self.hub_table.itemSelectionChanged.connect(self._on_hub_selection)
@@ -106,6 +183,7 @@ class MonitorWindow(QMainWindow):
         self.stop_btn = QPushButton("停止")
         self.stop_btn.clicked.connect(self._stop_hub)
         self.kill_btn = QPushButton("強制終了…")
+        self.kill_btn.setObjectName("danger")
         self.kill_btn.clicked.connect(self._kill_hub)
         self.clean_btn = QPushButton("残ったファイルを片付け")
         self.clean_btn.clicked.connect(self._clean_hub)
@@ -119,14 +197,18 @@ class MonitorWindow(QMainWindow):
         hub_box = QWidget()
         hub_layout = QVBoxLayout(hub_box)
         hub_layout.setContentsMargins(0, 0, 0, 0)
+        hub_layout.setSpacing(8)
+        hub_layout.addWidget(_section("動作中のハブ"))
         hub_layout.addWidget(self.hub_table)
         hub_layout.addLayout(buttons)
 
         self.detail = QLabel("")
+        self.detail.setObjectName("detail")
         self.tabs = QTabWidget()
 
         clients = QWidget()
         cl = QVBoxLayout(clients)
+        cl.setContentsMargins(0, 8, 0, 0)
         self.client_table = _table(model.CLIENT_COLUMNS)
         self.client_table.itemSelectionChanged.connect(self._update_buttons)
         self.disconnect_btn = QPushButton("切断…")
@@ -143,6 +225,7 @@ class MonitorWindow(QMainWindow):
 
         logs = QWidget()
         ll = QVBoxLayout(logs)
+        ll.setContentsMargins(0, 8, 0, 0)
         filt = QHBoxLayout()
         filt.addWidget(QLabel("表示するレベル"))
         self.level = QComboBox()
@@ -162,6 +245,8 @@ class MonitorWindow(QMainWindow):
         detail_box = QWidget()
         dl = QVBoxLayout(detail_box)
         dl.setContentsMargins(0, 0, 0, 0)
+        dl.setSpacing(8)
+        dl.addWidget(_section("選んだハブ"))
         dl.addWidget(self.detail)
         dl.addWidget(self.tabs)
 
@@ -171,7 +256,7 @@ class MonitorWindow(QMainWindow):
         split.setStretchFactor(1, 2)
         layout.addWidget(split)
         self.setCentralWidget(root)
-        self.statusBar()
+        self.statusBar().setContentsMargins(12, 0, 0, 0)
         self._update_buttons()
 
     # ---- hub list --------------------------------------------------------------------
@@ -183,6 +268,7 @@ class MonitorWindow(QMainWindow):
 
     def _discover(self) -> None:
         try:
+            hubs.clean_stale_files()           # files of hubs whose process is gone pile up otherwise
             found = hubs.discover()
         except Exception as exc:     # never kill the worker silently
             found = exc
@@ -197,7 +283,8 @@ class MonitorWindow(QMainWindow):
         self.hubs = {h.pid: h for h in found}
         keep = self.selected
         self.hub_table.blockSignals(True)
-        _fill(self.hub_table, [model.hub_row(h.to_json()) for h in found], [h.pid for h in found])
+        _fill(self.hub_table, [model.hub_row(h.to_json()) for h in found], [h.pid for h in found],
+              [theme.STATE_COLORS.get(h.state, theme.MUTED) for h in found])
         self.hub_table.blockSignals(False)
         self.statusBar().showMessage("ハブ %d 個（%s 更新）" % (len(found), model.local_time(hubs_now())))
         if keep in self.hubs:
@@ -280,7 +367,7 @@ class MonitorWindow(QMainWindow):
         if "transfers" in changed:
             self._render_transfers()
         if "log" in changed and model.level_passes(event["entry"], self.level.currentText()):
-            self.log_text.appendPlainText(model.log_line(event["entry"]))
+            self.log_text.appendHtml(_log_html(event["entry"]))
 
     def _on_stream_closed(self, pid: int, reason: str) -> None:
         if pid != self.selected:
@@ -303,12 +390,15 @@ class MonitorWindow(QMainWindow):
 
     def _render_transfers(self) -> None:
         items = list(reversed(self.view.transfer_list()))         # newest first
-        _fill(self.transfer_table, [model.transfer_row(i) for i in items])
+        _fill(self.transfer_table, [model.transfer_row(i) for i in items],
+              colors={2: [theme.RESULT_COLORS.get(i.get("status"), theme.TEXT) for i in items]})
 
     def _render_log(self) -> None:
         minimum = self.level.currentText()
-        self.log_text.setPlainText("\n".join(model.log_line(e) for e in self.view.log
-                                             if model.level_passes(e, minimum)))
+        self.log_text.clear()
+        for entry in self.view.log:
+            if model.level_passes(entry, minimum):
+                self.log_text.appendHtml(_log_html(entry))
         self.log_text.verticalScrollBar().setValue(self.log_text.verticalScrollBar().maximum())
 
     def _update_buttons(self) -> None:
@@ -406,8 +496,27 @@ def hubs_now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
+APP_USER_MODEL_ID = "SyncBridge.Monitor"
+
+
+def _set_app_user_model_id() -> None:
+    """Windows: the task bar groups and draws this process as SyncBridge Monitor (with the window
+    icon), also when it runs as python.exe during development. No system setting is changed."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+    except Exception:
+        pass
+
+
 def run(argv=None) -> int:
+    _set_app_user_model_id()                    # before any window exists
     app = QApplication.instance() or QApplication(list(argv) if argv is not None else sys.argv)
+    if os.path.isfile(ICON_FILE):
+        app.setWindowIcon(QIcon(ICON_FILE))      # window and task bar (the EXE file has its own icon)
     window = MonitorWindow()
     window.show()
+    theme.dark_title_bar(window)
     return app.exec()

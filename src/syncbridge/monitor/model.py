@@ -21,7 +21,7 @@ STATE_LABELS = {
 }
 APP_LABELS = {"maya": "Maya", "ae": "After Effects", "test": "テスト"}
 DIRECTION_LABELS = {"maya2ae": "Maya → After Effects", "ae2maya": "After Effects → Maya"}
-DATA_TYPE_LABELS = {"comp_guide": "解像度の枠"}      # "timewarp" needs no label
+DATA_TYPE_LABELS = {"comp_guide": "解像度の枠", "key_markers": "キーのマーカー"}   # "timewarp" needs no label
 STATUS_LABELS = {
     "running": "実行中",
     "applied": "適用",

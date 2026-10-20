@@ -145,6 +145,26 @@ def remove_stale(hub: HubInfo) -> bool:
     return True
 
 
+def clean_stale_files() -> List[int]:
+    """Delete hubs/<pid>.json (and session.json) of every hub whose process is gone.
+
+    A hub stopped by force (the installer replacing it, a crash) cannot remove its own files, and
+    they piled up in the monitor as "ファイルのみ（停止済み）" (2026-10-20). Only files whose pid has
+    no process are removed: a reused pid is a live process and keeps its file. Returns the pids.
+    """
+    removed = []
+    for data in session.read_hub_files():
+        if not pid_alive(data["pid"]):
+            session.remove_session(data["pid"])
+            removed.append(data["pid"])
+    current = session.read_session()
+    if current and isinstance(current.get("pid"), int) and not pid_alive(current["pid"]):
+        session.remove_session(current["pid"])
+        if current["pid"] not in removed:
+            removed.append(current["pid"])
+    return removed
+
+
 # ---- admin API -------------------------------------------------------------------------
 
 class AdminError(Exception):
@@ -171,6 +191,40 @@ def admin_call(hub: HubInfo, method: str, path: str, timeout: float = 3.0):
 
 
 # ---- processes -------------------------------------------------------------------------
+
+def port_owner(port: int) -> Optional[dict]:
+    """{pid, name} of the process listening on 127.0.0.1:<port>, or None (unknown / not Windows).
+
+    Reads `netstat -ano -p TCP` (comes with Windows). Only for messages to the user.
+    """
+    if sys.platform != "win32":
+        return None
+    import subprocess
+    try:
+        out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, timeout=10,
+                             creationflags=0x08000000).stdout         # CREATE_NO_WINDOW
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return parse_netstat(out.decode("ascii", errors="replace"), port)
+
+
+def parse_netstat(text: str, port: int) -> Optional[dict]:
+    """The listener on <port> in `netstat -ano` output: 'TCP 127.0.0.1:8765 0.0.0.0:0 LISTENING 66784'."""
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) != 5 or parts[0].upper() != "TCP" or parts[2] not in ("0.0.0.0:0", "[::]:0"):
+            continue
+        address = parts[1]
+        if address.rsplit(":", 1)[-1] != str(port):
+            continue
+        try:
+            pid = int(parts[4])
+        except ValueError:
+            continue
+        image = process_image(pid) if pid_alive(pid) else None
+        return {"pid": pid, "name": os.path.basename(image) if image else None}
+    return None
+
 
 def _parse_iso(text: str) -> Optional[float]:
     try:
@@ -293,6 +347,8 @@ else:  # development on other systems; the product targets Windows
         os.kill(pid, signal.SIGTERM)
 
 
-__all__ = ["HubInfo", "discover", "verify", "force_kill", "remove_stale", "admin_call", "AdminError",
+__all__ = ["HubInfo", "discover", "verify", "force_kill", "remove_stale", "clean_stale_files",
+           "admin_call", "AdminError",
            "pid_alive", "process_image", "process_create_time", "list_server_processes",
+           "port_owner", "parse_netstat",
            "RUNNING", "NOT_RESPONDING", "STALE", "UNKNOWN"]

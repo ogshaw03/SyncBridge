@@ -5,6 +5,7 @@
  *   node cep_driver.js <port> <token> <export.json|ERROR> serve
  *   node cep_driver.js <port> <token> <export.json|ERROR> request <maya2ae|ae2maya>
  *   node cep_driver.js <port> <token> <export.json|ERROR> guide     (comp guide; ERROR = no comp)
+ *   node cep_driver.js <port> <token> <export.json|ERROR> markers   (key markers; ERROR = no layer)
  *
  * Prints one JSON object per line: {event: "connected"|"peers"|"apply"|"result"|"log", ...}.
  * "serve" runs until stdin closes.
@@ -70,7 +71,18 @@ const client = new SBPanelClient({
 });
 client.connect({ port: Number(port), token });
 
-if (mode === 'guide') {
+if (mode === 'markers') {
+    const timer = setInterval(() => {
+        if (client.connected() && client.hasPeer('maya')) {
+            clearInterval(timer);
+            client.sendMarkers({ origin: 1001 }, (reply) => {
+                out({ event: 'result', reply });
+                client.disconnect();
+                setTimeout(() => process.exit(0), 100);
+            });
+        }
+    }, 50);
+} else if (mode === 'guide') {
     const timer = setInterval(() => {
         if (client.connected() && client.hasPeer('maya')) {
             clearInterval(timer);

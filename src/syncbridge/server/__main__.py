@@ -73,6 +73,11 @@ def main(argv=None) -> int:
                             ws="websockets-sansio")
     server = uvicorn.Server(config)
     holder["server"] = server
+    try:                       # files of hubs stopped by force (installer, crash) pile up otherwise
+        from .. import hubs
+        hubs.clean_stale_files()
+    except Exception as exc:
+        print("warning: could not clean old hub files: %s" % exc, file=sys.stderr)
     path = session.write_session(args.port, token, __version__, log_file=log_file)
     print("SyncBridge server %s on ws://%s:%d%s (session: %s)"
           % (__version__, protocol.HOST, args.port, protocol.WS_PATH, path))

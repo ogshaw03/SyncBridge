@@ -201,6 +201,37 @@ AE → Maya
 - 既存のシェルフ（Custom など）にボタンを足す方法は取らない: Maya が終了時に読み込み中のシェルフを保存し直すため、
   インストーラーからは確実に書けない。同じ理由で、アンインストールの前に Maya を終了してもらう。
 
+### D-18: AE のタイムリマップのキーを Maya のマーカーにする（2026-10-20、利用者の要望）
+
+- 利用者の決定: 表示は **タイムスライダーのブックマークとビューの重ね表示の両方**、内容は **キーの番号と素材のフレーム**
+  （「AE キー 3/8　素材 36f」）、送り方は **AE のパネルのボタン**。**一度送れば、AE を開いていなくても表示される**こと。
+- 時間の対応は転送と同じ `jobs.mapping_context()`（Origin frame、レイヤーの開始時間）。マーカーは AE → Maya の転送で
+  タイムワープのキーが置かれるフレームと一致する（`core/markers.py`）。
+- 流れ: AE `markers.request {export, options}` → ハブ（書き出しとキーの有無を確認して中継、`server/relay.py`）→
+  Maya `markers.apply.request` → Maya が自分のシーンの fps で計算して保存。ハブの中継は解像度の枠と共通にした（`RelayToMaya`）。
+- **シーンに保存するもの（1 回の取り消しで戻せる）:** network ノード `syncBridgeKeyMarkers` の文字列属性に JSON、
+  キーごとのタイムスライダーのブックマーク（Autodesk の `timeSliderBookmark`、目印の属性 `syncBridgeMarker` 付き）。
+  どちらも Maya 標準のものなので、SyncBridge のない PC で開いても問題ない（ファイルの `requires` は `timeSliderBookmark` だけ）。
+  送り直したときと「マーカーを消す」では、SyncBridge のものだけを置き換える・消す（利用者のブックマークは残す）。
+- **表示だけのもの（保存しない、undo に記録しない）:** ビューの左上に 2D で描くプラグインのノード `syncBridgeKeyMarker`。
+  今のフレームがキーから半フレーム以内のときだけ表示する。描画のたびに network ノードを名前で読む（接続すると、
+  `delete` が上流の network ノードまで消し、送り直すと新しいノードにつながらなかった。mayapy で確認）。
+  保存の前後で外して戻す（D-16 と同じ）。シーンを開いたあとは、プラグインの `kAfterOpen` か SyncBridge のパネルを開いたときに
+  出し直す。SyncBridge を起動していない Maya では、ブックマークだけが見える（起動処理には手を入れない、D-17）。
+- （2026-10-20、利用者の要望）表示は **すべてのビュー** に出す。Maya の既定の「Update View: Active」（`playbackOptions -view`
+  が `active`）では、時間を動かすとアクティブなビューだけが描き直されるため、表示する文字が変わったとき（キーに乗った・外れた）
+  だけ `timeChanged` の通知から `M3dView.scheduleRefreshAllViews()` で全ビューを描き直す。利用者の設定は変えない。
+
+### D-19: ポート 8765 がほかのプログラムに使われていたら、次の空きポートでハブを起動する（2026-10-20、利用者の決定）
+
+- 実際に起きたこと: 別のプロジェクトのテスト用の Web サーバー（`py -m http.server 8765`）が残っていて、Maya の Connect が
+  「port 8765 is used by another program」で止まった（2 回）。
+- 決定: `launcher.ensure_server()` は、まず `session.json` のポートで SyncBridge のハブを探し、なければ 8765〜8774 のうち
+  最初の空きポートで起動する（途中で SyncBridge のハブが見つかればそれを使う）。クライアント（Maya、AE、モニター）は
+  もともと `session.json` からポートを読むので、変更は起動側だけ。
+- 8765 を飛ばしたときは、使っているプログラムの名前と PID（`netstat -ano`、`hubs.port_owner()`）を日本語で Maya のパネルに出す。
+  10 個とも使えなければ日本語のエラー。
+
 ## 4. 将来の構成（Phase 1 以降の方針）
 
 - **サーバー:** FastAPI + WebSocket、`127.0.0.1` のみで待ち受ける。起動時にセッショントークンを発行し、

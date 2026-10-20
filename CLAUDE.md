@@ -43,6 +43,10 @@ py -3 -m unittest discover -s tests -t .          # 標準ライブラリだけ�
 - 新しい PC では最初に `.venv` を作る: `py -3.10 -m venv .venv` → `.venv\Scripts\python -m pip install -r requirements-server.txt -r requirements-monitor.txt`
   （PC の Python 本体には入れない、D-11）。
 - Qt の画面をスクリーンショットで確認するときは `QT_QPA_PLATFORM=offscreen` と `QT_QPA_FONTDIR=C:/Windows/Fonts`（指定しないと日本語が □ になる）。
+- **UI の見た目を変えるときは、モックを撮って確認しながら進め、利用者に見せる**（利用者の指示）。
+  Maya のパネルは mayapy で（QApplication を `maya.standalone.initialize` より先に作る。mayapy で QMessageBox を表示すると
+  落ちるので、ダイアログは `.venv` の PySide6 で）、AE のパネルは `.claude/launch.json` の `ae-panel-mock`（ポート 8790）を
+  ブラウザで開いて幅 320 で、モニターは `.venv` の PySide6 で撮る。
 
 - `python` コマンドが Windows ストアの仮のコマンドの PC があるため、`py -3` か `syncbridge.cmd` を使う。pytest は未インストール（unittest で書く）。
 - Git Bash から `cmd //c syncbridge.cmd` を呼ぶとカレントフォルダが解決されないことがある。CLI の確認は PowerShell で行う。

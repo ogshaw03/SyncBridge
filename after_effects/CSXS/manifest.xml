@@ -4,10 +4,10 @@
   linked into %APPDATA%\Adobe\CEP\extensions\com.syncbridge.panel (see docs/PHASE1_PLAN.md V-P1C).
   Unsigned during development: needs PlayerDebugMode (set by the user, never by tools).
 -->
-<ExtensionManifest Version="7.0" ExtensionBundleId="com.syncbridge" ExtensionBundleVersion="0.1.5"
+<ExtensionManifest Version="7.0" ExtensionBundleId="com.syncbridge" ExtensionBundleVersion="0.1.6"
                    ExtensionBundleName="SyncBridge" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <ExtensionList>
-    <Extension Id="com.syncbridge.panel" Version="0.1.5"/>
+    <Extension Id="com.syncbridge.panel" Version="0.1.6"/>
   </ExtensionList>
   <ExecutionEnvironment>
     <HostList>
@@ -43,6 +43,12 @@
               <Width>260</Width>
             </MinSize>
           </Geometry>
+          <Icons>
+            <Icon Type="Normal">./panel/img/syncbridge_23.png</Icon>
+            <Icon Type="RollOver">./panel/img/syncbridge_23.png</Icon>
+            <Icon Type="DarkNormal">./panel/img/syncbridge_23.png</Icon>
+            <Icon Type="DarkRollOver">./panel/img/syncbridge_23.png</Icon>
+          </Icons>
         </UI>
       </DispatchInfo>
     </Extension>

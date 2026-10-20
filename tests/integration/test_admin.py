@@ -181,6 +181,21 @@ class HubDiscoveryTest(SessionDirMixin, unittest.TestCase):
         self.assertTrue(hubs.remove_stale(hub))
         self.assertFalse(os.path.exists(session.hub_path(pid)))
 
+    def test_clean_stale_files_keeps_live_hubs(self):
+        # 2026-10-20: hubs stopped by force left "ファイルのみ（停止済み）" rows that piled up.
+        dead = [self.dead_pid(), self.dead_pid()]
+        for pid in dead:
+            self.write_hub_file(pid=pid, port=1, token="t", started=_now(), executable=sys.executable)
+        me = os.getpid()                               # alive: kept even though it is not a hub
+        self.write_hub_file(pid=me, port=2, token="t", started=_now(), executable=sys.executable)
+        with open(session.session_path(), "w", encoding="utf-8") as f:
+            json.dump({"pid": dead[0], "port": 1, "token": "t"}, f)
+        removed = hubs.clean_stale_files()
+        self.assertEqual(sorted(removed), sorted(dead))
+        self.assertEqual([d["pid"] for d in session.read_hub_files()], [me])
+        self.assertIsNone(session.read_session())
+        self.assertEqual(hubs.clean_stale_files(), [])
+
     def test_reused_pid_is_not_verified(self):
         # This test process is alive but is not the hub the file describes.
         me = os.getpid()
@@ -213,6 +228,20 @@ class HubDiscoveryTest(SessionDirMixin, unittest.TestCase):
         hubs.force_kill(hub)
         self.assertEqual(proc.wait(10), 1)
         self.assertFalse(os.path.exists(session.hub_path(proc.pid)))
+
+    def test_parse_netstat(self):
+        me = os.getpid()
+        text = ("\r\nActive Connections\r\n\r\n  Proto  Local Address          Foreign Address        State           PID\r\n"
+                "  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       1196\r\n"
+                "  TCP    127.0.0.1:8765         127.0.0.1:50001        ESTABLISHED     7\r\n"
+                "  TCP    127.0.0.1:8765         0.0.0.0:0              LISTENING       %d\r\n"
+                "  TCP    [::]:8766              [::]:0                 LISTENING       8\r\n" % me)
+        owner = hubs.parse_netstat(text, 8765)
+        self.assertEqual(owner["pid"], me)
+        if sys.platform == "win32":
+            self.assertTrue(owner["name"].lower().startswith("python"))
+        self.assertEqual(hubs.parse_netstat(text, 8766)["pid"], 8)
+        self.assertIsNone(hubs.parse_netstat(text, 9999))
 
     def test_process_helpers_on_this_process(self):
         self.assertTrue(hubs.pid_alive(os.getpid()))

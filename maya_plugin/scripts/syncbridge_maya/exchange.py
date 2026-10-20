@@ -96,15 +96,15 @@ def apply_envelope(apply_env: dict, confirm: bool = True, origin: str = "") -> d
                            u"先に Scene Time Warp を作成してから、もう一度実行してください。")
 
     if confirm:
+        from . import dialogs       # Qt: in front of the SyncBridge panel (cmds.confirmDialog was hidden behind it)
         source = (u"%s の " % origin) if origin else u""
-        answer = cmds.confirmDialog(
-            title="SyncBridge",
-            message=u"Scene Time Warp「%s」のキーを、%s%d キーで置き換えますか？\n"
-                    u"先にバックアップを保存します。元に戻すときは取り消し（Ctrl+Z）を 1 回押してください。"
-                    % (curve, source, len(native["keys"])),
-            button=[u"適用", u"キャンセル"], defaultButton=u"適用", cancelButton=u"キャンセル",
-            dismissString=u"キャンセル")
-        if answer != u"適用":
+        accepted = dialogs.ask(
+            "SyncBridge",
+            u"Scene Time Warp「%s」のキーを、%s%d キーで置き換えますか？\n"
+            u"先にバックアップを保存します。元に戻すときは取り消し（Ctrl+Z）を 1 回押してください。"
+            % (curve, source, len(native["keys"])),
+            u"適用", u"キャンセル")
+        if not accepted:
             print("SyncBridge: apply cancelled")
             return {"status": "cancelled"}
 

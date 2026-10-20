@@ -1,7 +1,7 @@
 # SyncBridge installer (per user, no administrator rights). Run through Install.bat.
 #
 #   server : <InstallRoot>\server\SyncServer.exe
-#   monitor: <InstallRoot>\app\SyncBridge.exe, Start menu "SyncBridge モニター" (per user)
+#   monitor: <InstallRoot>\app\SyncBridge.exe, Start menu "SyncBridge Monitor" (per user)
 #   Maya   : <InstallRoot>\maya, and a "SyncBridge" shelf tab for every Maya 2023+ that has
 #            been started once: <MayaAppDir>\<version>[\ja_JP]\prefs\shelves\shelf_SyncBridge.mel
 #            and prefs\icons\syncbridge_shelf.png (D-17). drag_to_maya_SyncBridge.py stays as
@@ -124,10 +124,17 @@ try {
     $monitorExe = Join-Path $InstallRoot 'app\SyncBridge.exe'
     if (Test-Path $monitorExe) {
         New-Item -ItemType Directory -Force $ProgramsDir | Out-Null
-        $shortcut = Join-Path $ProgramsDir 'SyncBridge モニター.lnk'
+        # 0.1.3 - 0.1.5 named it in Japanese; remove that one so the Start menu has only the new name.
+        $oldShortcut = Join-Path $ProgramsDir 'SyncBridge モニター.lnk'
+        if (Test-Path $oldShortcut) { Remove-Item -Force $oldShortcut }
+        $shortcut = Join-Path $ProgramsDir 'SyncBridge Monitor.lnk'
         $link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
         $link.TargetPath = $monitorExe
         $link.WorkingDirectory = Split-Path -Parent $monitorExe
+        # The icon file next to the EXE (not the EXE itself): Windows may keep showing the icon it
+        # cached for the EXE of an earlier version at the same path.
+        $iconFile = Join-Path $InstallRoot 'app\syncbridge.ico'
+        if (Test-Path $iconFile) { $link.IconLocation = "$iconFile,0" }
         $link.Description = 'SyncBridge のサーバー、接続中のアプリ、転送の履歴、ログを確認する'
         $link.Save()
     }
@@ -182,7 +189,7 @@ try {
     Show-Message ("SyncBridge $version をインストールしました。`n`n" +
         $mayaStep + "`n" +
         "2. After Effects: 「ウィンドウ」→「エクステンション」→「SyncBridge」でパネルを開く`n`n" +
-        "サーバーの状態や転送の履歴は、スタートメニューの「SyncBridge モニター」で確認できます。" + $restart)
+        "サーバーの状態や転送の履歴は、スタートメニューの「SyncBridge Monitor」で確認できます。" + $restart)
     if (-not $Quiet -and $mayaVersions.Count -eq 0) { Start-Process explorer.exe "/select,`"$dragFile`"" }
     exit 0
 }

@@ -92,17 +92,65 @@ def server_command(python: Optional[str] = None) -> Tuple[List[str], dict, str]:
     return [python, "-m", "syncbridge.server"], server_env(root=root), root
 
 
+PORT_TRIES = 10       # 8765 ... 8774
+
+
+def find_running(port: int = protocol.DEFAULT_PORT) -> Optional[dict]:
+    """/health of a running SyncBridge hub (+ "port"): the one in session.json, else on `port`."""
+    current = session.read_session()
+    if current and isinstance(current.get("port"), int):
+        info = session.probe_server(current["port"])
+        if info:
+            return dict(info, port=current["port"])
+    info = session.probe_server(port)
+    return dict(info, port=port) if info else None
+
+
+def _owner_text(port: int) -> str:
+    try:
+        from .. import hubs
+        owner = hubs.port_owner(port)
+    except Exception:
+        owner = None
+    if not owner:
+        return u"ほかのプログラム"
+    return u"ほかのプログラム（%s、PID %d）" % (owner.get("name") or u"名前不明", owner["pid"])
+
+
 def ensure_server(port: int = protocol.DEFAULT_PORT, python: Optional[str] = None,
                   idle_timeout: float = 600.0, wait: float = 20.0) -> dict:
-    """Return the running server's /health info, starting the server first if needed.
+    """Return the running server's /health info (+ "port", the port it listens on), starting
+    the server first if needed.
 
-    Raises RuntimeError when it cannot be started (not installed, port taken, timeout).
+    When `port` is used by another program, the next free port of PORT_TRIES is used (the
+    clients read the port from session.json) and the result has a Japanese "note" saying so.
+    Raises RuntimeError when it cannot be started (not installed, no free port, timeout).
     """
-    info = session.probe_server(port)
-    if info:
-        return info
-    if session.port_in_use(port):
-        raise RuntimeError("port %d is used by another program" % port)
+    running = find_running(port)
+    if running:
+        return running
+    chosen = None
+    busy = []
+    for candidate in range(port, port + PORT_TRIES):
+        if not session.port_in_use(candidate):
+            chosen = candidate
+            break
+        info = session.probe_server(candidate)
+        if info:                                   # a SyncBridge hub whose session file is gone
+            return dict(info, port=candidate)
+        busy.append(candidate)
+    if chosen is None:
+        raise RuntimeError(u"SyncBridge のサーバーを起動できません。ポート %d〜%d がすべて使われています"
+                           u"（%d は%sが使用中）。" % (port, port + PORT_TRIES - 1, port, _owner_text(port)))
+    note = None
+    if busy:
+        note = (u"ポート %d は%sが使っているため、ポート %d で SyncBridge のサーバーを起動しました。"
+                % (busy[0], _owner_text(busy[0]), chosen))
+    info = _start(chosen, python, idle_timeout, wait)
+    return dict(info, port=chosen, note=note) if note else dict(info, port=chosen)
+
+
+def _start(port: int, python: Optional[str], idle_timeout: float, wait: float) -> dict:
     argv, env, cwd = server_command(python)
     log_dir = session.session_dir()
     os.makedirs(log_dir, exist_ok=True)
@@ -123,11 +171,13 @@ def ensure_server(port: int = protocol.DEFAULT_PORT, python: Optional[str] = Non
     deadline = time.time() + wait
     while time.time() < deadline:
         info = session.probe_server(port, timeout=0.5)
-        if info and session.read_session():
+        current = session.read_session()
+        if info and current and current.get("port") == port:     # clients read the port from here
             return info
         time.sleep(0.2)
     raise RuntimeError("the server did not start within %g s (see %s)"
                        % (wait, os.path.join(log_dir, "server.log")))
 
 
-__all__ = ["ensure_server", "install_root", "repo_root", "server_command", "server_env", "venv_python"]
+__all__ = ["ensure_server", "find_running", "install_root", "repo_root", "server_command", "server_env",
+           "venv_python", "PORT_TRIES"]

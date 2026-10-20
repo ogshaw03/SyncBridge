@@ -36,12 +36,79 @@
 | ハブの管理 API、転送の履歴、ログ、ハブごとのセッションファイル、ハブの発見・強制終了（P-A） | `server/admin.py`, `server/hubstate.py`, `hubs.py` | ✅ テスト済（16 件）。実際のハブで発見と停止を確認。インストール版では未確認 |
 | モニター（ハブの一覧、接続中のアプリ、履歴、ログ、停止・強制終了・切断）、ハブのログファイル（P-B） | `monitor/`, `syncbridge-monitor.cmd` | ✅ テスト済（Qt は offscreen）。利用者の画面では未確認 |
 | AE のコンプの解像度の枠を Maya のビューに表示（D-16） | `core/comp_guide.py`, `maya_plugin/plug-ins/`, `syncbridge_maya/comp_guide.py`, `server/guide_flow.py`, AE パネル | ⚠ テスト済（偽の maya、Node）。Maya と AE では未実行 |
+| AE のタイムリマップのキーを Maya のマーカーに（D-18） | `core/markers.py`, `server/relay.py`, `syncbridge_maya/key_markers.py`, プラグイン, AE パネル | ⚠ テスト済、mayapy 2023 / 2024 で確認。GUI の描画と AE からの送信は未確認 |
 | クライアント（stdlib の WebSocket、SyncClient、サーバーの自動起動） | `client/` | ✅ テスト済（stdlib のテストサーバーと本物のサーバーの両方） |
 | Maya の接続（service）と最小パネル（ui） | `maya_plugin/.../service.py`, `ui.py` | ✅ Maya 2024 で V-P1B 合格（AE は代役）。その後のログ表示の改善は Maya で未確認 |
 | AE の代役 | `tools/fake_ae.py` | ✅ 本物のサーバーと実データで両方向を確認 |
 | AE の CEP パネル（manifest、画面、通信、ExtendScript の窓口） | `after_effects/CSXS`, `panel/`, `jsx/syncbridge_cep_host.jsx` | ✅ AE 26.5 で V-P1C 合格（両方向、取り消し、日本語の警告、切断）。通信部分は Node のテストも |
 
 ## テスト結果
+
+### 2026-10-20（Windows 11, Python 3.10.6）
+
+- **0.1.6 をリリース（利用者の判断、タグ v0.1.6、SHA-256 3a4d3c20…）。** GUI の Maya / AE での確認がまだのもの:
+  キーのマーカーのビューの表示（すべてのビュー、H-MY-24 / 26）とタイムスライダーの見え方、AE からの送信、Qt の確認ダイアログ、
+  スタートメニューとタスクバーのアイコン、Maya 2025 での 0.1.6 の新機能。次に利用者が使うときに確認する。
+
+- **Maya 2025（利用者の報告）:** 会社の PC の Maya 2025 で、以前の版（0.1.x、タイムワープの転送）が動いていた。
+  Maya 2025 は PySide6 / Python 3.11 だが、パネルは PySide6 を先に試す作りで問題なかった。README と 0.1.6 のリリースノートの
+  動作確認に 2025 を追加。**0.1.6 で増えたもの（解像度の枠とキーのマーカーのプラグイン、Qt の確認ダイアログ、シェルフのタブ）は
+  Maya 2025 では未確認。** この自宅の PC には Maya 2025 がない（mayapy で確認できない）。
+  0.1.6 を作り直し（README の更新のみ、45.7 MB、SHA-256 3a4d3c20…、未リリース・未コミット）。
+
+- **停止済みのハブのファイルがたまる（利用者の報告）:** インストーラーの強制終了などで止まったハブの `hubs\<pid>.json` が残り、
+  モニターに「ファイルのみ（停止済み）」が増えていた。→ `hubs.clean_stale_files()`（プロセスのない PID のファイルだけ消す。
+  再利用された PID は生きているので残る）をハブの起動時とモニターの一覧の更新時に呼ぶ。テストを追加。
+- **モニターのダークテーマ（利用者の要望）:** `monitor/theme.py`（Fusion + パレット + スタイルシート、アイコンの青緑 → 青の
+  グラデーションをアクセントに）。ヘッダー、状態の色付きの丸（選択中も色が残る）、転送の結果の色分け、ログのレベルの色分け、
+  Windows のダークのタイトルバー（このウィンドウだけ）。利用者とモックを見ながら、背景を 2 段暗くし、ヘッダー左上の
+  グラデーションの明るさを決めた（利用者の確認済み）。テスト **251 件 OK**。0.1.6 を作り直し（45.5 MB、
+  SHA-256 db06bcb0…、未リリース・未コミット）。
+- **モニターの名前を英語に（利用者の要望）:** 「SyncBridge モニター」→「SyncBridge Monitor」（ウィンドウのタイトル、ヘッダー、
+  スタートメニュー、インストーラーのメッセージ、README）。インストーラーが 0.1.3〜0.1.5 の古い名前のスタートメニューの項目を消す
+  （テストを追加）。過去の記録は当時の名前のまま。
+- **スタートメニューとタスクバーのアイコン（利用者の要望）:** EXE には新しいアイコンが入っていたが、Windows が 0.1.5 までの EXE の
+  アイコン（PyInstaller の標準）を覚えている、また ICO が 256 の 1 サイズだけ、が原因と推定。→ `make_icon.py` が 16〜256 の 9 サイズの ICO を
+  自前で書く、ICO を `app\syncbridge.ico` にも置いてスタートメニューの項目のアイコンに直接指定、モニターに AppUserModelID
+  `SyncBridge.Monitor`（タスクバー）。テスト **252 件 OK**。0.1.6 を作り直し（45.7 MB、SHA-256 4b569d3b…、未リリース・未コミット）。
+  **スタートメニューとタスクバーでの見え方は未確認。**
+
+- **確認ダイアログがパネルの裏に隠れる（利用者の報告）:** AE → Maya の転送の確認（`cmds.confirmDialog`）が、常に Maya の前に出る
+  SyncBridge のパネルの裏に出て、モーダルなので Maya を操作できなくなった。→ `syncbridge_maya/dialogs.py`（Qt の `QMessageBox`、
+  表示中の SyncBridge パネルを親に、なければ Maya のメインウィンドウ、最前面）に置き換え。モックで親の選び方と見た目を確認。
+  **GUI の Maya では未確認。**
+- **アイコンをモニターと AE にも（利用者の要望）:** `make_icon.py` が各サイズを作る（シェルフ 32、パネル 64、モニター 256、
+  EXE の ICO、AE 64 と 23）。Maya のパネル・AE のパネル・モニターの左上にアイコン（利用者の指定で右上から左上に変更）、
+  モニターのウィンドウとタスクバー、`SyncBridge.exe` と `SyncServer.exe` のファイルのアイコン、AE の manifest の `<Icons>`。
+  あわせて、Maya のパネルの「解像度の枠」欄の説明文が切れていたのを、モックで見つけて直した。
+  モック: Maya のパネル（mayapy 2023、offscreen）、AE のパネル（ブラウザ、`.claude/launch.json` の `ae-panel-mock`）、モニター。
+
+- **Maya のシェルフのアイコンを利用者のデザインに（利用者の要望）:** 元の画像を `maya_plugin/icons/source/syncbridge_icon.webp`
+  に置き、`packaging/make_icon.py`（PySide6 で WebP を読み、余白を切って 32×32 に縮小）で `syncbridge_shelf.png` を作るように。
+  元の画像は配布物に入れない。インストール済みの PC では、インストールし直すと `prefs\icons` のアイコンも置き換わる（Maya の再起動が必要）。
+  テスト 250 件 OK。0.1.6 を作り直し（45.2 MB、SHA-256 798b264e…、未リリース・未コミット）。
+
+- **AE のタイムリマップのキーを Maya のマーカーに（D-18、利用者の要望）:** `core/markers.py`（転送と同じ時間の対応）、
+  ハブの中継を `server/relay.py` にまとめた（解像度の枠と共通、`guide_flow.py` は削除）、AE のパネルに「キーのマーカーを Maya へ」、
+  Maya の `syncbridge_maya/key_markers.py`（network ノードに JSON、目印付きのタイムスライダーのブックマーク、ビューの 2D 表示）、
+  プラグインに `syncBridgeKeyMarker`（左上に「● AE キー 3/8  素材 36f」）と `kAfterOpen` での出し直し、Maya のパネルに
+  「AE のキーのマーカー」欄（「マーカーを消す」）。テスト **247 件 OK**。
+  mayapy 2023 / 2024 で確認: 作成、保存（`requires` は `timeSliderBookmark` だけ）、開き直しで残り表示も出し直される、
+  送り直しで置き換え、取り消し、「マーカーを消す」（利用者のブックマークは残る）、描画の直前の文字の決定。
+  途中で見つかった問題: 表示用ノードを network ノードに接続すると `delete` で network ノードまで消えた／送り直すと新しいノードに
+  つながらなかった → 描画のたびに名前で読む形に。`MAnimControl` は `OpenMayaAnim` にあった（推測が誤り）。
+  **GUI の Maya でのビューの描画（H-MY-24）とタイムスライダーの見え方、AE からの送信は未確認。**
+- **ポート 8765 がほかのプログラムに使われていても接続（D-19、利用者の決定）:** 利用者の確認中に、別のプロジェクト（LayCAT）の
+  Claude がテスト用に起動した `py -m http.server 8765` が残っていて、Maya の Connect がまた止まった（2 回目）。
+  `launcher.ensure_server()` が `session.json` のハブを優先し、8765〜8774 の空きポートで起動するように。
+  使っているプログラムは `hubs.port_owner()`（`netstat -ano`）で調べ、Maya のパネルに日本語で表示。
+  テスト **250 件 OK**（ほかのプログラム役の Web サーバーでふさいで次のポートで起動、2 回目は起動しない、すべてふさがれていれば
+  日本語のエラー、netstat の解析）。0.1.6 を作り直し（45.2 MB、SHA-256 95562f70…、未リリース・未コミット）。
+  LayCAT 側のテスト用のポートは変えていない（別のプロジェクトのため）。
+- **キーのマーカーをすべてのビューに（利用者の要望）:** 利用者の確認で、表示がアクティブなビューにしか出なかった。プラグインは
+  ビューで絞り込んでいないので、Maya の既定の「Update View: Active」で、ほかのビューが描き直されていないためと推定
+  （mayapy で既定値が `active` であることを確認）。表示が変わるフレームでだけ `scheduleRefreshAllViews()` を呼ぶように（H-MY-26）。
+  テスト 250 件 OK。
 
 ### 2026-10-19（Windows 11, Python 3.10.6）
 

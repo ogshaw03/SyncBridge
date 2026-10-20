@@ -5,7 +5,7 @@ Maya の **Scene Time Warp** と After Effects の **Time Remap** を、ボタ�
 - **Editable モード:** キーフレームと補間を保ち、転送先でも編集できる
 - **Precision モード:** 時間変換の結果を高い精度（既定 0.1 フレーム以内）で一致させる
 
-> 現在の配布は **0.1.5（先行配布）**。Phase 1（Maya ⇔ AE のパネルとローカルサーバーによる手動転送）まで完了。
+> 現在の配布は **0.1.6（先行配布）**。Phase 1（Maya ⇔ AE のパネルとローカルサーバーによる手動転送）まで完了。
 > 状況は [docs/PROGRESS.md](docs/PROGRESS.md)、配布の記録は [docs/RELEASE.md](docs/RELEASE.md)。
 
 ## できること（0.1.5）
@@ -15,13 +15,14 @@ Maya の **Scene Time Warp** と After Effects の **Time Remap** を、ボタ�
 | タイムワープの転送 | Maya の Scene Time Warp ⇔ AE のレイヤーのタイムリマップ（両方向、手動）。適用前の確認、バックアップ、取り消し 1 回、読み戻しの検証 |
 | タイムワープの保存・復元・範囲変更 | Maya のパネルで、Scene Time Warp を名前を付けて保存、自動バックアップからの復元、形を保ったままの伸縮 |
 | 解像度の枠 | AE のコンポの大きさ（または Maya のパネルで入れた大きさ）の枠を、Maya のカメラのビューに表示。レンダーには写らない |
-| SyncBridge モニター | 動作中のサーバー、接続中のアプリ、転送の履歴、ログの確認。サーバーの停止・強制終了、アプリの切断 |
+| キーのマーカー | AE のタイムリマップのキーのタイミングを、Maya のタイムスライダーのブックマークとビューの表示に。シーンに保存され、AE がなくても表示される（0.1.6） |
+| SyncBridge Monitor | 動作中のサーバー、接続中のアプリ、転送の履歴、ログの確認。サーバーの停止・強制終了、アプリの切断 |
 | かんたん導入 | `Install.bat` だけで、サーバー、モニター、AE のパネル、Maya のシェルフの「SyncBridge」タブまで入る（管理者権限不要） |
 
 ## 対応環境
 
 - Windows 10 / 11
-- Maya 2023 以降（動作確認は Maya 2023 と 2024）
+- Maya 2023 以降（動作確認は Maya 2023、2024、2025）
 - After Effects 2024 以降（動作確認は After Effects 2026 / 26.5）
 
 ## 使う人向け
@@ -72,7 +73,7 @@ py -3.10 -m venv .venv
 ## ドキュメント
 
 - [docs/SPEC.md](docs/SPEC.md) — 仕様（時間の用語、変換ルール、安全ルール）
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 構成と設計判断（D-1〜D-17）
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 構成と設計判断（D-1〜D-18）
 - [docs/PLATFORM_DESIGN.md](docs/PLATFORM_DESIGN.md) — ハブ・ランチャー・モニター・アップデーターの設計
 - [docs/PHASE0_RESEARCH.md](docs/PHASE0_RESEARCH.md) — API の制約、仮説と検証状態、リスク、検証手順
 - [docs/PHASE1_PLAN.md](docs/PHASE1_PLAN.md) — Phase 1（通信基盤）の計画と確認

@@ -116,6 +116,26 @@ class InstallerTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(self.maya_dir, "2023", "prefs", "shelves", "shelf_Custom.mel")))
         self.assertFalse(os.path.exists(root))
 
+    def test_start_menu_item_has_the_english_name(self):
+        # 0.1.6: "SyncBridge Monitor"; the Japanese name of 0.1.3 - 0.1.5 is removed.
+        app = os.path.join(self.payload, "app")
+        os.makedirs(app)
+        open(os.path.join(app, "SyncBridge.exe"), "wb").close()
+        shutil.copy2(os.path.join(REPO, "packaging", "syncbridge.ico"), app)
+        start = os.path.join(self.tmp, "StartMenu")
+        os.makedirs(start)
+        old = os.path.join(start, u"SyncBridge モニター.lnk")
+        open(old, "wb").close()
+        self.install()
+        self.assertEqual(sorted(os.listdir(start)), ["SyncBridge Monitor.lnk"])
+        # The item uses the icon file, not the EXE (Windows may have cached an old EXE icon).
+        link = os.path.join(start, "SyncBridge Monitor.lnk")
+        out = subprocess.run([POWERSHELL, "-NoProfile", "-Command",
+                              "(New-Object -ComObject WScript.Shell).CreateShortcut('%s').IconLocation" % link],
+                             capture_output=True, text=True, timeout=60).stdout.strip()
+        root = os.path.join(self.local, "Programs", "SyncBridge")
+        self.assertEqual(os.path.normcase(out), os.path.normcase(os.path.join(root, "app", "syncbridge.ico") + ",0"))
+
     def test_no_maya_folder(self):
         shutil.rmtree(self.maya_dir)
         self.install()

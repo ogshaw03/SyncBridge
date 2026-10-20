@@ -35,6 +35,11 @@ KINDS = (
     "guide.result",
     "guide.apply.request",
     "guide.apply.result",
+    # key markers (D-18)
+    "markers.request",
+    "markers.result",
+    "markers.apply.request",
+    "markers.apply.result",
     "error",
 )
 

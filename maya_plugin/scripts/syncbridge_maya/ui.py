@@ -10,18 +10,35 @@ from __future__ import annotations
 from maya import OpenMayaUI as omui
 from maya import cmds
 
+import os
+
 try:
-    from PySide6 import QtCore, QtWidgets
+    from PySide6 import QtCore, QtGui, QtWidgets
     from shiboken6 import wrapInstance
 except ImportError:
-    from PySide2 import QtCore, QtWidgets
+    from PySide2 import QtCore, QtGui, QtWidgets
     from shiboken2 import wrapInstance
 
 from syncbridge import __version__, protocol
-from . import comp_guide, service, snapshots
+from . import comp_guide, key_markers, service, snapshots
 
 WINDOW_NAME = "SyncBridgePanel"
+# <maya folder>/icons next to scripts/ (repository: maya_plugin/icons; release: <install>/maya/icons)
+ICON_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "icons")
+LOGO_FILE = os.path.join(ICON_DIR, "syncbridge_logo.png")
+LOGO_SIZE = 32
 _window = None
+
+
+def _logo_label():
+    """The SyncBridge icon for the top left corner (empty when the file is missing)."""
+    label = QtWidgets.QLabel()
+    pixmap = QtGui.QPixmap(LOGO_FILE)
+    if not pixmap.isNull():
+        label.setPixmap(pixmap.scaled(LOGO_SIZE, LOGO_SIZE, QtCore.Qt.KeepAspectRatio,
+                                      QtCore.Qt.SmoothTransformation))
+        label.setToolTip("SyncBridge %s" % __version__)
+    return label
 
 
 def _maya_main_window():
@@ -35,6 +52,8 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.setObjectName(WINDOW_NAME)
         self.setWindowTitle("SyncBridge %s" % __version__)
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.Tool)
+        if os.path.isfile(LOGO_FILE):
+            self.setWindowIcon(QtGui.QIcon(LOGO_FILE))
         self.setMinimumWidth(360)
         self.busy = False
         self._had_ae = False
@@ -91,6 +110,12 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.clear_guide_btn.setToolTip(u"表示中の解像度の枠をビューから消します")
         self.clear_guide_btn.clicked.connect(self.clear_guide)
 
+        self.markers_label = QtWidgets.QLabel()
+        self.markers_label.setWordWrap(True)
+        self.clear_markers_btn = QtWidgets.QPushButton(u"マーカーを消す")
+        self.clear_markers_btn.setToolTip(u"AE から送ったキーのマーカー（ブックマークとビューの表示）を、このシーンから消します")
+        self.clear_markers_btn.clicked.connect(self.clear_markers)
+
         self.log = QtWidgets.QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(500)
@@ -100,6 +125,8 @@ class SyncBridgePanel(QtWidgets.QDialog):
         form.addRow("Origin frame", self.origin)
         form.addRow("Tolerance (frames)", self.tolerance)
         top = QtWidgets.QHBoxLayout()
+        top.addWidget(_logo_label())                 # top left
+        top.addSpacing(4)
         top.addWidget(self.status, 1)
         top.addWidget(self.connect_btn)
         buttons = QtWidgets.QHBoxLayout()
@@ -124,16 +151,25 @@ class SyncBridgePanel(QtWidgets.QDialog):
         size_row.addWidget(self.guide_height)
         size_row.addWidget(self.guide_preset, 1)
         action_row = QtWidgets.QHBoxLayout()
-        action_row.addWidget(QtWidgets.QLabel(u"AE のパネルの「解像度の枠を Maya へ」でも表示できます"), 1)
+        action_row.addStretch(1)
         action_row.addWidget(self.show_guide_btn)
         action_row.addWidget(self.clear_guide_btn)
+        guide_hint = QtWidgets.QLabel(u"AE のパネルの「解像度の枠を Maya へ」でも表示できます。")
+        guide_hint.setWordWrap(True)
         guide_layout.addLayout(size_row)
         guide_layout.addLayout(action_row)
+        guide_layout.addWidget(guide_hint)
         layout.addWidget(guide_box)
+        markers_box = QtWidgets.QGroupBox(u"AE のキーのマーカー")
+        markers_row = QtWidgets.QHBoxLayout(markers_box)
+        markers_row.addWidget(self.markers_label, 1)
+        markers_row.addWidget(self.clear_markers_btn)
+        layout.addWidget(markers_box)
         layout.addWidget(self.log, 1)
 
         service.add_listener(self.on_event)
         self.refresh()
+        self.show_stored_markers()
 
     # -- actions -----------------------------------------------------------------
     def toggle_connection(self):
@@ -143,7 +179,9 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.write("connecting (the server is started if needed)...")
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
         try:
-            service.connect(start_server=True)
+            welcome = service.connect(start_server=True)
+            if welcome.get("note"):
+                self.write(welcome["note"])
         except Exception as exc:
             self.write("connect failed: %s" % exc)
         finally:
@@ -244,6 +282,34 @@ class SyncBridgePanel(QtWidgets.QDialog):
         for w in result.get("warnings") or []:
             self.write(u"注意: %s" % w)
 
+    # -- AE key markers (D-18) ---------------------------------------------------------------
+    def show_stored_markers(self):
+        """Show the markers stored in this scene (also in the view, where the plug-in draws them)."""
+        data = key_markers.stored()
+        if not data:
+            self.markers_label.setText(u"このシーンにはマーカーがありません。AE のパネルの「キーのマーカーを Maya へ」で送れます。")
+            self.clear_markers_btn.setEnabled(False)
+            return
+        frames = [m["frame"] for m in data.get("markers") or []]
+        self.markers_label.setText(u"%s / %s のキー %d 個（フレーム %s〜%s、Origin %s）" % (
+            data.get("comp", ""), data.get("layer", ""), len(frames),
+            key_markers._frame_text(min(frames)) if frames else "-",
+            key_markers._frame_text(max(frames)) if frames else "-", key_markers._frame_text(data.get("origin", 0))))
+        self.clear_markers_btn.setEnabled(True)
+        try:
+            key_markers.restore_overlay()
+        except Exception as exc:
+            self.write(u"マーカーをビューに表示できませんでした: %s" % exc)
+
+    def clear_markers(self):
+        try:
+            count = key_markers.clear()
+        except Exception as exc:
+            self.write(u"マーカーを消せませんでした: %s" % exc)
+            return
+        self.write(u"キーのマーカー %d 個を消しました（Ctrl+Z で戻せます）。" % count)
+        self.show_stored_markers()
+
     def clear_guide(self):
         try:
             count = comp_guide.clear()
@@ -285,6 +351,15 @@ class SyncBridgePanel(QtWidgets.QDialog):
                 self.write("AE → Maya cancelled (nothing changed)")
             else:
                 self.write("AE → Maya failed: %s" % payload.get("message"))
+        elif event == "markers":
+            if payload.get("status") == "applied":
+                self.write(u"AE「%s / %s」のキーのマーカー %d 個を受け取りました（フレーム %s〜%s）。"
+                           u"タイムスライダーのブックマークとビューに表示し、シーンに保存されます。取り消しは Ctrl+Z を 1 回。"
+                           % (payload.get("comp", ""), payload.get("layer", ""), payload["count"],
+                              payload["first"], payload["last"]))
+            else:
+                self.write(u"キーのマーカーを受け取れませんでした: %s" % payload.get("message"))
+            self.show_stored_markers()
         elif event == "guide":
             if payload.get("status") == "applied":
                 self.write(u"AE のコンプ「%s」（%dx%d）の枠を、カメラ %s のビューに表示しました（Maya のレンダー %dx%d）。"

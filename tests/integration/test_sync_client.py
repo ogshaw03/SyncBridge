@@ -191,9 +191,99 @@ class LauncherTest(unittest.TestCase):
         self.assertEqual(env["PYTHONPATH"], os.path.join(launcher.repo_root(), "src"))
 
     def test_missing_python(self):
-        port = _free_port()
-        with self.assertRaises(RuntimeError):
-            launcher.ensure_server(port, python=os.path.join(tempfile.gettempdir(), "no-such-python.exe"))
+        tmp = tempfile.mkdtemp()
+        old = os.environ.get(session.ENV_DIR)
+        os.environ[session.ENV_DIR] = tmp          # a hub running on this PC must not answer instead
+        try:
+            port = _free_port()
+            with self.assertRaises(RuntimeError):
+                launcher.ensure_server(port, python=os.path.join(tempfile.gettempdir(), "no-such-python.exe"))
+        finally:
+            if old is None:
+                os.environ.pop(session.ENV_DIR, None)
+            else:
+                os.environ[session.ENV_DIR] = old
+            shutil.rmtree(tmp)
+
+    def _occupy(self, port):
+        """Another program on `port`: a plain web server that is not SyncBridge (404 on /health)."""
+        import http.server
+        server = http.server.HTTPServer(("127.0.0.1", port), http.server.BaseHTTPRequestHandler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return server
+
+    @unittest.skipUnless(HAVE_SERVER, "server packages not installed (requirements-server.txt)")
+    def test_port_taken_by_another_program_uses_the_next_one(self):
+        # 2026-10-20: a test web server of another project (py -m http.server 8765) blocked Maya's Connect.
+        tmp = tempfile.mkdtemp()
+        old = os.environ.get(session.ENV_DIR)
+        os.environ[session.ENV_DIR] = tmp
+        for _ in range(20):                      # a free port whose neighbour is free too
+            port = _free_port()
+            if not session.port_in_use(port + 1):
+                break
+        self._occupy(port)
+        try:
+            info = launcher.ensure_server(port, python=sys.executable, idle_timeout=5, wait=30)
+            self.assertEqual((info["app"], info["port"]), ("syncbridge", port + 1))
+            self.assertIn(u"ポート %d は" % port, info["note"])
+            self.assertIn(u"ポート %d で SyncBridge" % (port + 1), info["note"])
+            if sys.platform == "win32":
+                self.assertIn("PID %d" % os.getpid(), info["note"])        # the web server runs in this process
+            self.assertEqual(session.read_session()["port"], port + 1)
+            first_pid = session.read_session()["pid"]
+            again = launcher.ensure_server(port, python=sys.executable)      # found through session.json
+            self.assertEqual((again["port"], session.read_session()["pid"]), (port + 1, first_pid))
+            self.assertNotIn("note", again)
+            c = SyncClient("test")
+            c.connect()                                                       # port from session.json
+            self.assertTrue(c.connected)
+            c.disconnect()
+            deadline = time.time() + 30
+            while time.time() < deadline and session.probe_server(port + 1, timeout=0.3):
+                time.sleep(0.5)
+        finally:
+            if old is None:
+                os.environ.pop(session.ENV_DIR, None)
+            else:
+                os.environ[session.ENV_DIR] = old
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_no_free_port(self):
+        import socket
+        tmp = tempfile.mkdtemp()
+        old = os.environ.get(session.ENV_DIR)
+        os.environ[session.ENV_DIR] = tmp
+        sockets = []
+        try:
+            # Find PORT_TRIES consecutive free ports and listen on all of them.
+            for _ in range(20):
+                base = _free_port()
+                try:
+                    for p in range(base, base + launcher.PORT_TRIES):
+                        s = socket.socket()
+                        s.bind(("127.0.0.1", p))
+                        s.listen(64)        # never accepts: room for every probe's connection
+                        sockets.append(s)
+                    break
+                except OSError:
+                    for s in sockets:
+                        s.close()
+                    sockets = []
+            self.assertEqual(len(sockets), launcher.PORT_TRIES)
+            with self.assertRaises(RuntimeError) as ctx:
+                launcher.ensure_server(base, python=sys.executable, wait=2)
+            self.assertIn(u"すべて使われています", str(ctx.exception))
+        finally:
+            for s in sockets:
+                s.close()
+            if old is None:
+                os.environ.pop(session.ENV_DIR, None)
+            else:
+                os.environ[session.ENV_DIR] = old
+            shutil.rmtree(tmp, ignore_errors=True)
 
     @unittest.skipUnless(HAVE_SERVER, "server packages not installed (requirements-server.txt)")
     def test_starts_a_server_once(self):

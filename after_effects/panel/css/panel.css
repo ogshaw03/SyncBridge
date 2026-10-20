@@ -35,6 +35,7 @@ input { width: 90px; }
 button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: 0.4; }
 .send { flex: 1; padding: 6px; }
+.logo { width: 24px; height: 24px; flex: none; }
 #log {
   flex: 1;
   min-height: 80px;

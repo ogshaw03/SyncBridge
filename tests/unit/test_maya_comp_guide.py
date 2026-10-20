@@ -295,13 +295,37 @@ class MayaCompGuideTest(unittest.TestCase):
                        ("type", "string")), self.cmds.log)
 
 
+    def test_marker_handler_reports_to_the_panel(self):
+        # D-18: markers.apply.request -> key_markers.apply (checked in mayapy 2023 / 2024).
+        sys.modules["maya"].mel = types.ModuleType("maya.mel")
+        self.cmds.warning = lambda *a: None
+        self.cmds.about = lambda **kw: "2024"
+        from syncbridge_maya import key_markers, service
+        calls = []
+        key_markers.apply = lambda export, options: calls.append((export, options)) or {
+            "status": "applied", "count": 4, "first": "1001", "last": "1097"}
+        events = []
+        service.add_listener(lambda e, p: events.append((e, p)))
+        reply = service._handle_markers({"data": {"export": {"kind": "ae.timeremap.export"}, "options": {"origin": 1}}})
+        self.assertEqual(reply["count"], 4)
+        self.assertEqual(calls, [({"kind": "ae.timeremap.export"}, {"origin": 1})])
+        self.assertEqual(events[-1], ("markers", reply))
+
+        def failing(export, options):
+            raise ValueError(u"キーがありません")
+        key_markers.apply = failing
+        with self.assertRaises(ValueError):
+            service._handle_markers({"data": {"export": {}, "options": {}}})
+        self.assertEqual(events[-1], ("markers", {"status": "failed", "message": u"キーがありません"}))
+
+
 class PluginSourceTest(unittest.TestCase):
     def test_plugin_parses_and_registers(self):
         with open(PLUGIN, encoding="utf-8") as f:
             tree = ast.parse(f.read())
         names = {n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.ClassDef))}
         for name in ("maya_useNewAPI", "initializePlugin", "uninitializePlugin", "CompGuideNode",
-                     "CompGuideDrawOverride"):
+                     "CompGuideDrawOverride", "KeyMarkerNode", "KeyMarkerDrawOverride"):
             self.assertIn(name, names)
 
 

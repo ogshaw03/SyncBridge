@@ -62,7 +62,8 @@ def run_tests():
 
 def build_server(payload, work):
     run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir", "--console",
-         "--name", "SyncServer", "--distpath", os.path.join(work, "dist"),
+         "--name", "SyncServer", "--icon", os.path.join(PACKAGING, "syncbridge.ico"),
+         "--distpath", os.path.join(work, "dist"),
          "--workpath", os.path.join(work, "work"), "--specpath", work,
          "--paths", os.path.join(ROOT, "src"),
          "--collect-submodules", "uvicorn", "--collect-submodules", "websockets",
@@ -77,14 +78,20 @@ MONITOR_EXCLUDES = ("fastapi", "uvicorn", "starlette", "pydantic", "websockets",
 
 
 def build_monitor(payload, work):
+    icon_png = os.path.join(ROOT, "src", "syncbridge", "monitor", "syncbridge_icon.png")
     argv = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--onedir", "--windowed",
             "--name", "SyncBridge", "--distpath", os.path.join(work, "dist"),
             "--workpath", os.path.join(work, "work"), "--specpath", work,
-            "--paths", os.path.join(ROOT, "src")]
+            "--paths", os.path.join(ROOT, "src"),
+            "--icon", os.path.join(PACKAGING, "syncbridge.ico"),                 # the EXE file
+            "--add-data", "%s%s%s" % (icon_png, os.pathsep, "syncbridge/monitor")]   # the window
     for name in MONITOR_EXCLUDES:
         argv += ["--exclude-module", name]
     run(argv + [os.path.join(PACKAGING, "monitor_entry.py")], cwd=ROOT, stdout=subprocess.DEVNULL)
     shutil.copytree(os.path.join(work, "dist", "SyncBridge"), os.path.join(payload, "app"))
+    # The Start menu item points at this file: a new path, so Windows does not reuse the icon it
+    # cached for SyncBridge.exe of 0.1.5 and before (PyInstaller's default icon).
+    shutil.copy2(os.path.join(PACKAGING, "syncbridge.ico"), os.path.join(payload, "app", "syncbridge.ico"))
 
 
 def build_maya(payload):
@@ -93,7 +100,9 @@ def build_maya(payload):
     os.makedirs(scripts)
     for name in ("drag_to_maya_SyncBridge.py", "drag_to_maya_SyncBridge.mel"):
         shutil.copy2(os.path.join(ROOT, "maya_plugin", name), maya)
-    shutil.copytree(os.path.join(ROOT, "maya_plugin", "icons"), os.path.join(maya, "icons"), ignore=IGNORE)
+    # icons/source holds the artwork make_icon.py reads; Maya needs only the PNG.
+    shutil.copytree(os.path.join(ROOT, "maya_plugin", "icons"), os.path.join(maya, "icons"),
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store", "source"))
     shutil.copytree(os.path.join(ROOT, "maya_plugin", "plug-ins"), os.path.join(maya, "plug-ins"), ignore=IGNORE)
     shutil.copytree(os.path.join(ROOT, "maya_plugin", "scripts", "syncbridge_maya"),
                     os.path.join(scripts, "syncbridge_maya"), ignore=IGNORE)

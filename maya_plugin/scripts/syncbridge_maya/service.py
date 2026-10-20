@@ -6,6 +6,7 @@ thread through maya.utils.executeDeferred (H-MY-14):
     export.request -> exchange.build_export(allow_missing=True)
     apply.request  -> exchange.apply_envelope(...)   (confirmation dialog, backup, undo, readback)
     guide.apply.request -> comp_guide.show(...)      (AE comp frame in the active view, D-16)
+    markers.apply.request -> key_markers.apply(...)  (AE key timings as markers, D-18)
 
     import syncbridge_maya.service as svc
     svc.connect(start_server=True)
@@ -22,7 +23,7 @@ from syncbridge import protocol
 from syncbridge.client import launcher
 from syncbridge.client.sync_client import ConnectError, SyncClient
 
-from . import comp_guide, exchange
+from . import comp_guide, exchange, key_markers
 
 _client: Optional[SyncClient] = None
 _listeners: List[Callable[[str, object], None]] = []
@@ -118,6 +119,17 @@ def _handle_guide(msg: dict) -> dict:
     return result
 
 
+def _handle_markers(msg: dict) -> dict:
+    """Store AE's Time Remap key timings as markers; the panel hears about it ("markers" event)."""
+    try:
+        result = key_markers.apply(msg["data"]["export"], msg["data"].get("options"))
+    except Exception as exc:
+        _notify("markers", {"status": "failed", "message": str(exc)})
+        raise
+    _notify("markers", result)
+    return result
+
+
 def client() -> Optional[SyncClient]:
     return _client
 
@@ -132,12 +144,17 @@ def connect(start_server: bool = True, port: Optional[int] = None) -> dict:
     if is_connected():
         return {"client_id": _client.client_id}
     _close_previous()
+    info = {}
     if start_server:
-        launcher.ensure_server(port or protocol.DEFAULT_PORT)
+        # The hub may run on another port when 8765 is taken; the result says which.
+        info = launcher.ensure_server(port or protocol.DEFAULT_PORT)
+        if info.get("note"):
+            print("SyncBridge: %s" % info["note"])
+        port = port or info.get("port")
     _client = SyncClient(
         "maya",
         handlers={"export.request": _handle_export, "apply.request": _handle_apply,
-                  "guide.apply.request": _handle_guide},
+                  "guide.apply.request": _handle_guide, "markers.apply.request": _handle_markers},
         dispatch=maya.utils.executeDeferred,
         on_event=_on_event,
         version=cmds.about(version=True),
@@ -145,6 +162,8 @@ def connect(start_server: bool = True, port: Optional[int] = None) -> dict:
     )
     welcome = _client.connect(port=port)
     _register(_client)
+    if info.get("note"):
+        welcome = dict(welcome, note=info["note"])
     return welcome
 
 

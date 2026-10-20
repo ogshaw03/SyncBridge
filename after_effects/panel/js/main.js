@@ -47,6 +47,7 @@
     var ui = {
         status: el('span', { 'class': 'grow', text: 'Server: not connected' }),
         connect: el('button', { text: 'Connect' }),
+        logo: el('img', { 'class': 'logo', src: 'img/syncbridge_logo.png', alt: '', title: 'SyncBridge' }),
         peer: el('div', { 'class': 'muted', text: 'Maya: -' }),
         target: el('span', { 'class': 'grow muted', text: 'Layer: -' }),
         refresh: el('button', { title: 'Refresh the selected comp and layer', text: '↻' }),
@@ -59,19 +60,22 @@
         toMaya: el('button', { 'class': 'send', text: 'AE → Maya' }),
         guide: el('button', { title: 'アクティブなコンポの幅と高さを、Maya のビューに枠で表示します（レンダー解像度の中央に等倍）',
                               text: '解像度の枠を Maya へ' }),
+        markers: el('button', { title: '選択中のレイヤーのタイムリマップのキーの位置を、Maya のタイムスライダー（ブックマーク）と' +
+                                       'ビューにマーカーで表示します。Maya のシーンに保存されます（Origin frame を使います）',
+                                text: 'キーのマーカーを Maya へ' }),
         log: el('div', { id: 'log' })
     };
 
     var app = document.getElementById('app');
     [
-        el('div', { 'class': 'row' }, [ui.status, ui.connect]),
+        el('div', { 'class': 'row' }, [ui.logo, ui.status, ui.connect]),
         ui.peer,
         el('div', { 'class': 'row' }, [ui.target, ui.refresh]),
         field('Mode', ui.mode),
         field('Origin frame (Maya)', ui.origin),
         field('Tolerance (frames)', ui.tolerance),
         el('div', { 'class': 'row' }, [ui.toAe, ui.toMaya]),
-        el('div', { 'class': 'row' }, [ui.guide]),
+        el('div', { 'class': 'row' }, [ui.guide, ui.markers]),
         ui.log
     ].forEach(function (node) { app.appendChild(node); });
 
@@ -128,6 +132,7 @@
         ui.toAe.disabled = !enabled;
         ui.toMaya.disabled = !enabled;
         ui.guide.disabled = !(connected && maya.length > 0 && compOk && !busy);
+        ui.markers.disabled = !enabled;
         if (!connected) { busy = false; }
     }
 
@@ -217,7 +222,31 @@
         }
     }
 
+    function sendMarkers() {
+        saveOptions();
+        busy = true;
+        refresh();
+        try {
+            client.sendMarkers({ origin: parseFloat(ui.origin.value) }, function (reply) {
+                busy = false;
+                if (reply.kind === 'error') {
+                    log('キーのマーカーを送れませんでした: ' + reply.data.message);
+                } else {
+                    var d = reply.data;
+                    log('キーのマーカー ' + d.count + ' 個を Maya に送りました（フレーム ' + d.first + '〜' + d.last +
+                        '、タイムスライダーのブックマーク付き。Maya のシーンに保存されます）');
+                }
+                refresh();
+            });
+        } catch (e) {
+            busy = false;
+            log('キーのマーカーを送れませんでした: ' + e.message);
+            refresh();
+        }
+    }
+
     ui.guide.addEventListener('click', sendGuide);
+    ui.markers.addEventListener('click', sendMarkers);
     ui.connect.addEventListener('click', function () {
         if (client.ws) { client.disconnect(); } else { connect(); }
     });

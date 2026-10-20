@@ -18,6 +18,10 @@ Comp guide (D-16), AE comp frame shown in the Maya view:
     client -> server  guide.request {comp: {name, width, height, pixelAspect}, target?}
     server -> maya    guide.apply.request {guide: comp}   maya -> server guide.apply.result {status, camera, ...}
     server -> client  guide.result {status, camera, render, comp, warnings, source, target}
+Key markers (D-18), AE Time Remap key timings as Maya markers:
+    client -> server  markers.request {export: ae.timeremap.export envelope, options: {origin, ...}}
+    server -> maya    markers.apply.request {export, options}   maya -> server markers.apply.result {status, count, ...}
+    server -> client  markers.result {status, count, first, last, bookmarks, source, target}
 A reply carries `reply_to` = the request's event_id. Failures are `error`
 {code, message} with `reply_to` when they answer a request.
 """
@@ -56,6 +60,8 @@ REPLIES = {
     "apply.request": "apply.result",
     "guide.request": "guide.result",
     "guide.apply.request": "guide.apply.result",
+    "markers.request": "markers.result",
+    "markers.apply.request": "markers.apply.result",
 }
 
 # required data fields per kind (minimal structural validation)
@@ -73,6 +79,10 @@ REQUIRED = {
     "guide.result": ("status",),
     "guide.apply.request": ("guide",),
     "guide.apply.result": ("status",),
+    "markers.request": ("export",),
+    "markers.result": ("status",),
+    "markers.apply.request": ("export",),
+    "markers.apply.result": ("status",),
     "error": ("code", "message"),
 }
 
@@ -81,7 +91,8 @@ APPLIED = "applied"
 CANCELLED = "cancelled"
 FAILED = "failed"
 STATUSES = (APPLIED, CANCELLED, FAILED)
-RESULT_KINDS = ("apply.result", "transfer.result", "guide.result", "guide.apply.result")
+RESULT_KINDS = ("apply.result", "transfer.result", "guide.result", "guide.apply.result",
+                "markers.result", "markers.apply.result")
 
 
 class ProtocolError(ValueError):

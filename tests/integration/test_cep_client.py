@@ -40,7 +40,9 @@ class CepClientTest(ServerFixture):
             "export.request": lambda msg: {"export": maya_export()},
             "apply.request": self._maya_apply,
             "guide.apply.request": self._maya_guide,
+            "markers.apply.request": self._maya_markers,
         })
+        self.markers = []
         self.guides = []
         self.maya.connect(port=self.port, token=TOKEN)
         self.procs = []
@@ -67,6 +69,11 @@ class CepClientTest(ServerFixture):
         self.guides.append(guide)
         return {"status": "applied", "camera": "persp", "render": [2112, 1188],
                 "comp": [guide["width"], guide["height"]], "warnings": []}
+
+    def _maya_markers(self, msg):
+        self.markers.append(msg["data"])
+        return {"status": "applied", "count": len(msg["data"]["export"]["data"]["keys"]),
+                "first": "1001", "last": "1097", "bookmarks": 4}
 
     def driver(self, *args, export=None):
         p = subprocess.Popen(["node", DRIVER, str(self.port), TOKEN, export or self.export_path] + list(args),
@@ -127,6 +134,24 @@ class CepClientTest(ServerFixture):
         self.assertEqual(reply["kind"], "error")
         self.assertIn("コンポジションを開いてください", reply["data"]["message"])
         self.assertEqual(self.guides, [])
+
+    def test_panel_sends_key_markers(self):
+        # D-18: "キーのマーカーを Maya へ" -> the selected layer's export + the origin frame.
+        p, events = self.driver("markers")
+        self.assertEqual(p.wait(30), 0, events)
+        reply = [e for e in events if e["event"] == "result"][0]["reply"]
+        self.assertEqual(reply["kind"], "markers.result", reply)
+        self.assertEqual(reply["data"]["count"], 4)
+        self.assertEqual(self.markers[0]["options"], {"origin": 1001})
+        self.assertEqual(self.markers[0]["export"]["kind"], "ae.timeremap.export")
+
+    def test_key_markers_without_a_layer(self):
+        p, events = self.driver("markers", export="ERROR")
+        self.assertEqual(p.wait(30), 0, events)
+        reply = [e for e in events if e["event"] == "result"][0]["reply"]
+        self.assertEqual(reply["kind"], "error")
+        self.assertIn(u"レイヤーを 1 つだけ選択", reply["data"]["message"])
+        self.assertEqual(self.markers, [])
 
     def test_host_error_reaches_maya(self):
         p, events = self.driver("serve", export="ERROR")

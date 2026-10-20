@@ -80,7 +80,7 @@ mapping: --mode editable|precision --tol 0.1 --origin F --maya-in-origin F --may
 |---|---|
 | `syncbridge.client.ws.WebSocket` | 最小の WebSocket クライアント（テキスト、分割、ping/pong、close）。`connect(host, port, path)`, `send_text`, `recv`（閉じたら None）, `close` |
 | `syncbridge.client.sync_client.SyncClient(app, handlers, dispatch, on_event)` | サーバーへの接続。`connect()`（セッションファイルを読む）、`request_transfer(direction, options, callback)`、`disconnect()`。受信は別スレッド、アプリへの処理と UI 通知は `dispatch` 経由 |
-| `syncbridge.client.launcher.ensure_server(port)` | サーバーが動いていなければ `.venv` の Python で起動して待つ（親の `PYTHONHOME` / `PYTHONPATH` は渡さない） |
+| `syncbridge.client.launcher.ensure_server(port)` | サーバーが動いていなければ起動して待つ（親の `PYTHONHOME` / `PYTHONPATH` は渡さない）。`session.json` のハブを優先し、`port` がほかのプログラムに使われていれば次の空きポート（最大 10 個、D-19）。戻り値は `/health` + `port`（+ 理由の `note`） |
 | `syncbridge_maya.service` | Maya 用: `connect(start_server=True)`, `send_to_ae(options)`, `receive_from_ae(options)`, `disconnect()`, `add_listener(fn)` |
 | `syncbridge_maya.ui.show()` | Maya の最小パネル（接続、モード、原点フレーム、許容誤差、2 つの送信ボタン、ログ） |
 | `syncbridge_maya.exchange.apply_envelope(env, confirm=True)` | apply エンベロープを適用（確認、バックアップ、undo、読み戻し）。`{status, backup, after, app_readback}` を返す |
@@ -117,6 +117,9 @@ mapping: --mode editable|precision --tol 0.1 --origin F --maya-in-origin F --may
 | `guide.request` | クライアント（AE）→ サーバー | `comp: {name, width, height, pixelAspect}`, 省略可 `target`（Maya の client_id）。D-16 |
 | `guide.apply.request` / `guide.apply.result` | サーバー ⇔ Maya | `{guide: {name, width, height, pixelAspect}}` / `{status, camera, render: [w, h], comp: [w, h], warnings}` |
 | `guide.result` | サーバー → 要求元 | `guide.apply.result` の内容 + `source`, `target`, `message`（注意の要約） |
+| `markers.request` | クライアント（AE）→ サーバー | `export`（選択中のレイヤーの `ae.timeremap.export`）, `options`（転送と同じ。`origin` など）。D-18 |
+| `markers.apply.request` / `markers.apply.result` | サーバー ⇔ Maya | `{export, options}` / `{status, count, first, last, bookmarks, overlay, comp, layer}` |
+| `markers.result` | サーバー → 要求元 | `markers.apply.result` の内容 + `source`, `target` |
 | `error` | どちらでも | `code`, `message`（要求への応答なら `reply_to` 付き） |
 
 エラーコード: `bad_message`, `auth_failed`, `no_peer`, `timeout`, `peer_disconnected`, `app_error`, `conversion_failed`, `busy`,

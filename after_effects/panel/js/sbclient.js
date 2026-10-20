@@ -180,6 +180,26 @@
         });
     };
 
+    // Key markers (D-18): the selected layer's Time Remap keys, marked on the Maya timeline and
+    // view. `options` = transfer options (origin, ...). Same reply handling as sendGuide.
+    SBPanelClient.prototype.sendMarkers = function (options, callback) {
+        var self = this;
+        if (!this.connected()) { throw new Error('not connected'); }
+        this.host.call('exportSelected', [], function (exported) {
+            if (exported.error) {
+                callback(message('error', { code: 'app_error', message: userMessage(exported) }));
+                return;
+            }
+            if (!self.connected()) {
+                callback(message('error', { code: 'peer_disconnected', message: 'not connected' }));
+                return;
+            }
+            var msg = message('markers.request', { 'export': exported, options: options || {} });
+            self.pending[msg.event_id] = callback;
+            self.ws.send(JSON.stringify(msg));
+        });
+    };
+
     SBPanelClient.prototype._send = function (msg) {
         if (this.ws && this.ws.readyState === 1) { this.ws.send(JSON.stringify(msg)); }
     };

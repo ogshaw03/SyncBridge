@@ -73,7 +73,7 @@ py -3.10 -m venv .venv
 ## ドキュメント
 
 - [docs/SPEC.md](docs/SPEC.md) — 仕様（時間の用語、変換ルール、安全ルール）
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 構成と設計判断（D-1〜D-18）
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 構成と設計判断（D-1〜D-20）
 - [docs/PLATFORM_DESIGN.md](docs/PLATFORM_DESIGN.md) — ハブ・ランチャー・モニター・アップデーターの設計
 - [docs/PHASE0_RESEARCH.md](docs/PHASE0_RESEARCH.md) — API の制約、仮説と検証状態、リスク、検証手順
 - [docs/PHASE1_PLAN.md](docs/PHASE1_PLAN.md) — Phase 1（通信基盤）の計画と確認

@@ -89,6 +89,9 @@ class CompGuideNode(omui.MPxLocatorNode):
                      CompGuideNode.comp_name, CompGuideNode.camera_matrix):
             om.MPxNode.addAttribute(attr)
 
+    def excludeAsLocator(self):
+        return True           # own Show menu item, not "Locators" (see DISPLAY_FILTERS)
+
     def isBounded(self):
         # Unbounded: never culled. The frame moves with the camera, but Viewport 2.0 kept the
         # bounding box from when the guide was created, so the frame vanished as soon as the
@@ -321,6 +324,9 @@ class KeyMarkerNode(omui.MPxLocatorNode):
     def initialize():
         pass
 
+    def excludeAsLocator(self):
+        return True           # own Show menu item, not "Locators" (see DISPLAY_FILTERS)
+
     def isBounded(self):
         return False          # screen-space overlay, never culled
 
@@ -424,6 +430,30 @@ class KeyMarkerDrawOverride(omr.MPxDrawOverride):
             _warn_once("SyncBridge key markers: drawing failed: %s" % exc)
 
 
+# Show menu (D-20): users often hide locators, so the guide and the marker overlay leave the
+# "Locators" filter (excludeAsLocator) and get their own items in each view's Show menu.
+# H-MY-27: excludeAsLocator and pluginDisplayFilter exist in mayapy 2023 / 2024; not yet
+# checked in the GUI that the items appear and hide only these nodes.
+DISPLAY_FILTERS = (
+    ("syncBridgeCompGuideFilter", u"SyncBridge 解像度の枠", DRAW_CLASSIFICATION),
+    ("syncBridgeKeyMarkerFilter", u"SyncBridge キーのマーカー", MARKER_CLASSIFICATION),
+)
+
+
+def _register_display_filters():
+    import maya.cmds as cmds
+    for name, label, classification in DISPLAY_FILTERS:
+        if not cmds.pluginDisplayFilter(name, query=True, exists=True):
+            cmds.pluginDisplayFilter(name, register=True, label=label, classification=classification)
+
+
+def _deregister_display_filters():
+    import maya.cmds as cmds
+    for name, _label, _classification in DISPLAY_FILTERS:
+        if cmds.pluginDisplayFilter(name, query=True, exists=True):
+            cmds.pluginDisplayFilter(name, deregister=True)
+
+
 # Saving: take the guides and the marker overlay out just before and put them back just after,
 # so the file has no `requires "syncbridge_guide.py"` (setDoNotWrite alone keeps the nodes out
 # but not the requires line, Maya 2024; H-MY-22). The work is in syncbridge_maya.
@@ -480,6 +510,7 @@ def initializePlugin(obj):
                             om.MPxNode.kLocatorNode, MARKER_CLASSIFICATION)
         omr.MDrawRegistry.registerDrawOverrideCreator(MARKER_CLASSIFICATION, MARKER_REGISTRANT,
                                                       KeyMarkerDrawOverride.creator)
+        _register_display_filters()
         _callbacks.append(om.MSceneMessage.addCallback(om.MSceneMessage.kBeforeSave, _before_save))
         _callbacks.append(om.MSceneMessage.addCallback(om.MSceneMessage.kAfterSave, _after_save))
         _callbacks.append(om.MSceneMessage.addCallback(om.MSceneMessage.kAfterOpen, _after_open))
@@ -495,6 +526,7 @@ def uninitializePlugin(obj):
         for callback_id in _callbacks:
             om.MMessage.removeCallback(callback_id)
         del _callbacks[:]
+        _deregister_display_filters()
         omr.MDrawRegistry.deregisterDrawOverrideCreator(MARKER_CLASSIFICATION, MARKER_REGISTRANT)
         plugin.deregisterNode(MARKER_NODE_ID)
         omr.MDrawRegistry.deregisterDrawOverrideCreator(DRAW_CLASSIFICATION, DRAW_REGISTRANT)

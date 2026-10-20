@@ -46,9 +46,11 @@
 
 ### 2026-10-20（Windows 11, Python 3.10.6）
 
-- **枠とマーカーをロケーターの表示から分けた（D-20、未リリース）:** `syncbridge_guide.py` の 2 つのノードに `excludeAsLocator`、
-  「表示」メニューに「SyncBridge 解像度の枠」「SyncBridge キーのマーカー」（`pluginDisplayFilter`）。mayapy 2023 / 2024 で
-  登録・解除・読み込み直しを確認。全テスト 252 件 OK。GUI でロケーターを切っても出るか、メニューで消えるかは未確認（H-MY-27）。
+- **枠とマーカーをロケーターの表示から分けた（D-20、未リリース）:** 「表示」メニューに「SyncBridge 解像度の枠」
+  「SyncBridge キーのマーカー」（`pluginDisplayFilter`）。最初の `excludeAsLocator` は Maya 2025 の GUI で効かなかったので、
+  2 つのノードをプラグインのシェイプ（`MPxSurfaceShape` + `excludeAsPluginShape`）に変えた。テスト用プラグインで
+  Maya 2025 の GUI で効くことを利用者が確認。本番のプラグインは mayapy 2023 / 2024 で、表示・保存時の取り外し・
+  保存後の取り消し・開き直し・解除を確認。全テスト 252 件 OK。本番のプラグインの GUI での確認は次のリリースの前に（H-MY-27）。
 
 - **0.1.6 をリリース（利用者の判断、タグ v0.1.6、SHA-256 3a4d3c20…）。** GUI の Maya / AE での確認がまだのもの:
   キーのマーカーのビューの表示（すべてのビュー、H-MY-24 / 26）とタイムスライダーの見え方、AE からの送信、Qt の確認ダイアログ、

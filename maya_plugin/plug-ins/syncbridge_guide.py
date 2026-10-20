@@ -1,6 +1,6 @@
 """SyncBridge comp guide: draws the AE comp's frame inside Maya's resolution gate (D-16).
 
-A locator node (syncBridgeCompGuide) in the world, linked to a camera by a connection
+A plug-in shape node (syncBridgeCompGuide; a locator until D-20) in the world, linked to a camera by a connection
     cameraShape.worldMatrix[0] -> syncBridgeCompGuide.cameraMatrix
 Viewport 2.0 only; it is never rendered. It draws only in views that look through its
 camera. The frame is computed by syncbridge.core.comp_guide from the camera,
@@ -13,6 +13,7 @@ drawn; the same guide in the world is drawn). Checked on the user's PC, 2026-10-
 
 Status (docs/PHASE0_RESEARCH.md):
     H-MY-19  MPxLocatorNode + MPxDrawOverride (Python API 2.0) draw in Maya 2023-2025
+             (now MPxSurfaceShape + the same draw override, D-20 / H-MY-27)
     H-MY-20  the computed resolution gate matches MFnCamera.getRenderingFrustum (perspective,
              all film fits, mayapy 2024); not yet compared on screen
 Node ID 0x0007F5B0 is in the range Autodesk leaves for in-house plug-ins.
@@ -59,7 +60,7 @@ def maya_useNewAPI():
     """Tells Maya this plug-in uses the Python API 2.0."""
 
 
-class CompGuideNode(omui.MPxLocatorNode):
+class CompGuideNode(om.MPxSurfaceShape):
     comp_width = None
     comp_height = None
     comp_name = None
@@ -89,8 +90,8 @@ class CompGuideNode(omui.MPxLocatorNode):
                      CompGuideNode.comp_name, CompGuideNode.camera_matrix):
             om.MPxNode.addAttribute(attr)
 
-    def excludeAsLocator(self):
-        return True           # own Show menu item, not "Locators" (see DISPLAY_FILTERS)
+    def excludeAsPluginShape(self):
+        return True           # own Show menu item, not "Plugin Shapes" (see DISPLAY_FILTERS)
 
     def isBounded(self):
         # Unbounded: never culled. The frame moves with the camera, but Viewport 2.0 kept the
@@ -298,7 +299,7 @@ class CompGuideDrawOverride(omr.MPxDrawOverride):
 
 
 # ---- key markers overlay (D-18) -------------------------------------------------------------
-# A second locator: shows "AE キー 3/8  素材 36f" in the top-left corner of all views while the
+# A second plug-in shape: shows "AE キー 3/8  素材 36f" in the top-left corner of all views while the
 # current frame is on an AE key. Drawn in screen space (2D), so it needs no camera. The markers
 # are read from the scene's syncBridgeKeyMarkers network node on every draw (no connection:
 # a new transfer replaces that node, and an undo brings the old one back).
@@ -315,7 +316,7 @@ MARKER_DATA_NODE = "syncBridgeKeyMarkers"      # syncbridge_maya.key_markers.DAT
 _parsed = {"text": None, "markers": []}
 
 
-class KeyMarkerNode(omui.MPxLocatorNode):
+class KeyMarkerNode(om.MPxSurfaceShape):
     @staticmethod
     def creator():
         return KeyMarkerNode()
@@ -324,8 +325,8 @@ class KeyMarkerNode(omui.MPxLocatorNode):
     def initialize():
         pass
 
-    def excludeAsLocator(self):
-        return True           # own Show menu item, not "Locators" (see DISPLAY_FILTERS)
+    def excludeAsPluginShape(self):
+        return True           # own Show menu item, not "Plugin Shapes" (see DISPLAY_FILTERS)
 
     def isBounded(self):
         return False          # screen-space overlay, never culled
@@ -430,10 +431,21 @@ class KeyMarkerDrawOverride(omr.MPxDrawOverride):
             _warn_once("SyncBridge key markers: drawing failed: %s" % exc)
 
 
-# Show menu (D-20): users often hide locators, so the guide and the marker overlay leave the
-# "Locators" filter (excludeAsLocator) and get their own items in each view's Show menu.
-# H-MY-27: excludeAsLocator and pluginDisplayFilter exist in mayapy 2023 / 2024; not yet
-# checked in the GUI that the items appear and hide only these nodes.
+# Show menu (D-20): users often hide locators, so the guide and the marker overlay are plug-in
+# shapes, not locators, leave the "Plugin Shapes" filter (excludeAsPluginShape) and get their own
+# items in each view's Show menu (pluginDisplayFilter). H-MY-27, Maya 2025 GUI (user's PC,
+# 2026-10-20, test plug-in): a locator with excludeAsLocator still hid with "Locators"; a
+# surface shape with excludeAsPluginShape stayed and hid with its own item only.
+
+
+class GuideShapeUI(omui.MPxSurfaceShapeUI):
+    """Required by registerShape; all drawing is in the Viewport 2.0 draw overrides."""
+
+    @staticmethod
+    def creator():
+        return GuideShapeUI()
+
+
 DISPLAY_FILTERS = (
     ("syncBridgeCompGuideFilter", u"SyncBridge 解像度の枠", DRAW_CLASSIFICATION),
     ("syncBridgeKeyMarkerFilter", u"SyncBridge キーのマーカー", MARKER_CLASSIFICATION),
@@ -502,12 +514,12 @@ def initializePlugin(obj):
     try:
         plugin = om.MFnPlugin(obj, "SyncBridge", "1.1", "Any")
         _import_core(plugin.loadPath())
-        plugin.registerNode(NODE_NAME, NODE_ID, CompGuideNode.creator, CompGuideNode.initialize,
-                            om.MPxNode.kLocatorNode, DRAW_CLASSIFICATION)
+        plugin.registerShape(NODE_NAME, NODE_ID, CompGuideNode.creator, CompGuideNode.initialize,
+                             GuideShapeUI.creator, DRAW_CLASSIFICATION)
         omr.MDrawRegistry.registerDrawOverrideCreator(DRAW_CLASSIFICATION, DRAW_REGISTRANT,
                                                       CompGuideDrawOverride.creator)
-        plugin.registerNode(MARKER_NODE_NAME, MARKER_NODE_ID, KeyMarkerNode.creator, KeyMarkerNode.initialize,
-                            om.MPxNode.kLocatorNode, MARKER_CLASSIFICATION)
+        plugin.registerShape(MARKER_NODE_NAME, MARKER_NODE_ID, KeyMarkerNode.creator, KeyMarkerNode.initialize,
+                             GuideShapeUI.creator, MARKER_CLASSIFICATION)
         omr.MDrawRegistry.registerDrawOverrideCreator(MARKER_CLASSIFICATION, MARKER_REGISTRANT,
                                                       KeyMarkerDrawOverride.creator)
         _register_display_filters()

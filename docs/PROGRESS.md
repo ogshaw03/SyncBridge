@@ -46,6 +46,10 @@
 
 ### 2026-10-20（Windows 11, Python 3.10.6）
 
+- **0.1.7 の配布用 zip を作成**（`dist\SyncBridge-0.1.7.zip`、45.7MB、SHA-256 153f9d68…）。ビルド中のテスト 252 件 OK、
+  zip に新しいプラグイン（`registerShape` / `excludeAsPluginShape`）とバージョン 0.1.7 が入っていることを確認。
+  コミット・タグ・GitHub のリリースは未実施。
+
 - **枠とマーカーをロケーターの表示から分けた（D-20、未リリース）:** 「表示」メニューに「SyncBridge 解像度の枠」
   「SyncBridge キーのマーカー」（`pluginDisplayFilter`）。最初の `excludeAsLocator` は Maya 2025 の GUI で効かなかったので、
   2 つのノードをプラグインのシェイプ（`MPxSurfaceShape` + `excludeAsPluginShape`）に変えた。テスト用プラグインで

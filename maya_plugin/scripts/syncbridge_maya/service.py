@@ -7,6 +7,8 @@ thread through maya.utils.executeDeferred (H-MY-14):
     apply.request  -> exchange.apply_envelope(...)   (confirmation dialog, backup, undo, readback)
     guide.apply.request -> comp_guide.show(...)      (AE comp frame in the active view, D-16)
     markers.apply.request -> key_markers.apply(...)  (AE key timings as markers, D-18)
+    settings.export.request / settings.apply.request -> scene_settings (FPS, ranges, D-21)
+    time.sync.state / time.set -> time_sync (time slider sync, D-22)
 
     import syncbridge_maya.service as svc
     svc.connect(start_server=True)
@@ -22,11 +24,22 @@ from maya import cmds
 from syncbridge import protocol
 from syncbridge.client import launcher
 from syncbridge.client.sync_client import ConnectError, SyncClient
+from syncbridge.core import time_sync as core_time_sync
 
-from . import comp_guide, exchange, key_markers
+from . import comp_guide, exchange, key_markers, scene_settings
+from .time_sync import MayaTimeSync
 
 _client: Optional[SyncClient] = None
 _listeners: List[Callable[[str, object], None]] = []
+_time_state = {"enabled": False, "follow_playback": False, "by": None}
+
+
+def _send_time(t: float) -> bool:
+    # sent_at: the receiving app measures the delay (same PC, same clock)
+    return _client is not None and _client.send("time.update", {"t": t, "sent_at": core_time_sync.now_ms()})
+
+
+_timesync = MayaTimeSync(_send_time)
 
 # The live client is also remembered in __main__, which survives reloading these
 # modules. Reloading (e.g. deleting syncbridge* from sys.modules and importing again)
@@ -80,6 +93,9 @@ def _on_event(event: str, payload) -> None:
         print("SyncBridge: connected as %s" % payload.get("client_id"))
     elif event == "disconnected":
         print("SyncBridge: disconnected (%s)" % payload)
+        _timesync.stop()
+        _time_state.update(enabled=False, by=None)
+        _notify("time_sync", dict(_time_state))
     elif event == "error":
         cmds.warning("SyncBridge: %s" % payload.get("message"))
     _notify(event, payload)
@@ -130,6 +146,37 @@ def _handle_markers(msg: dict) -> dict:
     return result
 
 
+def _handle_settings_export(msg: dict) -> dict:
+    return {"settings": scene_settings.read()}
+
+
+def _handle_settings_apply(msg: dict) -> dict:
+    """Change the scene settings as the hub planned (after the user confirms); the panel hears about it."""
+    data = msg["data"]
+    try:
+        result = scene_settings.apply(data["plan"], data.get("message") or "")
+    except Exception as exc:
+        _notify("settings_applied", {"status": "failed", "message": str(exc)})
+        raise
+    _notify("settings_applied", dict(result, changes=data["plan"].get("changes", [])))
+    return result
+
+
+def _on_time_state(msg: dict) -> None:
+    data = msg["data"]
+    _time_state.update(enabled=bool(data["enabled"]), follow_playback=bool(data.get("follow_playback")),
+                       by=data.get("by"))
+    _timesync.set_state(_time_state["enabled"], _time_state["follow_playback"])
+    _notify("time_sync", dict(_time_state))
+    if not _time_state["enabled"] and _timesync.last_summary:
+        _notify("time_sync_stats", _timesync.last_summary)
+        _timesync.last_summary = ""
+
+
+def _on_time_set(msg: dict) -> None:
+    _timesync.apply_time(float(msg["data"]["t"]), msg["data"].get("sent_at"))
+
+
 def client() -> Optional[SyncClient]:
     return _client
 
@@ -154,7 +201,10 @@ def connect(start_server: bool = True, port: Optional[int] = None) -> dict:
     _client = SyncClient(
         "maya",
         handlers={"export.request": _handle_export, "apply.request": _handle_apply,
-                  "guide.apply.request": _handle_guide, "markers.apply.request": _handle_markers},
+                  "guide.apply.request": _handle_guide, "markers.apply.request": _handle_markers,
+                  "settings.export.request": _handle_settings_export,
+                  "settings.apply.request": _handle_settings_apply},
+        notices={"time.sync.state": _on_time_state, "time.set": _on_time_set},
         dispatch=maya.utils.executeDeferred,
         on_event=_on_event,
         version=cmds.about(version=True),
@@ -207,6 +257,42 @@ def send_to_ae(options: Optional[dict] = None, callback=None) -> str:
 def receive_from_ae(options: Optional[dict] = None, callback=None) -> str:
     """AE -> Maya: the selected AE layer's Time Remap replaces the Scene Time Warp."""
     return _transfer("ae2maya", options, callback)
+
+
+def send_settings(direction: str, items: List[str], origin: float, callback=None) -> str:
+    """Scene settings Maya -> AE ("maya2ae") or AE -> Maya ("ae2maya"); the target app confirms."""
+    if not is_connected():
+        raise ConnectError("not connected to the SyncBridge server")
+
+    def done(reply: dict) -> None:
+        if reply["kind"] == "error":
+            cmds.warning("SyncBridge: settings %s failed: %s" % (direction, reply["data"].get("message")))
+        else:
+            print("SyncBridge: settings %s %s" % (direction, reply["data"].get("status")))
+        _notify("settings_result", reply)
+        if callback:
+            callback(reply)
+
+    return _client.request("settings.request", {"direction": direction, "items": list(items),
+                                                "options": {"origin": origin}}, done)
+
+
+def time_sync_state() -> dict:
+    return dict(_time_state)
+
+
+def set_time_origin(origin: float) -> None:
+    """The Origin frame used to convert Maya frames to AE comp time (the panel's field)."""
+    _timesync.origin = float(origin)
+
+
+def set_time_sync(enabled: bool, follow_playback: bool = False, lead: bool = True) -> None:
+    """Switch the shared time slider sync; when switching it on, Maya's time leads (lead=True)."""
+    if not is_connected():
+        raise ConnectError("not connected to the SyncBridge server")
+    _client.send("time.sync", {"enabled": bool(enabled), "follow_playback": bool(follow_playback)})
+    if enabled and lead:
+        _timesync.push_current()
 
 
 # A reload of this module must not leave the previous connection behind.

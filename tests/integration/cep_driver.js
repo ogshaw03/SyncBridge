@@ -6,7 +6,10 @@
  *   node cep_driver.js <port> <token> <export.json|ERROR> request <maya2ae|ae2maya>
  *   node cep_driver.js <port> <token> <export.json|ERROR> guide     (comp guide; ERROR = no comp)
  *   node cep_driver.js <port> <token> <export.json|ERROR> markers   (key markers; ERROR = no layer)
+ *   node cep_driver.js <port> <token> <export.json|ERROR> settings <maya2ae|ae2maya>   (D-21)
+ *   node cep_driver.js <port> <token> <export.json|ERROR> timesync  (D-22: switch on, then scrub to 2 s)
  *
+ * The fake host keeps one comp (COMP) for the scene settings and the current time.
  * Prints one JSON object per line: {event: "connected"|"peers"|"apply"|"result"|"log", ...}.
  * "serve" runs until stdin closes.
  */
@@ -17,6 +20,11 @@ const SBPanelClient = require(path.join(__dirname, '..', '..', 'after_effects', 
 
 const [port, token, exportFile, mode, direction] = process.argv.slice(2);
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
+
+const COMP = {
+    comp: 'Comp 1', frameRate: 24, frameDuration: 1 / 24, duration: 4, displayStartTime: 0,
+    workAreaStart: 0, workAreaDuration: 4, pixelAspect: 1, width: 1920, height: 1080, time: 0
+};
 
 const host = {
     call(name, args, callback) {
@@ -43,6 +51,19 @@ const host = {
                 } else {
                     callback({ name: 'Comp 1', width: 1920, height: 1080, pixelAspect: 1 });
                 }
+            } else if (name === 'sceneSettings') {
+                callback(Object.assign({}, COMP));
+            } else if (name === 'applySceneSettings') {
+                const plan = JSON.parse(args[0]);
+                out({ event: 'applySettings', apply: plan.apply, message: args[1] });
+                Object.assign(COMP, plan.apply);
+                callback({ status: 'applied', backup: '(test)', after: Object.assign({}, COMP) });
+            } else if (name === 'compTime') {
+                callback({ time: COMP.time, frameDuration: COMP.frameDuration, comp: COMP.comp });
+            } else if (name === 'setTime') {
+                COMP.time = Number(args[0]);
+                out({ event: 'setTime', t: COMP.time });
+                callback({ time: COMP.time });
             } else if (name === 'applyEnvelope') {
                 const env = JSON.parse(args[0]);
                 out({ event: 'apply', keys: env.data.keys.length, kind: env.kind, origin: args[1] });
@@ -71,7 +92,30 @@ const client = new SBPanelClient({
 });
 client.connect({ port: Number(port), token });
 
-if (mode === 'markers') {
+const whenMaya = (fn) => {
+    const timer = setInterval(() => {
+        if (client.connected() && client.hasPeer('maya')) { clearInterval(timer); fn(); }
+    }, 50);
+};
+
+if (mode === 'settings') {
+    whenMaya(() => {
+        client.sendSettings(direction, ['fps', 'playback_range', 'animation_range', 'pixel_aspect'], { origin: 1 },
+            (reply) => {
+                out({ event: 'result', reply });
+                client.disconnect();
+                setTimeout(() => process.exit(0), 100);
+            });
+    });
+} else if (mode === 'timesync') {
+    whenMaya(() => {
+        client.setTimeSync(true, false);
+        out({ event: 'switched' });
+        setTimeout(() => { COMP.time = 2; out({ event: 'scrubbed', t: 2 }); }, 600);
+    });
+    process.stdin.on('data', () => {});
+    process.stdin.on('end', () => { client.disconnect(); setTimeout(() => process.exit(0), 100); });
+} else if (mode === 'markers') {
     const timer = setInterval(() => {
         if (client.connected() && client.hasPeer('maya')) {
             clearInterval(timer);

@@ -29,7 +29,7 @@ GRADIENT = "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 %s, stop:1 %s)" % (TE
 # hub state -> dot color (hubs.RUNNING, NOT_RESPONDING, STALE, UNKNOWN)
 STATE_COLORS = {"running": TEAL, "not_responding": AMBER, "stale": "#64748b", "unknown": "#a78bfa"}
 # transfer status -> result color
-RESULT_COLORS = {"applied": TEAL, "running": BLUE, "cancelled": MUTED, "failed": AMBER, "error": RED}
+RESULT_COLORS = {"applied": TEAL, "running": BLUE, "cancelled": MUTED, "unchanged": MUTED, "failed": AMBER, "error": RED}
 # log level -> text color
 LEVEL_COLORS = {"DEBUG": "#64748b", "INFO": "#9fb0c6", "WARNING": AMBER, "ERROR": RED, "CRITICAL": RED}
 

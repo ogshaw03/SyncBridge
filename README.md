@@ -16,6 +16,8 @@ Maya の **Scene Time Warp** と After Effects の **Time Remap** を、ボタ�
 | タイムワープの保存・復元・範囲変更 | Maya のパネルで、Scene Time Warp を名前を付けて保存、自動バックアップからの復元、形を保ったままの伸縮 |
 | 解像度の枠 | AE のコンポの大きさ（または Maya のパネルで入れた大きさ）の枠を、Maya のカメラのビューに表示。レンダーには写らない。ビューの「表示」メニューで、ロケーターとは別に出し入れできる（0.1.7） |
 | キーのマーカー | AE のタイムリマップのキーのタイミングを、Maya のタイムスライダーのブックマークとビューの表示に。シーンに保存され、AE がなくても表示される（0.1.6） |
+| シーン設定の転送 | FPS・再生範囲・アニメーション範囲・ピクセル縦横比を、Maya のシーン ⇔ AE のアクティブなコンプで合わせる（両方向、確認・バックアップ・取り消し 1 回） |
+| タイムスライダーの同期 | Maya と AE のどちらで時間を動かしても、もう片方が追従する（再生中の追従は切り替え可能） |
 | SyncBridge Monitor | 動作中のサーバー、接続中のアプリ、転送の履歴、ログの確認。サーバーの停止・強制終了、アプリの切断 |
 | かんたん導入 | `Install.bat` だけで、サーバー、モニター、AE のパネル、Maya のシェルフの「SyncBridge」タブまで入る（管理者権限不要） |
 
@@ -73,7 +75,7 @@ py -3.10 -m venv .venv
 ## ドキュメント
 
 - [docs/SPEC.md](docs/SPEC.md) — 仕様（時間の用語、変換ルール、安全ルール）
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 構成と設計判断（D-1〜D-20）
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 構成と設計判断（D-1〜D-22）
 - [docs/PLATFORM_DESIGN.md](docs/PLATFORM_DESIGN.md) — ハブ・ランチャー・モニター・アップデーターの設計
 - [docs/PHASE0_RESEARCH.md](docs/PHASE0_RESEARCH.md) — API の制約、仮説と検証状態、リスク、検証手順
 - [docs/PHASE1_PLAN.md](docs/PHASE1_PLAN.md) — Phase 1（通信基盤）の計画と確認

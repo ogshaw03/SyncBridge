@@ -1,5 +1,8 @@
 """SyncBridge comp guide: draws the AE comp's frame inside Maya's resolution gate (D-16).
 
+The same plug-in also draws the key markers overlay (D-18) and has the undoable command that
+applies scene settings from AE (syncBridgeApplySettings, D-21).
+
 A plug-in shape node (syncBridgeCompGuide; a locator until D-20) in the world, linked to a camera by a connection
     cameraShape.worldMatrix[0] -> syncBridgeCompGuide.cameraMatrix
 Viewport 2.0 only; it is never rendered. It draws only in views that look through its
@@ -466,6 +469,86 @@ def _deregister_display_filters():
             cmds.pluginDisplayFilter(name, deregister=True)
 
 
+# ---- scene settings command (D-21) ------------------------------------------------------------
+# syncBridgeApplySettings '<json>' changes FPS, ranges, pixel aspect and the current frame as ONE
+# undoable step. In Maya 2023 an undo chunk did not restore playbackOptions (mayapy, 2026-10-20);
+# this command keeps the old values itself and puts them all back on undo (H-MY-28).
+# The commands it runs are not recorded for undo on their own (one Ctrl+Z is enough).
+SETTINGS_COMMAND = "syncBridgeApplySettings"
+
+
+def _read_settings() -> dict:
+    import maya.cmds as cmds
+    return {
+        "time_unit": cmds.currentUnit(q=True, time=True),
+        "animation_range": [cmds.playbackOptions(q=True, animationStartTime=True),
+                            cmds.playbackOptions(q=True, animationEndTime=True)],
+        "playback_range": [cmds.playbackOptions(q=True, minTime=True), cmds.playbackOptions(q=True, maxTime=True)],
+        "pixel_aspect": cmds.getAttr("defaultResolution.pixelAspect"),
+        "device_aspect": cmds.getAttr("defaultResolution.deviceAspectRatio"),
+        "current_frame": cmds.currentTime(q=True),
+    }
+
+
+def _write_settings(values: dict) -> None:
+    import maya.cmds as cmds
+    recording = cmds.undoInfo(q=True, state=True)
+    if recording:
+        cmds.undoInfo(stateWithoutFlush=False)
+    try:
+        if "time_unit" in values:
+            # keys stay at their frame numbers (the user's choice, D-21); the ranges are set below
+            cmds.currentUnit(time=values["time_unit"], updateAnimation=False)
+        ranges = {}
+        if "animation_range" in values:
+            ranges["animationStartTime"], ranges["animationEndTime"] = values["animation_range"]
+        if "playback_range" in values:
+            ranges["minTime"], ranges["maxTime"] = values["playback_range"]
+        if ranges:
+            cmds.playbackOptions(**ranges)
+        if "pixel_aspect" in values:
+            cmds.setAttr("defaultResolution.pixelAspect", values["pixel_aspect"])
+        if "device_aspect" in values:
+            cmds.setAttr("defaultResolution.deviceAspectRatio", values["device_aspect"])
+        if "current_frame" in values:
+            cmds.currentTime(values["current_frame"], update=True)
+    finally:
+        if recording:
+            cmds.undoInfo(stateWithoutFlush=True)
+
+
+class ApplySettingsCommand(om.MPxCommand):
+    def __init__(self):
+        super().__init__()
+        self.old = None
+        self.new = None
+
+    @staticmethod
+    def creator():
+        return ApplySettingsCommand()
+
+    @staticmethod
+    def syntax():
+        syntax = om.MSyntax()
+        syntax.addArg(om.MSyntax.kString)
+        return syntax
+
+    def doIt(self, args):
+        text = om.MArgDatabase(self.syntax(), args).commandArgumentString(0)
+        self.new = json.loads(text)
+        self.old = _read_settings()
+        self.redoIt()
+
+    def redoIt(self):
+        _write_settings(self.new)
+
+    def undoIt(self):
+        _write_settings(self.old)
+
+    def isUndoable(self):
+        return True
+
+
 # Saving: take the guides and the marker overlay out just before and put them back just after,
 # so the file has no `requires "syncbridge_guide.py"` (setDoNotWrite alone keeps the nodes out
 # but not the requires line, Maya 2024; H-MY-22). The work is in syncbridge_maya.
@@ -523,6 +606,7 @@ def initializePlugin(obj):
         omr.MDrawRegistry.registerDrawOverrideCreator(MARKER_CLASSIFICATION, MARKER_REGISTRANT,
                                                       KeyMarkerDrawOverride.creator)
         _register_display_filters()
+        plugin.registerCommand(SETTINGS_COMMAND, ApplySettingsCommand.creator, ApplySettingsCommand.syntax)
         _callbacks.append(om.MSceneMessage.addCallback(om.MSceneMessage.kBeforeSave, _before_save))
         _callbacks.append(om.MSceneMessage.addCallback(om.MSceneMessage.kAfterSave, _after_save))
         _callbacks.append(om.MSceneMessage.addCallback(om.MSceneMessage.kAfterOpen, _after_open))
@@ -538,6 +622,7 @@ def uninitializePlugin(obj):
         for callback_id in _callbacks:
             om.MMessage.removeCallback(callback_id)
         del _callbacks[:]
+        plugin.deregisterCommand(SETTINGS_COMMAND)
         _deregister_display_filters()
         omr.MDrawRegistry.deregisterDrawOverrideCreator(MARKER_CLASSIFICATION, MARKER_REGISTRANT)
         plugin.deregisterNode(MARKER_NODE_ID)

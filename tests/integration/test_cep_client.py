@@ -17,6 +17,8 @@ from syncbridge.core import envelope
 from .test_server import HAVE_SERVER, TOKEN, ServerFixture, _maya_after, ae_export, maya_export
 
 DRIVER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cep_driver.js")
+MAYA_SETTINGS = {"fps": [24, 1], "time_unit": "film", "playback_range": [11, 34], "animation_range": [1, 120],
+                 "pixel_aspect": 1.0, "resolution": [1920, 1080], "current_frame": 1.0}
 
 
 def _node_ok():
@@ -41,7 +43,13 @@ class CepClientTest(ServerFixture):
             "apply.request": self._maya_apply,
             "guide.apply.request": self._maya_guide,
             "markers.apply.request": self._maya_markers,
-        })
+            "settings.export.request": lambda msg: {"settings": dict(MAYA_SETTINGS)},
+            "settings.apply.request": self._maya_settings,
+        }, notices={"time.set": lambda msg: self.times.append(msg["data"]["t"]),
+                    "time.sync.state": lambda msg: self.states.append(msg["data"])})
+        self.settings_plans = []
+        self.times = []
+        self.states = []
         self.markers = []
         self.guides = []
         self.maya.connect(port=self.port, token=TOKEN)
@@ -74,6 +82,13 @@ class CepClientTest(ServerFixture):
         self.markers.append(msg["data"])
         return {"status": "applied", "count": len(msg["data"]["export"]["data"]["keys"]),
                 "first": "1001", "last": "1097", "bookmarks": 4}
+
+    def _maya_settings(self, msg):
+        plan = msg["data"]["plan"]
+        self.settings_plans.append(msg["data"])
+        return {"status": "applied", "after": dict(MAYA_SETTINGS, **{k: v for k, v in plan["apply"].items()
+                                                                     if k in MAYA_SETTINGS},
+                                                  fps=[24, 1])}
 
     def driver(self, *args, export=None):
         p = subprocess.Popen(["node", DRIVER, str(self.port), TOKEN, export or self.export_path] + list(args),
@@ -165,6 +180,73 @@ class CepClientTest(ServerFixture):
                          "After Effects: コンポ「Comp 1」でレイヤーを 1 つだけ選択してから、もう一度送ってください（現在 0 個選択中）。")
         logs = [e["text"] for e in events if e["event"] == "log"]
         self.assertTrue(any("レイヤーを 1 つだけ選択" in t for t in logs), logs)
+
+    def test_panel_receives_scene_settings_from_maya(self):
+        # D-21: Maya's settings change the comp after the confirmation in AE.
+        p, events = self.driver("serve")
+        self.assertTrue(self.wait(lambda: any(x["app"] == "ae" for x in self.maya.peers)))
+        results = []
+        self.maya.request("settings.request", {"direction": "maya2ae", "options": {"origin": 1}}, results.append)
+        self.assertTrue(self.wait(lambda: results))
+        data = results[0]["data"]
+        self.assertEqual(data["status"], "applied", results[0])
+        self.assertTrue(data["readback"]["passed"])
+        applied = [e for e in events if e["event"] == "applySettings"][0]
+        self.assertAlmostEqual(applied["apply"]["duration"], 5.0)
+        self.assertAlmostEqual(applied["apply"]["displayStartTime"], 1 / 24.0)
+        self.assertIn(u"アニメーション範囲: 0〜95 → 1〜120", applied["message"])   # Japanese survives jsxCall
+
+    def test_panel_requests_scene_settings_to_maya(self):
+        p, events = self.driver("settings", "ae2maya")
+        self.assertEqual(p.wait(30), 0, events)
+        reply = [e for e in events if e["event"] == "result"][0]["reply"]
+        self.assertEqual(reply["kind"], "settings.result", reply)
+        self.assertEqual(reply["data"]["status"], "applied")
+        self.assertEqual(self.settings_plans[0]["plan"]["apply"]["animation_range"], [1.0, 96.0])
+
+    def test_time_slider_sync_with_maya(self):
+        # D-22: AE switches it on and leads; a scrub in AE reaches Maya; Maya's time moves AE
+        # and is not sent back.
+        p, events = self.driver("timesync")
+        self.assertTrue(self.wait(lambda: any(s["enabled"] for s in self.states)))
+        self.assertTrue(self.wait(lambda: 0.0 in self.times), self.times)       # AE's time when switched on
+        self.assertTrue(self.wait(lambda: 2.0 in self.times), (self.times, events))   # the scrub
+        self.maya.send("time.update", {"t": 1.5})
+        self.assertTrue(self.wait(lambda: any(e["event"] == "setTime" and e["t"] == 1.5 for e in events)))
+        time.sleep(0.6)                                                       # a few polls later
+        self.assertNotIn(1.5, self.times)
+        self.maya.send("time.sync", {"enabled": False})
+        self.assertTrue(self.wait(lambda: not self.states[-1]["enabled"]))
+
+    def test_time_reads_pause_while_maya_leads(self):
+        # 2026-10-23: reads every 0.05 s, but none for 0.3 s after Maya moved AE (they would queue
+        # in front of setTime in AE's one-at-a-time evalScript).
+        script = (
+            "const C = require(%r);"
+            "let now = 1000, tick = null; const calls = [];"
+            "const host = {call(name, args, cb) { calls.push(name); cb(name === 'setTime' ? {time: Number(args[0])}"
+            "  : {time: 0, frameDuration: 1 / 24}); }};"
+            "const c = new C({host, WebSocketImpl: null, now: () => now,"
+            "  setInterval: (fn, ms) => { tick = fn; return 1; }, clearInterval: () => {}});"
+            "c._send = () => {};"
+            "c._setTimeState({enabled: true, follow_playback: false, by: 'maya-1'});"
+            "tick(); const first = calls.filter(n => n === 'compTime').length;"
+            "c._applyTime(1.0); now += 100; tick();"
+            "const during = calls.filter(n => n === 'compTime').length;"
+            "now += C.QUIET_AFTER_SET_MS; tick();"
+            "const after = calls.filter(n => n === 'compTime').length;"
+            "const logs = []; c.onLog = (t) => logs.push(t);"
+            "c._setTimeState({enabled: false, follow_playback: false, by: 'maya-1'});"
+            "process.stdout.write(JSON.stringify([C.TIME_POLL_MS, first, during, after, logs]));"
+            % os.path.join(os.path.dirname(DRIVER), "..", "..", "after_effects", "panel", "js", "sbclient.js"))
+        out = subprocess.run(["node", "-e", script], capture_output=True, encoding="utf-8", timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        result = json.loads(out.stdout)
+        self.assertEqual(result[:4], [50, 1, 1, 2])
+        # switching off reports the measured delays (the fake host answers at once: 0 ms)
+        self.assertEqual(len(result[4]), 1)
+        self.assertIn(u"同期の計測（AE）: AE で時間を設定 平均 0 ms（最大 0、1 回）", result[4][0])
+        self.assertIn(u"読みに行った間隔 平均 400 ms", result[4][0])
 
     def test_user_message_fallbacks(self):
         script = (

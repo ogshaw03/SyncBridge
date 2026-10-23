@@ -158,3 +158,4 @@ source_time = (maya_out_frame − maya_output_origin_frame) / maya_fps × source
 | 現在フレーム | `currentTime` | `comp.time` |
 
 Phase 0 では Maya 側の読み取りだけを実装し、export に含めている（`scene_settings.py`）。
+Phase 2: FPS・再生範囲・アニメーション範囲・ピクセル縦横比の転送（D-21）と、現在フレームの同期（D-22）を実装。解像度とレンダー範囲は未実装。

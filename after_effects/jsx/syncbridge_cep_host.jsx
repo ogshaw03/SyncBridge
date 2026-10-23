@@ -99,11 +99,88 @@ var SBCep = (function () {
         } catch (e) { return fail(e); }
     }
 
+    // ---- scene settings (D-21) and time slider sync (D-22) ----------------------------------
+    // Not yet run in After Effects (docs/PHASE0_RESEARCH.md):
+    //   H-AE-21: setting comp.frameRate / duration / displayStartTime / workAreaStart /
+    //            workAreaDuration / pixelAspect inside one undo group; one undo restores them.
+    //   H-AE-22: displayStartTime only changes the frame numbers AE shows; comp.time, layer
+    //            times and Time Remap key times stay relative to the comp start (time 0).
+    //   H-AE-23: setting comp.time from the panel moves the current time indicator and the viewer.
+    function activeComp() {
+        var comp = app.project.activeItem;
+        if (!(comp instanceof CompItem)) {
+            throw SB.userError('Open a composition first (click its timeline).', 'no_comp');
+        }
+        return comp;
+    }
+
+    function settingsOf(comp) {
+        return {
+            comp: comp.name, frameRate: comp.frameRate, frameDuration: comp.frameDuration,
+            duration: comp.duration, displayStartTime: comp.displayStartTime,
+            workAreaStart: comp.workAreaStart, workAreaDuration: comp.workAreaDuration,
+            pixelAspect: comp.pixelAspect, width: comp.width, height: comp.height, time: comp.time
+        };
+    }
+
+    function sceneSettings() {
+        try {
+            return ok(settingsOf(activeComp()));
+        } catch (e) { return fail(e); }
+    }
+
+    // settings.apply.request: `planText` = the plan (core.scene_sync) as JSON text, `message` =
+    // the question in Japanese made by the hub (passed with \u escapes, see jsxCall).
+    function applySceneSettings(planText, message) {
+        try {
+            var comp = activeComp(), values = SBJSON.parse(planText).apply, stamp, backup;
+            if (!confirm(message)) { return ok({ status: 'cancelled' }); }
+            stamp = SB.isoNow().replace(/[:\-]/g, '').replace('+0000', '');
+            backup = new File(SB.backupFolder().fsName + '/settings_' + stamp + '.json');
+            SB.writeJSON(backup, { syncbridge: 'ae comp settings backup', settings: settingsOf(comp) });
+            app.beginUndoGroup('SyncBridge scene settings');
+            try {
+                if (values.frameRate !== undefined) { comp.frameRate = values.frameRate; }
+                if (values.workAreaStart !== undefined) { comp.workAreaStart = 0; }
+                if (values.duration !== undefined) { comp.duration = values.duration; }
+                if (values.displayStartTime !== undefined) { comp.displayStartTime = values.displayStartTime; }
+                if (values.workAreaDuration !== undefined) { comp.workAreaDuration = values.workAreaDuration; }
+                if (values.workAreaStart !== undefined) { comp.workAreaStart = values.workAreaStart; }
+                if (values.pixelAspect !== undefined) { comp.pixelAspect = values.pixelAspect; }
+            } finally {
+                app.endUndoGroup();
+            }
+            return ok({ status: 'applied', backup: backup.fsName, after: settingsOf(comp) });
+        } catch (e) { return fail(e); }
+    }
+
+    // Polled by the panel while the time slider sync is on: {time, frameDuration, comp} or {time: null}.
+    function compTime() {
+        try {
+            var comp = app.project.activeItem;
+            if (!(comp instanceof CompItem)) { return ok({ time: null }); }
+            return ok({ time: comp.time, frameDuration: comp.frameDuration, comp: comp.name });
+        } catch (e) { return fail(e); }
+    }
+
+    function setTime(t) {
+        try {
+            var comp = app.project.activeItem;
+            if (!(comp instanceof CompItem)) { return ok({ time: null }); }
+            comp.time = Number(t);
+            return ok({ time: comp.time });
+        } catch (e) { return fail(e); }
+    }
+
     return {
         readSession: readSession,
         info: info,
         exportSelected: exportSelected,
         applyEnvelope: applyEnvelope,
-        compInfo: compInfo
+        compInfo: compInfo,
+        sceneSettings: sceneSettings,
+        applySceneSettings: applySceneSettings,
+        compTime: compTime,
+        setTime: setTime
     };
 }());

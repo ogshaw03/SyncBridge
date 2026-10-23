@@ -20,6 +20,7 @@ except ImportError:
     from shiboken2 import wrapInstance
 
 from syncbridge import __version__, protocol
+from syncbridge.core import scene_sync
 from . import comp_guide, key_markers, service, snapshots
 
 WINDOW_NAME = "SyncBridgePanel"
@@ -110,6 +111,30 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.clear_guide_btn.setToolTip(u"表示中の解像度の枠をビューから消します")
         self.clear_guide_btn.clicked.connect(self.clear_guide)
 
+        # scene settings (D-21) and time slider sync (D-22)
+        chosen = _saved_setting_items()
+        self.setting_checks = {}
+        for item in scene_sync.ITEMS:
+            check = QtWidgets.QCheckBox(scene_sync.ITEM_LABELS[item])
+            check.setChecked(item in chosen)
+            check.toggled.connect(self.save_setting_items)
+            self.setting_checks[item] = check
+        self.settings_to_ae = QtWidgets.QPushButton(u"設定  Maya → AE")
+        self.settings_to_ae.setToolTip(u"チェックした設定を、AE のアクティブなコンプに送ります（AE で確認してから適用）")
+        self.settings_from_ae = QtWidgets.QPushButton(u"設定  AE → Maya")
+        self.settings_from_ae.setToolTip(u"AE のアクティブなコンプのチェックした設定を、このシーンに適用します（確認してから適用）")
+        self.settings_to_ae.clicked.connect(lambda: self.send_settings("maya2ae"))
+        self.settings_from_ae.clicked.connect(lambda: self.send_settings("ae2maya"))
+        self.time_sync_check = QtWidgets.QCheckBox(u"タイムスライダーを同期")
+        self.time_sync_check.setToolTip(u"Maya と AE のどちらで時間を動かしても、もう片方が同じ時間に移ります\n"
+                                        u"（Origin frame = AE のコンプの 0 秒。AE のパネルと共通のスイッチ）")
+        self.follow_check = QtWidgets.QCheckBox(u"再生中も追従")
+        self.follow_check.setToolTip(u"オフ: 再生中は送らず、止めた位置だけを AE に送ります")
+        self.time_sync_check.clicked.connect(self.toggle_time_sync)
+        self.follow_check.clicked.connect(self.toggle_follow)
+        self.origin.valueChanged.connect(service.set_time_origin)
+        service.set_time_origin(self.origin.value())
+
         self.markers_label = QtWidgets.QLabel()
         self.markers_label.setWordWrap(True)
         self.clear_markers_btn = QtWidgets.QPushButton(u"マーカーを消す")
@@ -137,6 +162,22 @@ class SyncBridgePanel(QtWidgets.QDialog):
         layout.addWidget(self.peer_label)
         layout.addLayout(form)
         layout.addLayout(buttons)
+        sync_box = QtWidgets.QGroupBox(u"シーン設定と時間の同期")
+        sync_layout = QtWidgets.QVBoxLayout(sync_box)
+        checks = QtWidgets.QGridLayout()
+        for index, item in enumerate(scene_sync.ITEMS):
+            checks.addWidget(self.setting_checks[item], index // 2, index % 2)
+        settings_row = QtWidgets.QHBoxLayout()
+        settings_row.addWidget(self.settings_to_ae)
+        settings_row.addWidget(self.settings_from_ae)
+        time_row = QtWidgets.QHBoxLayout()
+        time_row.addWidget(self.time_sync_check)
+        time_row.addWidget(self.follow_check)
+        time_row.addStretch(1)
+        sync_layout.addLayout(checks)
+        sync_layout.addLayout(settings_row)
+        sync_layout.addLayout(time_row)
+        layout.addWidget(sync_box)
         warp_box = QtWidgets.QGroupBox("Scene Time Warp")
         warp_row = QtWidgets.QHBoxLayout(warp_box)
         for button in (self.save_btn, self.restore_btn, self.retime_btn):
@@ -205,6 +246,63 @@ class SyncBridgePanel(QtWidgets.QDialog):
             return
         self.busy = True
         self.refresh()
+
+    # -- scene settings and time slider sync (D-21, D-22) ---------------------------------------
+    def setting_items(self):
+        return [item for item in scene_sync.ITEMS if self.setting_checks[item].isChecked()]
+
+    def save_setting_items(self, *_args):
+        cmds.optionVar(stringValue=(SETTINGS_ITEMS_VAR, ",".join(self.setting_items())))
+
+    def send_settings(self, direction: str):
+        items = self.setting_items()
+        if not items:
+            self.write(u"送る設定を 1 つ以上チェックしてください。")
+            return
+        try:
+            service.send_settings(direction, items, self.origin.value())
+        except Exception as exc:
+            self.write(u"設定を送れませんでした: %s" % exc)
+            return
+        self.write(u"設定 Maya → AE: After Effects で確認してください..." if direction == "maya2ae"
+                   else u"設定 AE → Maya: 確認ダイアログを待っています...")
+        self.busy = True
+        self.refresh()
+
+    def toggle_time_sync(self, checked):
+        try:
+            service.set_time_sync(checked, self.follow_check.isChecked())
+        except Exception as exc:
+            self.write(u"タイムスライダーの同期を切り替えられませんでした: %s" % exc)
+        self.refresh()
+
+    def toggle_follow(self, checked):
+        if service.time_sync_state()["enabled"]:
+            try:
+                service.set_time_sync(True, checked, lead=False)
+            except Exception as exc:
+                self.write(u"切り替えられませんでした: %s" % exc)
+
+    def _settings_result(self, reply):
+        self.busy = False
+        if reply["kind"] == "error":
+            self.write(u"設定を送れませんでした: %s" % reply["data"].get("message"))
+            return
+        data = reply["data"]
+        arrow = u"Maya → AE" if data.get("direction") == "maya2ae" else u"AE → Maya"
+        status = data.get("status")
+        if status == "applied":
+            self.write(u"設定 %s を適用しました: %s" % (arrow, _changes_text(data.get("changes"))))
+        elif status == "unchanged":
+            self.write(u"設定 %s: %s" % (arrow, data.get("message") or u"変更はありません。"))
+        elif status == "cancelled":
+            self.write(u"設定 %s はキャンセルされました（何も変更していません）。" % arrow)
+        else:
+            self.write(u"設定 %s: %s" % (arrow, status))
+        if status == "applied" and data.get("message"):
+            self.write(data["message"])
+        for w in data.get("warnings") or []:
+            self.write(u"注意: %s" % w)
 
     # -- Scene Time Warp: save / restore / change range ---------------------------------
     def save_warp(self):
@@ -369,6 +467,23 @@ class SyncBridgePanel(QtWidgets.QDialog):
                     self.write(u"注意: %s" % w)
             else:
                 self.write(u"枠を表示できませんでした: %s" % payload.get("message"))
+        elif event == "settings_result":
+            self._settings_result(payload)
+        elif event == "settings_applied":
+            status = payload.get("status")
+            if status == "applied":
+                self.write(u"AE の設定をこのシーンに適用しました: %s。元に戻すときは Ctrl+Z を 1 回。"
+                           % _changes_text(payload.get("changes")))
+            elif status == "cancelled":
+                self.write(u"AE → Maya の設定はキャンセルしました（何も変更していません）。")
+            else:
+                self.write(u"AE の設定を適用できませんでした: %s" % payload.get("message"))
+        elif event == "time_sync_stats":
+            self.write(u"同期の計測（Maya が受け取った分）: %s" % payload)
+        elif event == "time_sync":
+            self.write(u"タイムスライダーの同期: %s" % (
+                (u"オン" + (u"（再生中も追従）" if payload.get("follow_playback") else u""))
+                if payload.get("enabled") else u"オフ"))
         elif event == "peers":
             ae_now = [p for p in payload if p["app"] == "ae"]
             if bool(ae_now) != self._had_ae:
@@ -395,6 +510,15 @@ class SyncBridgePanel(QtWidgets.QDialog):
         enabled = connected and bool(ae) and not self.busy
         self.to_ae.setEnabled(enabled)
         self.from_ae.setEnabled(enabled)
+        self.settings_to_ae.setEnabled(enabled)
+        self.settings_from_ae.setEnabled(enabled)
+        state = service.time_sync_state()
+        for check, value in ((self.time_sync_check, state["enabled"]), (self.follow_check, state["follow_playback"])):
+            check.blockSignals(True)
+            check.setChecked(bool(value))
+            check.blockSignals(False)
+        self.time_sync_check.setEnabled(connected)
+        self.follow_check.setEnabled(connected)
 
     def write(self, text: str):
         self.log.appendPlainText(str(text))
@@ -406,6 +530,20 @@ class SyncBridgePanel(QtWidgets.QDialog):
 
 def _playback_range():
     return (cmds.playbackOptions(q=True, minTime=True), cmds.playbackOptions(q=True, maxTime=True))
+
+
+SETTINGS_ITEMS_VAR = "syncBridgeSettingsItems"
+
+
+def _saved_setting_items():
+    """The settings checked last time (all of them the first time)."""
+    if cmds.optionVar(exists=SETTINGS_ITEMS_VAR):
+        return [i for i in str(cmds.optionVar(q=SETTINGS_ITEMS_VAR)).split(",") if i]
+    return list(scene_sync.ITEMS)
+
+
+def _changes_text(changes) -> str:
+    return u"、".join(u"%s %s → %s" % (c["label"], c["before"], c["after"]) for c in changes or []) or u"変更なし"
 
 
 def _exec(dialog) -> bool:

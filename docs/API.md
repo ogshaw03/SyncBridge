@@ -120,6 +120,13 @@ mapping: --mode editable|precision --tol 0.1 --origin F --maya-in-origin F --may
 | `markers.request` | クライアント（AE）→ サーバー | `export`（選択中のレイヤーの `ae.timeremap.export`）, `options`（転送と同じ。`origin` など）。D-18 |
 | `markers.apply.request` / `markers.apply.result` | サーバー ⇔ Maya | `{export, options}` / `{status, count, first, last, bookmarks, overlay, comp, layer}` |
 | `markers.result` | サーバー → 要求元 | `markers.apply.result` の内容 + `source`, `target` |
+| `settings.request` | クライアント（Maya / AE）→ サーバー | `direction`（maya2ae / ae2maya）, `items`（省略時は全部: `fps`, `playback_range`, `animation_range`, `pixel_aspect`）, `options: {origin}`。D-21 |
+| `settings.export.request` / `settings.export.result` | サーバー ⇔ アプリ | `{}` / `{settings}`（Maya: `scene_settings.read()`、AE: `SBCep.sceneSettings()`） |
+| `settings.apply.request` / `settings.apply.result` | サーバー ⇔ 転送先 | `{plan: core.scene_sync の計画, message: 確認の文（日本語）}` / `{status, after?, backup?}` |
+| `settings.result` | サーバー → 要求元 | `status`（applied / unchanged / cancelled）, `direction`, `changes: [{item, label, before, after}]`, `warnings`, `readback: {passed, problems}`, `source`, `target`, `message` |
+| `time.sync` | クライアント → サーバー（応答なし） | `enabled`, `follow_playback`。全員で共有する 1 つのスイッチ。D-22 |
+| `time.sync.state` | サーバー → 全員 | `enabled`, `follow_playback`, `by`（切り替えた client_id）。接続した直後にも送る |
+| `time.update` / `time.set` | アプリ → サーバー / サーバー → もう片方のアプリ（応答なし） | `t`（AE のコンプ時間、秒）/ `t`, `source`（maya / ae）。同期がオフなら中継しない |
 | `error` | どちらでも | `code`, `message`（要求への応答なら `reply_to` 付き） |
 
 エラーコード: `bad_message`, `auth_failed`, `no_peer`, `timeout`, `peer_disconnected`, `app_error`, `conversion_failed`, `busy`,
@@ -132,6 +139,12 @@ mapping: --mode editable|precision --tol 0.1 --origin F --maya-in-origin F --may
 - 変換が許容誤差を超えたら **転送先に何も送らない**（`status: failed` と誤差レポートを返す、SPEC 5 章）。
 - 転送は同時に 1 つだけ（2 つ目は `busy`）。export は 60 秒、apply は利用者の確認を待つため 600 秒でタイムアウト。
 - `apply.result` に `after` があれば、サーバーが読み戻しを検証して `readback` に入れる。
+- シーン設定（D-21）: 両方の設定を読み、`core.scene_sync` で変える値だけの計画を作る。変える値がなければ転送先に何も送らず
+  `unchanged`。転送先は確認ダイアログ → バックアップ → 1 回の取り消しで戻せる適用 → 適用後の設定を返し、サーバーが比べる。
+  時間の対応は転送と同じ（Maya のフレーム F ⇔ AE のコンプ時間 (F − origin) / Maya の FPS）。AE のコンプの開始フレームは origin にする。
+- 時間の同期（D-22）: `t` は AE のコンプ時間。Maya は自分のパネルの Origin frame で `frame = origin + t × fps` に直す。
+  Maya はスクラブ中は 1 秒に 30 回まで、再生中は `follow_playback` のときだけ送る（オフなら止めた位置を送る）。
+  AE のパネルは 0.05 秒ごとに `comp.time` を読み、変わっていれば送る（Maya から受け取った直後の 0.3 秒は読まない）。受け取って動かした時間は送り返さない。
 
 ### 管理 API（P-A、`server/admin.py`、D-15）
 

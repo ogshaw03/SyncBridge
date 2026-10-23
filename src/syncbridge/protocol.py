@@ -22,6 +22,16 @@ Key markers (D-18), AE Time Remap key timings as Maya markers:
     client -> server  markers.request {export: ae.timeremap.export envelope, options: {origin, ...}}
     server -> maya    markers.apply.request {export, options}   maya -> server markers.apply.result {status, count, ...}
     server -> client  markers.result {status, count, first, last, bookmarks, source, target}
+Scene settings (D-21), FPS / ranges / pixel aspect, either direction, from either panel:
+    client -> server  settings.request {direction, items, options: {origin}}
+    server -> apps    settings.export.request {}   app -> server settings.export.result {settings}
+    server -> target  settings.apply.request {plan, message}   (the user confirms there)
+                      target -> server settings.apply.result {status, after?, backup?}
+    server -> client  settings.result {status, direction, changes, warnings, readback, ...}
+Time slider sync (D-22), no replies:
+    client -> server  time.sync {enabled, follow_playback}   server -> all  time.sync.state {...}
+    client -> server  time.update {t}    server -> the other app  time.set {t, source}
+    (t = AE comp time in seconds; Maya converts with its origin frame, core.time_sync)
 A reply carries `reply_to` = the request's event_id. Failures are `error`
 {code, message} with `reply_to` when they answer a request.
 """
@@ -62,6 +72,9 @@ REPLIES = {
     "guide.apply.request": "guide.apply.result",
     "markers.request": "markers.result",
     "markers.apply.request": "markers.apply.result",
+    "settings.request": "settings.result",
+    "settings.export.request": "settings.export.result",
+    "settings.apply.request": "settings.apply.result",
 }
 
 # required data fields per kind (minimal structural validation)
@@ -83,6 +96,16 @@ REQUIRED = {
     "markers.result": ("status",),
     "markers.apply.request": ("export",),
     "markers.apply.result": ("status",),
+    "settings.request": ("direction",),
+    "settings.result": ("status",),
+    "settings.export.request": (),
+    "settings.export.result": ("settings",),
+    "settings.apply.request": ("plan",),
+    "settings.apply.result": ("status",),
+    "time.sync": ("enabled",),
+    "time.sync.state": ("enabled",),
+    "time.update": ("t",),
+    "time.set": ("t",),
     "error": ("code", "message"),
 }
 
@@ -90,9 +113,11 @@ REQUIRED = {
 APPLIED = "applied"
 CANCELLED = "cancelled"
 FAILED = "failed"
-STATUSES = (APPLIED, CANCELLED, FAILED)
+UNCHANGED = "unchanged"          # settings: the target already has these values
+STATUSES = (APPLIED, CANCELLED, FAILED, UNCHANGED)
 RESULT_KINDS = ("apply.result", "transfer.result", "guide.result", "guide.apply.result",
-                "markers.result", "markers.apply.result")
+                "markers.result", "markers.apply.result", "settings.result", "settings.apply.result")
+TIME_KINDS = ("time.sync", "time.update")      # client -> server, no reply
 
 
 class ProtocolError(ValueError):
@@ -159,10 +184,12 @@ def decode(text) -> dict:
         raise ProtocolError(E_BAD_MESSAGE, "%s: missing %s" % (kind, ", ".join(missing)))
     if not isinstance(msg.get("event_id"), str):
         raise ProtocolError(E_BAD_MESSAGE, "event_id must be a string")
-    if kind == "transfer.request" and data["direction"] not in DIRECTIONS:
+    if kind in ("transfer.request", "settings.request") and data["direction"] not in DIRECTIONS:
         raise ProtocolError(E_BAD_MESSAGE, "direction must be one of %s" % sorted(DIRECTIONS))
     if kind in RESULT_KINDS and data["status"] not in STATUSES:
         raise ProtocolError(E_BAD_MESSAGE, "status must be one of %s" % (STATUSES,))
+    if kind in ("time.update", "time.set") and not isinstance(data["t"], (int, float)):
+        raise ProtocolError(E_BAD_MESSAGE, "t must be a number (seconds)")
     if kind == "hello" and data["app"] not in APPS:
         raise ProtocolError(E_BAD_MESSAGE, "app must be one of %s" % (APPS,))
     return msg

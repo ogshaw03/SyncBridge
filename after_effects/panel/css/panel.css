@@ -35,6 +35,13 @@ input { width: 90px; }
 button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: 0.4; }
 .send { flex: 1; padding: 6px; }
+.half { flex: 1; }
+.section { border-top: 1px solid var(--border); padding-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+.section-title { color: var(--muted); font-size: 11px; }
+.checks { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; }
+.check { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+.check input { width: auto; margin: 0; }
+.sync-on { color: var(--ok); }
 .logo { width: 24px; height: 24px; flex: none; }
 #log {
   flex: 1;

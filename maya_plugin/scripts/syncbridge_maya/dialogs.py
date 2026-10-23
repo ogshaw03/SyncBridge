@@ -56,4 +56,7 @@ def build_question(title: str, text: str, ok: str, cancel: str, parent: Optional
     box.setDefaultButton(ok_button)
     box.setEscapeButton(cancel_button)
     box.setWindowFlags(box.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
+    # Long Japanese lines (no spaces) were wrapped too narrow and lost their last characters
+    # (scene settings confirmation, offscreen mock 2026-10-20): give the text room.
+    box.setStyleSheet("QLabel#qt_msgbox_label { min-width: 460px; }")
     return box, ok_button

@@ -11,6 +11,8 @@ Threading model (H-MY-14):
 Requests from the server (export.request, apply.request) are answered by the
 `handlers` given to the constructor: handler(message) -> reply data dict.
 An exception becomes an `error` reply (app_error) with its message.
+Notices that need no reply (time.sync.state, time.set; D-22) go to `notices`:
+notice(message), also on the main thread.
 
     client = SyncClient("maya", handlers, dispatch=maya.utils.executeDeferred,
                         on_event=ui.on_event)
@@ -47,11 +49,13 @@ class ConnectError(Exception):
 class SyncClient:
     def __init__(self, app: str, handlers: Optional[Dict[str, Handler]] = None,
                  dispatch: Optional[Dispatch] = None, on_event: Optional[EventCallback] = None,
-                 version: str = __version__, document: Callable[[], str] = lambda: ""):
+                 version: str = __version__, document: Callable[[], str] = lambda: "",
+                 notices: Optional[Dict[str, Callable[[dict], None]]] = None):
         if app not in protocol.APPS:
             raise ValueError("app must be one of %s" % (protocol.APPS,))
         self.app = app
         self.handlers = dict(handlers or {})
+        self.notices = dict(notices or {})
         self.dispatch = dispatch or (lambda fn: fn())
         self.on_event = on_event
         self.version = version
@@ -124,6 +128,20 @@ class SyncClient:
             data["target"] = target
         return self._request("transfer.request", data, callback)
 
+    def request(self, kind: str, data: dict, callback: Callable[[dict], None]) -> str:
+        """Any request to the server (e.g. settings.request); callback(reply) runs via dispatch."""
+        return self._request(kind, data, callback)
+
+    def send(self, kind: str, data: dict) -> bool:
+        """A message that needs no reply (time.sync, time.update). False when it could not be sent."""
+        if not self.connected:
+            return False
+        try:
+            self.ws.send_text(protocol.encode(protocol.message(kind, data, self.app)))
+            return True
+        except (OSError, WebSocketError):
+            return False
+
     def _request(self, kind: str, data: dict, callback: Callable[[dict], None]) -> str:
         if not self.connected:
             raise ConnectError("not connected")
@@ -175,6 +193,11 @@ class SyncClient:
             self._emit(EV_PEERS, self.peers)
         elif kind in self.handlers:
             self.dispatch(lambda: self._handle_request(msg))
+        elif kind in self.notices:
+            notice = self.notices[kind]
+            self.dispatch(lambda: self._safe(lambda: notice(msg)))
+        elif kind in ("time.sync.state", "time.set"):
+            pass                      # this client does not take part in the time slider sync
         elif kind == "error":
             self._emit(EV_ERROR, msg["data"])
         else:

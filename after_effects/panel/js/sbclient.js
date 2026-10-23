@@ -95,11 +95,25 @@
         return parts.filter(function (p) { return p; }).join(' ');
     }
 
+    // Time slider sync (D-22): how often AE's current time is read (0.15 s lagged noticeably,
+    // user's test 2026-10-23), and how long reading pauses after Maya moved AE: evalScript calls
+    // run one at a time in AE, so a read queued before setTime delays it.
+    var TIME_POLL_MS = 50;
+    var QUIET_AFTER_SET_MS = 300;
+
     function SBPanelClient(opts) {
         this.host = opts.host;
         this.WebSocketImpl = opts.WebSocketImpl;
         this.onState = opts.onState || function () {};
         this.onLog = opts.onLog || function () {};
+        this.onTimeSync = opts.onTimeSync || function () {};
+        this.onSettingsApplied = opts.onSettingsApplied || function () {};
+        this.setInterval = opts.setInterval || function (fn, ms) { return setInterval(fn, ms); };
+        this.clearInterval = opts.clearInterval || function (id) { clearInterval(id); };
+        this.now = opts.now || function () { return Date.now(); };
+        this._quietUntil = 0;
+        this.stats = {};                // delays in ms while the sync is on (reported when it is switched off)
+        this._lastPollStart = null;
         this.version = opts.version || '';
         this.document = opts.document || '';
         this.ws = null;
@@ -107,6 +121,13 @@
         this.peers = [];
         this.pending = {};
         this.closing = false;
+        this.timeSync = { enabled: false, follow_playback: false };
+        this._timer = null;
+        this._polling = false;
+        this._setting = false;
+        this._wantTime = null;
+        this._lastApplied = null;
+        this._lastSent = null;
     }
 
     SBPanelClient.prototype.connected = function () {
@@ -136,6 +157,7 @@
             self.ws = null;
             self.clientId = null;
             self.peers = [];
+            self._setTimeState({ enabled: false, follow_playback: false });
             var pending = self.pending;
             self.pending = {};
             Object.keys(pending).forEach(function (id) {
@@ -200,6 +222,134 @@
         });
     };
 
+    // Scene settings (D-21): FPS / ranges / pixel aspect between Maya and the active comp.
+    // direction 'maya2ae' | 'ae2maya'; items: subset of fps, playback_range, animation_range,
+    // pixel_aspect; options {origin}. callback(reply) gets settings.result or error.
+    SBPanelClient.prototype.sendSettings = function (direction, items, options, callback) {
+        if (!this.connected()) { throw new Error('not connected'); }
+        var msg = message('settings.request', { direction: direction, items: items, options: options || {} });
+        this.pending[msg.event_id] = callback;
+        this.ws.send(JSON.stringify(msg));
+        return msg.event_id;
+    };
+
+    // Time slider sync (D-22): one switch shared with Maya through the hub. Switching it on
+    // here makes AE's current time lead.
+    SBPanelClient.prototype.setTimeSync = function (enabled, followPlayback) {
+        if (!this.connected()) { throw new Error('not connected'); }
+        this._send(message('time.sync', { enabled: !!enabled, follow_playback: !!followPlayback }));
+        if (enabled) { this._lastSent = null; this._lastApplied = null; this._pollTime(true); }
+    };
+
+    SBPanelClient.prototype.setFollowPlayback = function (followPlayback) {
+        if (!this.connected() || !this.timeSync.enabled) { return; }
+        this._send(message('time.sync', { enabled: true, follow_playback: !!followPlayback }));
+    };
+
+    SBPanelClient.prototype._setTimeState = function (state) {
+        var wasOn = this.timeSync.enabled;
+        this.timeSync = { enabled: !!state.enabled, follow_playback: !!state.follow_playback, by: state.by || null };
+        if (this.timeSync.enabled && !this._timer) {
+            var self = this;
+            this._timer = this.setInterval(function () { self._pollTime(false); }, TIME_POLL_MS);
+        } else if (!this.timeSync.enabled && this._timer) {
+            this.clearInterval(this._timer);
+            this._timer = null;
+        }
+        if (wasOn !== this.timeSync.enabled || state.by !== undefined) { this.onTimeSync(this.timeSync); }
+        if (wasOn && !this.timeSync.enabled) {
+            var summary = this.statsSummary();
+            if (summary) { this.onLog('同期の計測（AE）: ' + summary); }
+            this.stats = {};
+            this._lastPollStart = null;
+        }
+    };
+
+    // Measured delays (D-22; the user felt a lag in both directions, 2026-10-23).
+    var STAT_LABELS = [['recv', 'Maya から受け取るまで'], ['set', 'AE で時間を設定'],
+                       ['read', 'AE の時間の読み取り'], ['gap', '読みに行った間隔']];
+
+    SBPanelClient.prototype._stat = function (name, ms) {
+        var list = this.stats[name] || (this.stats[name] = []);
+        list.push(ms);
+        if (list.length > 500) { list.shift(); }
+    };
+
+    SBPanelClient.prototype.statsSummary = function () {
+        var self = this;
+        return STAT_LABELS.filter(function (s) { return (self.stats[s[0]] || []).length; }).map(function (s) {
+            var v = self.stats[s[0]], sum = v.reduce(function (a, b) { return a + b; }, 0);
+            return s[1] + ' 平均 ' + Math.round(sum / v.length) + ' ms（最大 ' +
+                Math.round(Math.max.apply(null, v)) + '、' + v.length + ' 回）';
+        }).join('、');
+    };
+
+    // Read AE's current time; send it when the user moved it (not when SyncBridge set it).
+    SBPanelClient.prototype._pollTime = function (force) {
+        var self = this;
+        if (this._polling || this._setting) { return; }
+        if (!force && this.now() < this._quietUntil) { return; }      // Maya is leading right now
+        this._polling = true;
+        var started = this.now();
+        if (!force && this._lastPollStart !== null) { this._stat('gap', started - this._lastPollStart); }
+        this._lastPollStart = started;
+        this.host.call('compTime', [], function (r) {
+            self._polling = false;
+            self._stat('read', self.now() - started);
+            if (r.error || r.time === null || r.time === undefined) { return; }
+            if (!force && !self.timeSync.enabled) { return; }
+            var half = (r.frameDuration || 1 / 24) / 2;
+            if (!force && self._lastApplied !== null) {
+                if (Math.abs(r.time - self._lastApplied) < half) { return; }     // still where Maya put it
+                self._lastApplied = null;
+            }
+            if (!force && self._lastSent !== null && Math.abs(r.time - self._lastSent) < half) { return; }
+            self._lastSent = r.time;
+            self._send(message('time.update', { t: r.time, sent_at: self.now() }));
+        });
+    };
+
+    // time.set from Maya: move AE's current time (only the latest one is applied).
+    SBPanelClient.prototype._applyTime = function (t, sentAt) {
+        var self = this;
+        if (!this.timeSync.enabled) { return; }
+        if (sentAt) { this._stat('recv', this.now() - sentAt); }
+        this._wantTime = t;
+        this._quietUntil = this.now() + QUIET_AFTER_SET_MS;
+        if (this._setting) { return; }
+        this._setting = true;
+        var started = this.now();
+        this.host.call('setTime', [t], function (r) {
+            self._setting = false;
+            self._stat('set', self.now() - started);
+            var now = (r && typeof r.time === 'number') ? r.time : t;
+            self._lastApplied = now;
+            self._lastSent = now;
+            if (self._wantTime !== t) { self._applyTime(self._wantTime); }
+        });
+    };
+
+    SBPanelClient.prototype._settingsExport = function (request) {
+        var self = this;
+        this.host.call('sceneSettings', [], function (result) {
+            if (result.error) { self._hostError(request, result); return; }
+            self._send(message('settings.export.result', { settings: result }, request.event_id));
+        });
+    };
+
+    SBPanelClient.prototype._settingsApply = function (request) {
+        var self = this, plan = request.data.plan;
+        this.onLog('Maya → AE の設定: After Effects の確認ダイアログで選んでください...');
+        this.host.call('applySceneSettings', [JSON.stringify(plan), request.data.message || ''], function (result) {
+            if (result.error) { self._hostError(request, result); return; }
+            var reply = { status: result.status };
+            if (result.backup) { reply.backup = result.backup; }
+            if (result.after) { reply.after = result.after; }
+            self._send(message('settings.apply.result', reply, request.event_id));
+            self.onSettingsApplied(result.status, plan);
+        });
+    };
+
     SBPanelClient.prototype._send = function (msg) {
         if (this.ws && this.ws.readyState === 1) { this.ws.send(JSON.stringify(msg)); }
     };
@@ -232,6 +382,18 @@
             break;
         case 'apply.request':
             this._apply(msg);
+            break;
+        case 'settings.export.request':
+            this._settingsExport(msg);
+            break;
+        case 'settings.apply.request':
+            this._settingsApply(msg);
+            break;
+        case 'time.sync.state':
+            this._setTimeState(msg.data);
+            break;
+        case 'time.set':
+            this._applyTime(msg.data.t, msg.data.sent_at);
             break;
         case 'error':
             this.onLog('error: ' + msg.data.message);
@@ -271,6 +433,16 @@
         });
     };
 
+    // 'FPS 24 → 30、再生範囲 1〜48 → 1〜60' from the changes of a settings plan / result.
+    function describeChanges(changes) {
+        return (changes || []).map(function (c) {
+            return c.label + ' ' + c.before + ' → ' + c.after;
+        }).join('、') || '変更なし';
+    }
+
+    SBPanelClient.describeChanges = describeChanges;
+    SBPanelClient.TIME_POLL_MS = TIME_POLL_MS;
+    SBPanelClient.QUIET_AFTER_SET_MS = QUIET_AFTER_SET_MS;
     SBPanelClient.jsxCall = jsxCall;
     SBPanelClient.userMessage = userMessage;
     SBPanelClient.describe = describe;

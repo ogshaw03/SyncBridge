@@ -40,6 +40,18 @@ KINDS = (
     "markers.result",
     "markers.apply.request",
     "markers.apply.result",
+    # scene settings (D-21)
+    "settings.request",
+    "settings.result",
+    "settings.export.request",
+    "settings.export.result",
+    "settings.apply.request",
+    "settings.apply.result",
+    # time slider sync (D-22)
+    "time.sync",
+    "time.sync.state",
+    "time.update",
+    "time.set",
     "error",
 )
 

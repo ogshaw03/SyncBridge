@@ -22,6 +22,8 @@ from .admin import create_admin_router
 from .connections import ConnectionManager
 from .flow import TransferFlow
 from .relay import GuideFlow, MarkerFlow
+from .settings_flow import SettingsFlow
+from .timesync import TimeSync
 
 log = logging.getLogger("syncbridge.server")
 
@@ -57,7 +59,9 @@ def create_app(token: str, idle_timeout: Optional[float] = None,
     flow = TransferFlow(manager, history=history, **flow_args)
     relay_args = {"timeout": export_timeout} if export_timeout is not None else {}
     relays = {"guide.request": GuideFlow(manager, history=history, **relay_args),
-              "markers.request": MarkerFlow(manager, history=history, **relay_args)}
+              "markers.request": MarkerFlow(manager, history=history, **relay_args),
+              "settings.request": SettingsFlow(manager, history=history, **flow_args)}
+    timesync = TimeSync(manager)
     state = types.SimpleNamespace(manager=manager, flow=flow, history=history, logbuf=logbuf, bus=bus,
                                   started=time.monotonic(), started_iso=hubstate.now_iso(),
                                   port=port, log=log)
@@ -131,6 +135,7 @@ def create_app(token: str, idle_timeout: Optional[float] = None,
                 "client_id": client.client_id, "server_version": __version__,
                 "protocol": protocol.PROTOCOL_VERSION}, reply_to=hello["event_id"]))
             await manager.broadcast_peers()
+            await timesync.send_state(client)
             while True:
                 text = await ws.receive_text()
                 try:
@@ -140,12 +145,15 @@ def create_app(token: str, idle_timeout: Optional[float] = None,
                     continue
                 if msg.get("reply_to") and manager.resolve(client, msg):
                     continue
+                if msg["kind"] in protocol.TIME_KINDS:
+                    await timesync.handle(client, msg)       # quick: relayed in order, no task
+                    continue
                 if msg["kind"] == "transfer.request" or msg["kind"] in relays:
                     if msg["kind"] == "transfer.request":
                         log.info("%s requests %s", client.client_id, msg["data"].get("direction"))
                         task = asyncio.create_task(_transfer(flow, client, msg))
                     else:
-                        log.info("%s sends %s to Maya", client.client_id, msg["kind"])
+                        log.info("%s sends %s", client.client_id, msg["kind"])
                         task = asyncio.create_task(_transfer(relays[msg["kind"]], client, msg))
                     tasks.add(task)
                     task.add_done_callback(tasks.discard)

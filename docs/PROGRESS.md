@@ -46,6 +46,17 @@
 
 ### 2026-10-25（Windows 11, Python 3.10.6）
 
+- **Pixel Mapping Phase 2（D-24、`docs/PIXEL_MAPPING.md` 7 章、未リリース）:**
+  - core `layer_mapping.py`（Virtual Layer）、ハブの `PixelMapFlow`（`pixelmap.*`）、Maya の `layer_mapping.py`
+    （シーンに保存、UUID）と `pixel_mapping.apply_from_ae`、パネルの「Pixel Mapping（BG スライド）」欄、
+    AE の `pixelMapInfo` と「BG の位置を Maya のカメラへ」、モニターのラベル。
+  - Maya のパネルの中の欄をスクロールできるようにした（縦に長くなり、モックで部品がつぶれていた）。
+  - mayapy 2024: 対応付けの作成・取り消し・名前を変えたあとの再送・キーのある属性の拒否・同じカメラの警告、レンダーで 0.005 px。
+    Maya と AE のパネルをモックで確認。テスト: 全 312 件 OK（新規 10 件）。
+  - テストで利用者の `Documents/maya/SyncBridge/backups` に作った `pixelmap_*.json` は消した。同じ秒の保存でファイル名が重なって
+    いたので、マイクロ秒まで入れた。
+  - **未確認（GUI）:** AE の `pixelMapInfo`（H-AE-26 / 27）、Maya の GUI での一連の流れ。
+
 - **Pixel Mapping の Phase 1 完了。** 利用者が AE 26.5 で `pixel_mapping_reference.jsx` を実行（`saveFrameToPng` で 8 フレーム、
   H-AE-25 ✅）。`check_reference.py`: 予測との差 最大 0.042 px で PASS（H-AE-24 ✅、Position のみ）。同じ位置の Maya のレンダー
   （Hardware 2.0、Film Offset）と直接比べて最大 0.045 px。検証の画像は `tools/pixel_mapping/` に置かれ、Git 管理外にした。
@@ -375,8 +386,8 @@
 
 ## 次にやること
 
-0. **Pixel Mapping の Phase 2:** Virtual Layer Mapping、ハブ経由の AE → Maya の転送、パネルの UI（`docs/PIXEL_MAPPING.md` 7 章）。
-   Phase 1（AE ⇔ Maya の位置 最大 0.045 px）は 2026-10-25 に完了。
+0. **[利用者] Pixel Mapping の Phase 2 を GUI で確認する**（`docs/PIXEL_MAPPING.md` 7 章）。そのあと Phase 3（Position の
+   アニメーション、Linear / Hold / Bezier のサンプリング、全フレームの精度確認）。
 0. **[実機・利用者] シーン設定の転送とタイムスライダーの同期（D-21 / D-22）を GUI で確認する:** 両方向の設定の転送と取り消し、
    開始フレームを変えたあとでもタイムワープの転送とマーカーが同じ位置か（H-AE-22）、スクラブ・コマ送り・再生と停止での追従、
    「再生中も追従」、AE でスクラブしたときの Maya の追従と AE の重さ。確認できたら 0.1.8 として配布する。

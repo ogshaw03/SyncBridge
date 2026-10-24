@@ -164,6 +164,8 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 | H-AE-22 | `displayStartTime` は AE が表示するフレーム番号だけを変え、`comp.time`、レイヤーの時間、タイムリマップのキーの時間は、コンプの始まり（0 秒）からのまま（D-21） | 開始フレームを Origin にしたあと、タイムワープの転送とキーのマーカーが前と同じ位置になるか | ❓（転送とマーカーの時間の対応がこれに頼る） |
 | H-AE-23 | パネルから `comp.time` を書くと、現在の時間インジケーターとビューアが動く。0.05 秒ごとに `comp.time` を読んでも AE の操作が重くならない（D-22） | 同期をオンにして Maya でスクラブ、AE でスクラブ | 一部 ✅ 利用者の PC（2026-10-23、テスト版 0.1.8、0.15 秒ごと）: 両方向に追従した。少しラグあり → 0.05 秒に短縮（重さは未確認） |
 | H-AE-24 | AE は 2D レイヤーの元画像の座標を `Position + (source − Anchor Point)` のコンプの座標に描く（画素の中心の扱いも同じ。半端な位置は補間）。Pixel Mapping（D-23） | `after_effects/jsx/pixel_mapping_reference.jsx` → `tools/pixel_mapping/check_reference.py` | ✅ AE 26.5（利用者の PC、2026-10-25）: 8 フレームで最大 0.042 px（整数の位置は 0.000）。Maya のレンダーと直接比べて最大 0.045 px。Position のみ（Scale・Rotation は未確認） |
+| H-AE-26 | `Layer.id`（AE 22 以降）と `CompItem.id` は、プロジェクトを開き直しても変わらない ID（Pixel Mapping の対応付け、D-24） | AE で同じレイヤーを 2 回送り、Maya の対応付けが 1 つのままか（レイヤー名を変えても） | ❓ 📘（無ければ名前で探す） |
+| H-AE-27 | Position の次元を分割したレイヤーでは、`ADBE Position_0` / `ADBE Position_1` の値が X / Y になる | 次元を分割した BG で送る | ❓ |
 | H-AE-25 | `CompItem.saveFrameToPng(time, file)` でコンプの 1 フレームを PNG に保存できる | 同じスクリプト | ✅ AE 26.5（2026-10-25） |
 | H-AE-10 | Time Remap を有効にした直後は、レイヤーのイン点とアウト点に LINEAR のキーが 2 つでき、最後のキーの値はソースの長さ | Export の `keys` | ✅ AE 26.5（1 コンプで確認）: 0 秒 → 0、11.011 秒 → 11.011（ソース長）。「ソース長 − 1 フレーム」ではなかった |
 

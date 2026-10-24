@@ -172,8 +172,52 @@ var SBCep = (function () {
         } catch (e) { return fail(e); }
     }
 
+    // ---- Pixel Mapping (D-24) -------------------------------------------------------------------
+    // The selected layer's 2D transform at the current time, for the mapped Maya camera.
+    //   H-AE-26: Layer.id / CompItem.id are persistent ids (Layer.id: AE 22+); null when missing.
+    //   H-AE-27: with separated dimensions, X / Y Position are read from 'ADBE Position_0' / '_1'.
+    function v2(prop, t) {
+        var v = prop.valueAtTime(t, false);
+        return [v[0], v[1]];
+    }
+
+    function pixelMapInfo() {
+        try {
+            var sel = SB.activeCompAndLayer(), comp = sel.comp, layer = sel.layer, t = comp.time;
+            var tr = layer.property('ADBE Transform Group'), pos = tr.property('ADBE Position'), position;
+            var src = layer.source, effects = [], fx = layer.property('ADBE Effect Parade'), i;
+            if (!src || !(src.width > 0)) {
+                throw SB.userError('Layer "' + layer.name + '" has no image source.', 'no_source', { layer: layer.name });
+            }
+            if (pos.dimensionsSeparated) {
+                position = [tr.property('ADBE Position_0').valueAtTime(t, false),
+                            tr.property('ADBE Position_1').valueAtTime(t, false)];
+            } else {
+                position = v2(pos, t);
+            }
+            if (fx) {
+                for (i = 1; i <= fx.numProperties; i++) {
+                    if (fx.property(i).enabled) { effects.push(fx.property(i).name); }
+                }
+            }
+            return ok({
+                comp: { id: comp.id, name: comp.name, width: comp.width, height: comp.height,
+                        pixelAspect: comp.pixelAspect, frameRate: comp.frameRate, time: t },
+                layer: {
+                    id: (layer.id !== undefined) ? layer.id : null, name: layer.name, index: layer.index,
+                    position: position, anchorPoint: v2(tr.property('ADBE Anchor Point'), t),
+                    scale: v2(tr.property('ADBE Scale'), t),
+                    rotation: tr.property('ADBE Rotate Z').valueAtTime(t, false),
+                    threeD: layer.threeDLayer, parent: layer.parent ? layer.parent.name : null, effects: effects,
+                    source: src.name, source_id: src.id, source_width: src.width, source_height: src.height
+                }
+            });
+        } catch (e) { return fail(e); }
+    }
+
     return {
         readSession: readSession,
+        pixelMapInfo: pixelMapInfo,
         info: info,
         exportSelected: exportSelected,
         applyEnvelope: applyEnvelope,

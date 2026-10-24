@@ -8,6 +8,7 @@
  *   node cep_driver.js <port> <token> <export.json|ERROR> markers   (key markers; ERROR = no layer)
  *   node cep_driver.js <port> <token> <export.json|ERROR> settings <maya2ae|ae2maya>   (D-21)
  *   node cep_driver.js <port> <token> <export.json|ERROR> timesync  (D-22: switch on, then scrub to 2 s)
+ *   node cep_driver.js <port> <token> <export.json|ERROR> pixelmap  (D-24; ERROR = layer without an image)
  *
  * The fake host keeps one comp (COMP) for the scene settings and the current time.
  * Prints one JSON object per line: {event: "connected"|"peers"|"apply"|"result"|"log", ...}.
@@ -50,6 +51,16 @@ const host = {
                     callback({ error: 'Open a composition first', user: true, code: 'no_comp', params: null });
                 } else {
                     callback({ name: 'Comp 1', width: 1920, height: 1080, pixelAspect: 1 });
+                }
+            } else if (name === 'pixelMapInfo') {
+                if (exportFile === 'ERROR') {
+                    callback({ error: 'Layer "Solid 1" has no image source.', user: true, code: 'no_source',
+                               params: { layer: 'Solid 1' } });
+                } else {
+                    callback({ comp: { id: 12, name: 'Comp 1', width: 1920, height: 1080, pixelAspect: 1, time: 0.5 },
+                               layer: { id: 345, name: 'BG', position: [1083.25, 492.5], anchorPoint: [3000, 2000],
+                                        scale: [100, 100], rotation: 0, threeD: false, parent: null, effects: [],
+                                        source: 'bg.png', source_width: 6000, source_height: 4000 } });
                 }
             } else if (name === 'sceneSettings') {
                 callback(Object.assign({}, COMP));
@@ -98,7 +109,15 @@ const whenMaya = (fn) => {
     }, 50);
 };
 
-if (mode === 'settings') {
+if (mode === 'pixelmap') {
+    whenMaya(() => {
+        client.sendPixelMap({}, (reply) => {
+            out({ event: 'result', reply });
+            client.disconnect();
+            setTimeout(() => process.exit(0), 100);
+        });
+    });
+} else if (mode === 'settings') {
     whenMaya(() => {
         client.sendSettings(direction, ['fps', 'playback_range', 'animation_range', 'pixel_aspect'], { origin: 1 },
             (reply) => {

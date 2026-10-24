@@ -9,6 +9,7 @@ thread through maya.utils.executeDeferred (H-MY-14):
     markers.apply.request -> key_markers.apply(...)  (AE key timings as markers, D-18)
     settings.export.request / settings.apply.request -> scene_settings (FPS, ranges, D-21)
     time.sync.state / time.set -> time_sync (time slider sync, D-22)
+    pixelmap.apply.request -> pixel_mapping.apply_from_ae (AE BG position on the mapped camera, D-24)
 
     import syncbridge_maya.service as svc
     svc.connect(start_server=True)
@@ -146,6 +147,18 @@ def _handle_markers(msg: dict) -> dict:
     return result
 
 
+def _handle_pixelmap(msg: dict) -> dict:
+    """The AE BG layer's position on the mapped camera (D-24); the panel hears about it ("pixelmap")."""
+    from . import pixel_mapping
+    try:
+        result = pixel_mapping.apply_from_ae(msg["data"]["info"], msg["data"].get("options"))
+    except Exception as exc:
+        _notify("pixelmap", {"status": "failed", "message": str(exc)})
+        raise
+    _notify("pixelmap", result)
+    return result
+
+
 def _handle_settings_export(msg: dict) -> dict:
     return {"settings": scene_settings.read()}
 
@@ -203,7 +216,8 @@ def connect(start_server: bool = True, port: Optional[int] = None) -> dict:
         handlers={"export.request": _handle_export, "apply.request": _handle_apply,
                   "guide.apply.request": _handle_guide, "markers.apply.request": _handle_markers,
                   "settings.export.request": _handle_settings_export,
-                  "settings.apply.request": _handle_settings_apply},
+                  "settings.apply.request": _handle_settings_apply,
+                  "pixelmap.apply.request": _handle_pixelmap},
         notices={"time.sync.state": _on_time_state, "time.set": _on_time_set},
         dispatch=maya.utils.executeDeferred,
         on_event=_on_event,

@@ -28,6 +28,10 @@ Scene settings (D-21), FPS / ranges / pixel aspect, either direction, from eithe
     server -> target  settings.apply.request {plan, message}   (the user confirms there)
                       target -> server settings.apply.result {status, after?, backup?}
     server -> client  settings.result {status, direction, changes, warnings, readback, ...}
+Pixel Mapping (D-23 / D-24), the AE BG layer's position on the mapped Maya camera:
+    client -> server  pixelmap.request {info: SBCep.pixelMapInfo(), options: {method?}}
+    server -> maya    pixelmap.apply.request {info, options}   maya -> server pixelmap.apply.result {status, ...}
+    server -> client  pixelmap.result {status, mapping, values, max_error_px, warnings, source, target}
 Time slider sync (D-22), no replies:
     client -> server  time.sync {enabled, follow_playback}   server -> all  time.sync.state {...}
     client -> server  time.update {t}    server -> the other app  time.set {t, source}
@@ -75,6 +79,8 @@ REPLIES = {
     "settings.request": "settings.result",
     "settings.export.request": "settings.export.result",
     "settings.apply.request": "settings.apply.result",
+    "pixelmap.request": "pixelmap.result",
+    "pixelmap.apply.request": "pixelmap.apply.result",
 }
 
 # required data fields per kind (minimal structural validation)
@@ -102,6 +108,10 @@ REQUIRED = {
     "settings.export.result": ("settings",),
     "settings.apply.request": ("plan",),
     "settings.apply.result": ("status",),
+    "pixelmap.request": ("info",),
+    "pixelmap.result": ("status",),
+    "pixelmap.apply.request": ("info",),
+    "pixelmap.apply.result": ("status",),
     "time.sync": ("enabled",),
     "time.sync.state": ("enabled",),
     "time.update": ("t",),
@@ -116,7 +126,8 @@ FAILED = "failed"
 UNCHANGED = "unchanged"          # settings: the target already has these values
 STATUSES = (APPLIED, CANCELLED, FAILED, UNCHANGED)
 RESULT_KINDS = ("apply.result", "transfer.result", "guide.result", "guide.apply.result",
-                "markers.result", "markers.apply.result", "settings.result", "settings.apply.result")
+                "markers.result", "markers.apply.result", "settings.result", "settings.apply.result",
+                "pixelmap.result", "pixelmap.apply.result")
 TIME_KINDS = ("time.sync", "time.update")      # client -> server, no reply
 
 

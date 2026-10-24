@@ -70,6 +70,9 @@
                 Number(p.min).toFixed(2) + '〜' + Number(p.max).toFixed(2) + ' 秒が必要です。' +
                 '素材が短いか、原点フレームが合っていません。何も変更していません。';
         },
+        no_source: function (p) {
+            return 'レイヤー「' + p.layer + '」には画像がありません。BG の画像（フッテージ）のレイヤーを選んでください。';
+        },
         no_server: function () {
             return 'SyncBridge サーバーが起動していません。Maya のパネルで Connect を押すか、syncbridge-server.cmd で起動してください。';
         }
@@ -217,6 +220,26 @@
                 return;
             }
             var msg = message('markers.request', { 'export': exported, options: options || {} });
+            self.pending[msg.event_id] = callback;
+            self.ws.send(JSON.stringify(msg));
+        });
+    };
+
+    // Pixel Mapping (D-24): the selected BG layer's position at the current time, put on the Maya camera
+    // mapped to it. options {method?} (used when Maya makes the mapping). Same reply handling as sendGuide.
+    SBPanelClient.prototype.sendPixelMap = function (options, callback) {
+        var self = this;
+        if (!this.connected()) { throw new Error('not connected'); }
+        this.host.call('pixelMapInfo', [], function (info) {
+            if (info.error) {
+                callback(message('error', { code: 'app_error', message: userMessage(info) }));
+                return;
+            }
+            if (!self.connected()) {
+                callback(message('error', { code: 'peer_disconnected', message: 'not connected' }));
+                return;
+            }
+            var msg = message('pixelmap.request', { info: info, options: options || {} });
             self.pending[msg.event_id] = callback;
             self.ws.send(JSON.stringify(msg));
         });

@@ -106,8 +106,9 @@ def conflicts(camera: str, keys: List[str]) -> List[str]:
     return out
 
 
-def apply_values(camera: str, values: Dict[str, object]) -> dict:
-    """Set the solved values in one undo chunk; returns the previous values (the backup)."""
+def apply_values(camera: str, values: Dict[str, object], also=None) -> dict:
+    """Set the solved values in one undo chunk (with `also()`, e.g. saving the mapping, inside the same
+    chunk); returns the previous values (the backup)."""
     shape = _shape(camera)
     problems = conflicts(camera, list(values))
     if problems:
@@ -117,6 +118,93 @@ def apply_values(camera: str, values: Dict[str, object]) -> dict:
     try:
         for key, value in values.items():
             cmds.setAttr("%s.%s" % (shape, CAMERA_ATTRS[key]), value)
+        if also is not None:
+            also()
     finally:
         cmds.undoInfo(closeChunk=True)
     return before
+
+
+METHOD_LABELS = {"film_offset": "Film Offset", "film_translate": "Film Translate", "pan_zoom": "2D Pan/Zoom"}
+
+
+def _ae_layer(info: dict) -> dict:
+    comp, layer = info["comp"], info["layer"]
+    return {"comp_id": comp.get("id"), "comp": comp.get("name"), "layer_id": layer.get("id"),
+            "layer": layer.get("name"), "source": layer.get("source"),
+            "source_width": layer["source_width"], "source_height": layer["source_height"]}
+
+
+def _backup(mapping: dict, camera: str, before: dict) -> str:
+    import datetime
+    import json
+    import os
+    from .exchange import backup_dir
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")     # two sends in one second must not collide
+    path = os.path.join(backup_dir(), "pixelmap_%s.json" % stamp)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"syncbridge": "pixel mapping camera backup", "scene": cmds.file(q=True, sn=True),
+                   "camera": camera, "mapping": mapping, "before": before}, f, indent=2, ensure_ascii=False)
+    return path
+
+
+def apply_from_ae(info: dict, options: dict = None, confirm: bool = True) -> dict:
+    """pixelmap.apply.request: put the AE BG layer's position on the mapped camera (D-24).
+
+    The virtual layer for the AE layer is found in the scene; when there is none, it is made from the
+    camera / BG / method chosen in the SyncBridge panel, after the user confirms. Returns
+    {status, mapping, values, before, shift_px, max_error_px, warnings, camera, backup}."""
+    from syncbridge.core import layer_mapping as core_lm
+    from syncbridge.core import pixel_mapping as core_pm
+    from . import layer_mapping
+    options = options or {}
+    ae = _ae_layer(info)
+    mappings = layer_mapping.stored()
+    mapping = core_lm.find(mappings, ae)
+    created = mapping is None
+    if created:
+        chosen = layer_mapping.defaults()
+        if not chosen["camera"] or not chosen["bg"]:
+            raise ValueError(u"AE のレイヤー「%s」はまだ Maya のカメラに対応付けられていません。Maya の SyncBridge パネルの"
+                             u"「Pixel Mapping」欄で、カメラと BG を選んでから、もう一度送ってください。" % ae["layer"])
+        mapping = core_lm.new_mapping(ae, {"camera_uuid": layer_mapping.uuid_of(chosen["camera"]),
+                                           "camera": chosen["camera"],
+                                           "bg_uuid": layer_mapping.uuid_of(chosen["bg"]), "bg": chosen["bg"]},
+                                      options.get("method") or chosen["method"])
+    else:
+        mapping = dict(mapping, ae=dict(mapping["ae"], **{k: v for k, v in ae.items() if v is not None}))
+    if not mapping.get("enabled", True):
+        raise ValueError(u"対応付け「%s」は無効になっています。" % mapping["name"])
+    camera = layer_mapping.node_by_uuid(mapping["maya"]["camera_uuid"])
+    bg_node = layer_mapping.node_by_uuid(mapping["maya"]["bg_uuid"])
+    if camera is None or bg_node is None:
+        raise ValueError(u"対応付け「%s」のカメラか BG（%s / %s）がシーンにありません。" % (
+            mapping["name"], mapping["maya"].get("camera"), mapping["maya"].get("bg")))
+    mapping["maya"].update(camera=camera, bg=bg_node)
+
+    transform, warnings = core_lm.ae_layer_from_export(info)
+    matrix, more = core_pm.ae_layer_matrix(transform)
+    warnings += more
+    for other in core_lm.camera_conflicts(mappings, mapping):
+        warnings.append(u"カメラ %s は対応付け「%s」でも同じ方式で動かしています。最後に送った位置になります。"
+                        % (camera.split("|")[-1], other["name"]))
+    solved = core_pm.solve(mapping["method"], camera_data(camera), render_data(),
+                           bg_plane_data(bg_node, ae["source_width"], ae["source_height"]), matrix,
+                           {"width": info["comp"]["width"], "height": info["comp"]["height"],
+                            "pixelAspect": info["comp"].get("pixelAspect", 1.0)})
+    if created and confirm:
+        from . import dialogs
+        text = (u"AE のレイヤー「%s」（コンプ「%s」）を、Maya のカメラ「%s」と BG「%s」に対応付けて、%s を設定しますか？\n\n"
+                u"対応付けはこのシーンに保存され、次からは確認なしで設定します。元に戻すときは Ctrl+Z を 1 回。"
+                % (ae["layer"], ae["comp"], camera.split("|")[-1], bg_node.split("|")[-1],
+                   METHOD_LABELS.get(mapping["method"], mapping["method"])))
+        if not dialogs.ask("SyncBridge", text, u"対応付けて設定", u"キャンセル"):
+            return {"status": "cancelled"}
+    updated = core_lm.upsert(mappings, mapping)
+    before = apply_values(camera, solved["values"], also=lambda: layer_mapping.save(updated))
+    backup = _backup(mapping, camera, before)
+    return {"status": "applied", "created": created, "mapping": {"id": mapping["id"], "name": mapping["name"],
+                                                                  "text": core_lm.describe(mapping)},
+            "values": solved["values"], "before": before, "shift_px": solved["shift_px"],
+            "max_error_px": solved["max_error_px"], "warnings": warnings, "camera": camera,
+            "frame": cmds.currentTime(q=True), "backup": backup}

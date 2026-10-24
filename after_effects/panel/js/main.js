@@ -63,6 +63,9 @@
         markers: el('button', { title: '選択中のレイヤーのタイムリマップのキーの位置を、Maya のタイムスライダー（ブックマーク）と' +
                                        'ビューにマーカーで表示します。Maya のシーンに保存されます（Origin frame を使います）',
                                 text: 'キーのマーカーを Maya へ' }),
+        pixelMap: el('button', { 'class': 'half', text: 'BG の位置を Maya のカメラへ',
+                                 title: '選択中の BG のレイヤーの今の位置を、対応付けた Maya のカメラに設定します（Pixel Mapping）。' +
+                                        '初めてのレイヤーは、Maya のパネルで選んだカメラと BG に対応付けます' }),
         // scene settings (D-21) and time slider sync (D-22)
         settingChecks: {},
         settingsToAe: el('button', { 'class': 'half', text: '設定 Maya → AE',
@@ -109,6 +112,7 @@
         field('Tolerance (frames)', ui.tolerance),
         el('div', { 'class': 'row' }, [ui.toAe, ui.toMaya]),
         el('div', { 'class': 'row' }, [ui.guide, ui.markers]),
+        el('div', { 'class': 'row' }, [ui.pixelMap]),
         syncSection,
         ui.log
     ].forEach(function (node) { app.appendChild(node); });
@@ -156,6 +160,7 @@
     // -- client ----------------------------------------------------------------------
     var busy = false;
     var layerOk = false;
+    var layerSelected = false;
     var compOk = false;
     var client = new SBPanelClient({
         host: host,
@@ -187,6 +192,7 @@
         ui.toMaya.disabled = !enabled;
         ui.guide.disabled = !(connected && maya.length > 0 && compOk && !busy);
         ui.markers.disabled = !enabled;
+        ui.pixelMap.disabled = !(connected && maya.length > 0 && layerSelected && !busy);
         var settingsEnabled = connected && maya.length > 0 && compOk && !busy;
         ui.settingsToAe.disabled = !settingsEnabled;
         ui.settingsToMaya.disabled = !settingsEnabled;
@@ -202,13 +208,14 @@
         host.call('info', [], function (info) {
             if (info.error) {
                 ui.target.textContent = SBPanelClient.userMessage(info);
-                layerOk = compOk = false;
+                layerOk = compOk = layerSelected = false;
                 refresh();
                 return;
             }
             client.version = info.aeVersion;
             client.document = info.project;
             compOk = !!info.comp;
+            layerSelected = !!info.layer;
             if (!info.comp) {
                 ui.target.textContent = 'コンポジションを開いてください';
                 layerOk = false;
@@ -348,6 +355,32 @@
         refresh();
     }
 
+    function sendPixelMap() {
+        busy = true;
+        refresh();
+        try {
+            client.sendPixelMap({}, function (reply) {
+                busy = false;
+                var d = reply.data;
+                if (reply.kind === 'error') {
+                    log('BG の位置を送れませんでした: ' + d.message);
+                } else if (d.status === 'applied') {
+                    log((d.created ? '［新しい対応付け］' : '') + 'BG の位置を Maya のカメラに設定しました: ' + d.mapping.text +
+                        '（ずれ ' + d.shift_px[0].toFixed(3) + ', ' + d.shift_px[1].toFixed(3) + ' px）');
+                    (d.warnings || []).forEach(function (w) { log('注意: ' + w); });
+                } else {
+                    log('Maya でキャンセルされました（カメラは変えていません）');
+                }
+                refresh();
+            });
+        } catch (e) {
+            busy = false;
+            log('BG の位置を送れませんでした: ' + e.message);
+            refresh();
+        }
+    }
+
+    ui.pixelMap.addEventListener('click', sendPixelMap);
     ui.settingsToAe.addEventListener('click', function () { sendSettings('maya2ae'); });
     ui.settingsToMaya.addEventListener('click', function () { sendSettings('ae2maya'); });
     ui.timeSync.addEventListener('change', function () { switchTimeSync(ui.timeSync.checked); });

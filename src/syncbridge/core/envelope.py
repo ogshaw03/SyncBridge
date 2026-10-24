@@ -47,6 +47,11 @@ KINDS = (
     "settings.export.result",
     "settings.apply.request",
     "settings.apply.result",
+    # pixel mapping (D-23, D-24)
+    "pixelmap.request",
+    "pixelmap.result",
+    "pixelmap.apply.request",
+    "pixelmap.apply.result",
     # time slider sync (D-22)
     "time.sync",
     "time.sync.state",

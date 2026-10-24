@@ -45,9 +45,11 @@ class CepClientTest(ServerFixture):
             "markers.apply.request": self._maya_markers,
             "settings.export.request": lambda msg: {"settings": dict(MAYA_SETTINGS)},
             "settings.apply.request": self._maya_settings,
+            "pixelmap.apply.request": self._maya_pixelmap,
         }, notices={"time.set": lambda msg: self.times.append(msg["data"]["t"]),
                     "time.sync.state": lambda msg: self.states.append(msg["data"])})
         self.settings_plans = []
+        self.pixelmaps = []
         self.times = []
         self.states = []
         self.markers = []
@@ -82,6 +84,11 @@ class CepClientTest(ServerFixture):
         self.markers.append(msg["data"])
         return {"status": "applied", "count": len(msg["data"]["export"]["data"]["keys"]),
                 "first": "1001", "last": "1097", "bookmarks": 4}
+
+    def _maya_pixelmap(self, msg):
+        self.pixelmaps.append(msg["data"])
+        return {"status": "applied", "created": True, "mapping": {"id": "vl-1", "name": "BG", "text": "BG: AE Comp 1 / BG"},
+                "values": {"hfo": -0.09}, "shift_px": [123.25, -47.5], "max_error_px": 0.0, "warnings": []}
 
     def _maya_settings(self, msg):
         plan = msg["data"]["plan"]
@@ -203,6 +210,23 @@ class CepClientTest(ServerFixture):
         self.assertEqual(reply["kind"], "settings.result", reply)
         self.assertEqual(reply["data"]["status"], "applied")
         self.assertEqual(self.settings_plans[0]["plan"]["apply"]["animation_range"], [1.0, 96.0])
+
+    def test_panel_sends_the_bg_position(self):
+        # D-24: "BG の位置を Maya のカメラへ" -> the selected layer's transform -> Maya
+        p, events = self.driver("pixelmap")
+        self.assertEqual(p.wait(30), 0, events)
+        reply = [e for e in events if e["event"] == "result"][0]["reply"]
+        self.assertEqual(reply["kind"], "pixelmap.result", reply)
+        self.assertEqual(reply["data"]["status"], "applied")
+        self.assertEqual(self.pixelmaps[0]["info"]["layer"]["position"], [1083.25, 492.5])
+
+    def test_bg_position_from_a_layer_without_an_image(self):
+        p, events = self.driver("pixelmap", export="ERROR")
+        self.assertEqual(p.wait(30), 0, events)
+        reply = [e for e in events if e["event"] == "result"][0]["reply"]
+        self.assertEqual(reply["kind"], "error")
+        self.assertIn(u"画像がありません", reply["data"]["message"])
+        self.assertEqual(self.pixelmaps, [])
 
     def test_time_slider_sync_with_maya(self):
         # D-22: AE switches it on and leads; a scrub in AE reaches Maya; Maya's time moves AE

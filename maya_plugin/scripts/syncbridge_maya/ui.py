@@ -20,8 +20,9 @@ except ImportError:
     from shiboken2 import wrapInstance
 
 from syncbridge import __version__, protocol
+from syncbridge.core import layer_mapping as core_layer_mapping
 from syncbridge.core import scene_sync
-from . import comp_guide, key_markers, service, snapshots
+from . import comp_guide, key_markers, layer_mapping, pixel_mapping, service, snapshots
 
 WINDOW_NAME = "SyncBridgePanel"
 # <maya folder>/icons next to scripts/ (repository: maya_plugin/icons; release: <install>/maya/icons)
@@ -135,6 +136,24 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.origin.valueChanged.connect(service.set_time_origin)
         service.set_time_origin(self.origin.value())
 
+        # Pixel Mapping (D-24): the camera / BG / method used when an AE layer is sent the first time
+        self.pm_camera = QtWidgets.QComboBox()
+        self.pm_bg = QtWidgets.QComboBox()
+        self.pm_method = QtWidgets.QComboBox()
+        for key in ("film_offset", "film_translate", "pan_zoom"):
+            self.pm_method.addItem(pixel_mapping.METHOD_LABELS[key], key)
+        self.pm_refresh = QtWidgets.QPushButton(u"↻")
+        self.pm_refresh.setToolTip(u"シーンのカメラと板ポリの一覧を読み直します")
+        self.pm_refresh.setFixedWidth(28)
+        self.pm_list = QtWidgets.QListWidget()
+        self.pm_list.setMaximumHeight(64)
+        self.pm_remove = QtWidgets.QPushButton(u"対応付けを削除")
+        self.pm_remove.setToolTip(u"選んだ対応付けをこのシーンから消します（カメラの値はそのまま。Ctrl+Z で戻せます）")
+        self.pm_refresh.clicked.connect(self.refresh_pixel_mapping)
+        self.pm_remove.clicked.connect(self.remove_mapping)
+        for combo in (self.pm_camera, self.pm_bg, self.pm_method):
+            combo.activated.connect(self.save_pixel_mapping_defaults)
+
         self.markers_label = QtWidgets.QLabel()
         self.markers_label.setWordWrap(True)
         self.clear_markers_btn = QtWidgets.QPushButton(u"マーカーを消す")
@@ -162,6 +181,12 @@ class SyncBridgePanel(QtWidgets.QDialog):
         layout.addWidget(self.peer_label)
         layout.addLayout(form)
         layout.addLayout(buttons)
+        # The sections scroll when the panel is shorter than they are (Maya on a 1080p screen):
+        # squeezed, Qt cut the combo boxes' text (mock, 2026-10-25).
+        sections = QtWidgets.QWidget()
+        outer = layout
+        layout = QtWidgets.QVBoxLayout(sections)
+        layout.setContentsMargins(0, 0, 0, 0)
         sync_box = QtWidgets.QGroupBox(u"シーン設定と時間の同期")
         sync_layout = QtWidgets.QVBoxLayout(sync_box)
         checks = QtWidgets.QGridLayout()
@@ -201,16 +226,46 @@ class SyncBridgePanel(QtWidgets.QDialog):
         guide_layout.addLayout(action_row)
         guide_layout.addWidget(guide_hint)
         layout.addWidget(guide_box)
+        pm_box = QtWidgets.QGroupBox(u"Pixel Mapping（BG スライド）")
+        pm_layout = QtWidgets.QVBoxLayout(pm_box)
+        pm_form = QtWidgets.QFormLayout()
+        camera_row = QtWidgets.QHBoxLayout()
+        camera_row.addWidget(self.pm_camera, 1)
+        camera_row.addWidget(self.pm_refresh)
+        pm_form.addRow(u"カメラ", camera_row)
+        pm_form.addRow(u"BG の板ポリ", self.pm_bg)
+        pm_form.addRow(u"方式", self.pm_method)
+        pm_hint = QtWidgets.QLabel(u"AE のパネルで BG のレイヤーを選んで「BG の位置を Maya のカメラへ」を押すと、"
+                                   u"上のカメラと BG に対応付けて、AE と同じ見え方になるようにカメラを設定します。")
+        pm_hint.setWordWrap(True)
+        pm_remove_row = QtWidgets.QHBoxLayout()
+        pm_remove_row.addStretch(1)
+        pm_remove_row.addWidget(self.pm_remove)
+        pm_layout.addLayout(pm_form)
+        pm_layout.addWidget(pm_hint)
+        pm_layout.addWidget(self.pm_list)
+        pm_layout.addLayout(pm_remove_row)
+        layout.addWidget(pm_box)
         markers_box = QtWidgets.QGroupBox(u"AE のキーのマーカー")
         markers_row = QtWidgets.QHBoxLayout(markers_box)
         markers_row.addWidget(self.markers_label, 1)
         markers_row.addWidget(self.clear_markers_btn)
         layout.addWidget(markers_box)
-        layout.addWidget(self.log, 1)
+        layout.addStretch(1)
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidget(sections)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.log.setMinimumHeight(90)
+        outer.addWidget(scroll, 3)
+        outer.addWidget(self.log, 1)
+        self.resize(440, 820)
 
         service.add_listener(self.on_event)
         self.refresh()
         self.show_stored_markers()
+        self.refresh_pixel_mapping()
 
     # -- actions -----------------------------------------------------------------
     def toggle_connection(self):
@@ -303,6 +358,55 @@ class SyncBridgePanel(QtWidgets.QDialog):
             self.write(data["message"])
         for w in data.get("warnings") or []:
             self.write(u"注意: %s" % w)
+
+    # -- Pixel Mapping (D-24) -------------------------------------------------------------------
+    def refresh_pixel_mapping(self, *_args):
+        chosen = layer_mapping.defaults()
+        for combo, nodes, current in ((self.pm_camera, layer_mapping.cameras(), chosen["camera"]),
+                                      (self.pm_bg, layer_mapping.meshes(), chosen["bg"])):
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(u"（選んでください）", None)
+            for node in nodes:
+                combo.addItem(node.split("|")[-1], node)
+            index = combo.findData(current) if current else 0
+            combo.setCurrentIndex(max(index, 0))
+            combo.blockSignals(False)
+        self.pm_method.setCurrentIndex(max(self.pm_method.findData(chosen["method"]), 0))
+        self.pm_list.clear()
+        try:
+            mappings = layer_mapping.stored()
+        except Exception as exc:
+            self.write(u"Pixel Mapping の対応付けを読めませんでした: %s" % exc)
+            mappings = []
+        for m in mappings:
+            item = QtWidgets.QListWidgetItem(core_layer_mapping.describe(m))
+            item.setData(QtCore.Qt.UserRole, m["id"])
+            self.pm_list.addItem(item)
+        if not mappings:
+            self.pm_list.addItem(u"このシーンには対応付けがありません")
+        self.pm_remove.setEnabled(bool(mappings))
+
+    def save_pixel_mapping_defaults(self, *_args):
+        try:
+            layer_mapping.set_defaults(self.pm_camera.currentData(), self.pm_bg.currentData(),
+                                       self.pm_method.currentData())
+        except Exception as exc:
+            self.write(u"選んだカメラか BG を使えません: %s" % exc)
+
+    def remove_mapping(self):
+        item = self.pm_list.currentItem()
+        mapping_id = item.data(QtCore.Qt.UserRole) if item else None
+        if not mapping_id:
+            self.write(u"消す対応付けを一覧で選んでください。")
+            return
+        try:
+            layer_mapping.remove(mapping_id)
+        except Exception as exc:
+            self.write(u"対応付けを消せませんでした: %s" % exc)
+            return
+        self.write(u"対応付けを消しました: %s（カメラの値はそのまま。Ctrl+Z で戻せます）" % item.text())
+        self.refresh_pixel_mapping()
 
     # -- Scene Time Warp: save / restore / change range ---------------------------------
     def save_warp(self):
@@ -478,6 +582,21 @@ class SyncBridgePanel(QtWidgets.QDialog):
                 self.write(u"AE → Maya の設定はキャンセルしました（何も変更していません）。")
             else:
                 self.write(u"AE の設定を適用できませんでした: %s" % payload.get("message"))
+        elif event == "pixelmap":
+            if payload.get("status") == "applied":
+                values = u"、".join(u"%s %.6g" % (k, v) for k, v in payload["values"].items()
+                                   if not isinstance(v, bool))
+                self.write(u"%sAE の BG の位置をカメラに設定しました: %s（%s、ずれ %.3f, %.3f px、計算上の誤差 %.1e px）。"
+                           u"元に戻すときは Ctrl+Z を 1 回。" % (
+                               u"［新しい対応付け］" if payload.get("created") else u"", payload["mapping"]["text"],
+                               values, payload["shift_px"][0], payload["shift_px"][1], payload["max_error_px"]))
+                for w in payload.get("warnings") or []:
+                    self.write(u"注意: %s" % w)
+            elif payload.get("status") == "cancelled":
+                self.write(u"Pixel Mapping はキャンセルしました（カメラは変えていません）。")
+            else:
+                self.write(u"AE の BG の位置を設定できませんでした: %s" % payload.get("message"))
+            self.refresh_pixel_mapping()
         elif event == "time_sync_stats":
             self.write(u"同期の計測（Maya が受け取った分）: %s" % payload)
         elif event == "time_sync":

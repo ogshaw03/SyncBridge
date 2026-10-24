@@ -6,6 +6,7 @@
 
     guide    the comp frame shown in the Maya view (core.comp_guide; display only)
     markers  the Time Remap key timings as Maya markers (core.markers; saved in the scene)
+    pixelmap the AE BG layer's position on the mapped Maya camera (core.pixel_mapping, D-24)
 
 Recorded in the transfer history with the data type of the flow.
 """
@@ -116,3 +117,28 @@ class MarkerFlow(RelayToMaya):
         if not isinstance(options, dict):
             raise RequestFailed(protocol.E_BAD_MESSAGE, "options must be an object")
         return {"export": export, "options": options}
+
+
+class PixelMapFlow(RelayToMaya):
+    """pixelmap.request {info: SBCep.pixelMapInfo(), options} (D-24).
+
+    The hub checks the AE data; Maya finds (or makes) the virtual layer for the AE layer, solves the
+    camera values with core.pixel_mapping and applies them (one undo)."""
+    DATA_TYPE = "pixel_mapping"
+    MAYA_KIND = "pixelmap.apply.request"
+
+    def payload(self, data: dict) -> dict:
+        info = data["info"]
+        try:
+            comp, layer = info["comp"], info["layer"]
+            for key in ("width", "height"):
+                int(comp[key])
+            for key in ("position", "anchorPoint"):
+                [float(v) for v in layer[key][:2]]
+            [float(v) for v in (layer["source_width"], layer["source_height"])]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RequestFailed(protocol.E_BAD_MESSAGE, "info: %s" % exc)
+        options = data.get("options") or {}
+        if not isinstance(options, dict):
+            raise RequestFailed(protocol.E_BAD_MESSAGE, "options must be an object")
+        return {"info": info, "options": options}

@@ -1,6 +1,6 @@
 # Pixel Mapping / BG Slide Sync
 
-最終更新: 2026-10-25 / 状態: **Phase 0 / Phase 1 完了（AE ⇔ Maya の位置の差 最大 0.045 px）。次は Phase 2**
+最終更新: 2026-10-25 / 状態: **Phase 0 / Phase 1 完了（AE ⇔ Maya の位置の差 最大 0.045 px）。Phase 2 実装済み（GUI の確認待ち）**
 
 AE で大判 BG を Position でスライドさせたときの「元画像のどの範囲がコンプのどこに見えるか」を、Maya の対応カメラで
 1 px 未満の位置誤差で再現する機能。仕様は利用者の「Pixel Mapping / BG Slide Sync 追加開発仕様書 v1.0」（2026-10-24）。
@@ -121,21 +121,59 @@ AE で見えるはずの位置と比較。位置は 5 通りで、整数・半�
 | H-PM-6 | 縦合わせ・Overscan の Film Fit、Film Fit Offset | 該当するカメラでのレンダー |
 | H-PM-7 | Maya の GUI のビューポートと Playblast も ogsRender と同じ位置になる | GUI で Playblast を撮って check |
 
-## 7. 次の段階
+## 7. Phase 2: Virtual Layer Mapping とハブ経由の転送（2026-10-25、D-24）
+
+**使い方:**
+1. Maya の SyncBridge パネルの「Pixel Mapping（BG スライド）」欄で、カメラ・BG の板ポリ・方式を選ぶ。
+2. AE のパネルで BG のレイヤーを選び、「BG の位置を Maya のカメラへ」を押す。
+
+**動き:**
+- 初めてのレイヤーは、確認のうえで対応付けを作る。2 回目からは確認なしで、今のフレームの位置を設定する。
+- 取り消しは 1 回。カメラの値と対応付けが一緒に戻る。前の値は `backups/pixelmap_*.json` に残る。
+
+**対応付け（Virtual Layer、`core/layer_mapping.py`）:**
+- 内容: ID、名前、AE（コンプ ID・名前、レイヤー ID・名前、元画像の名前と大きさ）、Maya（カメラと BG の UUID と名前）、
+  有効・無効、方向（ae2maya）、同期する項目（pan）、方式。
+- 保存場所: Maya のシーンの network ノード `syncBridgeLayerMappings`（JSON）。シーンと一緒に別の PC へ移る。
+  パネルで選んだ既定値は optionVar（PC ごと）。
+- 見分け方:
+  - AE はコンプ ID + レイヤー ID（H-AE-26）。ID がなければ名前で探す。
+  - Maya は UUID なので、名前やネームスペースが変わっても追える（mayapy で、名前を変えても同じ対応付けが使われることを確認）。
+- 同じカメラを、別の AE レイヤーが同じ方式で使っていれば警告する（仕様 4.2）。
+
+**通信:** `pixelmap.request`（AE のパネル → ハブ）→ `pixelmap.apply.request`（ハブ → Maya）。既存の「AE → Maya の中継」
+（`server/relay.py` の `PixelMapFlow`）を使う。転送の履歴に「Pixel Mapping」として残り、モニターにも出る。
+
+**AE（`SBCep.pixelMapInfo`）:**
+- 選択中のレイヤーの今の時刻の Position・Anchor Point・Scale・Rotation・3D・親・エフェクト、元画像の大きさ、コンプの ID と大きさ。
+- 次元を分割した Position も読む（H-AE-27）。エフェクトがあれば警告する（形を変えるかは名前ではわからないため）。
+
+**確認（mayapy 2024）:**
+- 案内付きで断る: カメラ未選択、キーのある属性。
+- 初回の対応付け、取り消し 1 回での復元、名前を変えたあとの再送、同じカメラの警告。
+- 設定後のレンダーで、AE の位置との差 0.005 px。
+- ハブ（3 件）と AE パネル（Node、2 件）の自動テスト。
+- Maya のパネルは欄が増えて縦に長くなったので、中の欄をスクロールできるようにした。高さが足りないと Qt が部品をつぶして
+  文字が切れていた（モックで確認）。
+
+**未確認:** AE の GUI での `pixelMapInfo`（H-AE-26 / 27）、Maya の GUI での一連の流れ。
+
+## 8. 次の段階
 
 1. ~~AE の参照フレーム（H-AE-24 / 25）~~ → 2026-10-25 PASS（最大 0.042 px、AE ⇔ Maya 0.045 px）。
-2. Phase 2: Virtual Layer Mapping（AE のレイヤー ⇔ Maya のカメラ・BG の対応付け、ID で識別）、ハブ経由の AE → Maya の転送
-   （既存のハブのメッセージと履歴を使う）、パネルの UI。
+2. ~~Phase 2~~ → 実装済み（7 章）。**[利用者] GUI の AE と Maya で確認する。**
 3. Phase 3: Position のアニメーション（Linear / Hold、Bezier はフレームごとのサンプリング）、全フレームの精度確認。
 4. Phase 4（B Lite の残り）: 重ね合わせ・差分画像、結果の保存と UI。
 
-## 8. ファイル
+## 9. ファイル
 
 | パス | 内容 |
 |---|---|
 | `src/syncbridge/core/pixel_mapping.py` | 座標変換（AE の行列、Maya のカメラのモデル、ソルバー）。標準ライブラリのみ |
 | `src/syncbridge/pixelcheck/` | B Lite: PNG の読み書き、テスト用 BG、目印の位置の測定。標準ライブラリのみ（numpy なしで動く） |
-| `maya_plugin/scripts/syncbridge_maya/pixel_mapping.py` | Maya: カメラと BG の板ポリの読み取り（UV から角の位置）、値の適用（取り消し 1 回、キー・接続・ロックがあれば断る） |
+| `maya_plugin/scripts/syncbridge_maya/pixel_mapping.py` | Maya: カメラと BG の板ポリの読み取り（UV から角の位置）、値の適用（取り消し 1 回、キー・接続・ロックがあれば断る）、AE からの転送（`apply_from_ae`） |
+| `src/syncbridge/core/layer_mapping.py` | Virtual Layer の記録（作成、検索、競合、保存形式） |
+| `maya_plugin/scripts/syncbridge_maya/layer_mapping.py` | Maya: 対応付けをシーンに保存、UUID でノードを探す、パネルの既定値 |
 | `after_effects/jsx/pixel_mapping_reference.jsx` | AE: 参照フレームを作るスクリプト（利用者が AE で実行） |
 | `tools/pixel_mapping/make_testgrid.py` | テスト用 BG を書き出す |
 | `tools/pixel_mapping/maya_render_check.py` | mayapy で Maya 側を通しで確認する |

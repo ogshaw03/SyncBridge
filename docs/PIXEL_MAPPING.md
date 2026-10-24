@@ -1,6 +1,6 @@
 # Pixel Mapping / BG Slide Sync
 
-最終更新: 2026-10-24 / 状態: **Phase 0（調査）完了、Phase 1（最小プロトタイプ）は Maya 側まで確認、AE 側の確認待ち**
+最終更新: 2026-10-25 / 状態: **Phase 0 / Phase 1 完了（AE ⇔ Maya の位置の差 最大 0.045 px）。次は Phase 2**
 
 AE で大判 BG を Position でスライドさせたときの「元画像のどの範囲がコンプのどこに見えるか」を、Maya の対応カメラで
 1 px 未満の位置誤差で再現する機能。仕様は利用者の「Pixel Mapping / BG Slide Sync 追加開発仕様書 v1.0」（2026-10-24）。
@@ -26,7 +26,7 @@ AE で大判 BG を Position でスライドさせたときの「元画像のど
 
 ## 3. 変換（`src/syncbridge/core/pixel_mapping.py`）
 
-**AE（H-AE-24、AE での確認待ち）:** `comp = Position + R(Rotation) · S(Scale) · (source − Anchor Point)`（3 × 3 のアフィン行列）。
+**AE（H-AE-24、AE 26.5 で確認済み）:** `comp = Position + R(Rotation) · S(Scale) · (source − Anchor Point)`（3 × 3 のアフィン行列）。
 Phase 1 で確かめる対象は Position だけ（Scale 100 %、Rotation 0、Parent なし、2D、エフェクトなし）。
 3D レイヤー、親、形を変えるエフェクトは断る。Scale・Rotation は計算に入れるが、未確認として警告する。
 
@@ -95,6 +95,11 @@ AE で見えるはずの位置と比較。位置は 5 通りで、整数・半�
 → **Maya 側は、3 方式とも 1 px 未満で再現できる。** 精度を決めるのは方式ではなく、テクスチャの扱い（Hardware 2.0 の
 最大解像度、Maya Software のフィルター）。
 
+**AE の参照フレーム（利用者の PC、AE 26.5、2026-10-25）:** `pixel_mapping_reference.jsx` で 8 フレーム（整数・半ピクセル・
+4 分の 1 ピクセル・大きな移動）を `saveFrameToPng` で保存し、`check_reference.py` で予測と比べた。
+**最大 0.042 px（整数の位置は 0.000）で PASS。** 同じ位置の Maya のレンダー（Hardware 2.0、Film Offset）と目印ごとに直接
+比べても **最大 0.045 px**。→ 「AE の元画像の座標 ⇔ Maya のレンダーの座標」が 1 px 未満でつながった（Phase 1 完了）。
+
 ## 5. 方式の選び方（Phase 1 の結論、D-23）
 
 - **既定は Film Offset**（透視）。Maya の標準の属性で、レンダーにもビューにも効く。カメラにすでに Film Offset のキーや接続が
@@ -110,16 +115,15 @@ AE で見えるはずの位置と比較。位置は 5 通りで、整数・半�
 
 | ID | 内容 | 確認方法 |
 |---|---|---|
-| H-AE-24 | AE は 2D レイヤーの元画像の座標を `Position + (source − Anchor)` のコンプの座標に描く（画素の中心の扱いも Source / Comp で同じ）。半端な位置は補間で描く | `after_effects/jsx/pixel_mapping_reference.jsx` で AE の参照フレームを作り、`tools/pixel_mapping/check_reference.py` で 1 px 未満か |
-| H-AE-25 | `CompItem.saveFrameToPng(time, file)` で、スクリプトからコンプの 1 フレームを PNG に保存できる | 同じスクリプトで ae_ref_*.png ができるか（できなければレンダーキューで PNG 連番） |
+| H-AE-24 | ✅ AE 26.5: 2D レイヤーの元画像の座標は `Position + (source − Anchor)` のコンプの座標に描かれる（Position のみ、Best、最大 0.042 px）。Scale・Rotation は未確認 | 済み |
+| H-AE-25 | ✅ AE 26.5: `CompItem.saveFrameToPng(time, file)` でフレームを PNG に保存できた | 済み |
 | H-PM-5 | Film Offset・Film Translate・2D Pan を同時に使ったときの順序（今の式の順） | 組み合わせのレンダー |
 | H-PM-6 | 縦合わせ・Overscan の Film Fit、Film Fit Offset | 該当するカメラでのレンダー |
 | H-PM-7 | Maya の GUI のビューポートと Playblast も ogsRender と同じ位置になる | GUI で Playblast を撮って check |
 
 ## 7. 次の段階
 
-1. **[利用者] AE の参照フレーム（H-AE-24 / 25）:** AE で `pixel_mapping_reference.jsx` を実行 → `check_reference.py` で確認。
-   合格すれば「AE の元画像の座標 ⇔ Maya のレンダーの座標」が 1 px 未満でつながる（Phase 1 完了）。
+1. ~~AE の参照フレーム（H-AE-24 / 25）~~ → 2026-10-25 PASS（最大 0.042 px、AE ⇔ Maya 0.045 px）。
 2. Phase 2: Virtual Layer Mapping（AE のレイヤー ⇔ Maya のカメラ・BG の対応付け、ID で識別）、ハブ経由の AE → Maya の転送
    （既存のハブのメッセージと履歴を使う）、パネルの UI。
 3. Phase 3: Position のアニメーション（Linear / Hold、Bezier はフレームごとのサンプリング）、全フレームの精度確認。

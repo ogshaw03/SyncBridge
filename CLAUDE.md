@@ -22,6 +22,9 @@ Maya の Scene Time Warp と After Effects の Time Remap を双方向に転送�
 | `src/syncbridge/server/` | Local Sync Server（FastAPI、`.venv` が必要）。`session.py` だけは標準ライブラリのみ |
 | `src/syncbridge/hubs.py` | ハブの発見・確認・強制終了、管理 API の呼び出し（標準ライブラリのみ、D-15） |
 | `src/syncbridge/monitor/` | モニター（P-B）。`model.py` は Qt なし、`window.py` は PySide6（`requirements-monitor.txt`） |
+| `src/syncbridge/core/pixel_mapping.py` | Pixel Mapping の座標変換（D-23、`docs/PIXEL_MAPPING.md`） |
+| `src/syncbridge/pixelcheck/` | B Lite: PNG・テスト用 BG・目印の測定（標準ライブラリのみ。同期と独立） |
+| `tools/pixel_mapping/` | Pixel Mapping の検証ツール（mayapy の通し確認、AE の参照フレームの確認） |
 | `src/syncbridge/updater/` | Phase 6（未実装） |
 | `maya_plugin/scripts/syncbridge_maya/` | Maya アダプタ。`maya/` という名前は使わない（D-1） |
 | `maya_plugin/plug-ins/` | Maya のプラグイン（Python API 2.0）。`syncbridge_guide.py` = AE の解像度の枠（D-16） |

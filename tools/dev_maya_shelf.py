@@ -1,7 +1,8 @@
 """Development: drag this file onto a Maya viewport to add a "SB Dev" button to the current shelf.
 
 The button opens the SyncBridge panel from THIS repository and reloads its code every time
-(syncbridge* modules are dropped from sys.modules first, the open SyncBridge windows are closed),
+(syncbridge* modules are dropped from sys.modules first, the open SyncBridge windows are closed, the
+layer stack plug-in is unloaded after the views using it are put back to Viewport 2.0),
 so a change in the repository is picked up without restarting Maya. The release's button
 (drag_to_maya_SyncBridge.py / Install.bat) is left alone.
 
@@ -24,9 +25,18 @@ try:
 except ImportError:
     from PySide2 import QtWidgets
 for w in QtWidgets.QApplication.topLevelWidgets():
-    if w.objectName() in ('SyncBridgePanel', 'SyncBridgeLayerMap'):
+    if w.objectName() in ('SyncBridgePanel', 'SyncBridgeLayerMap', 'SyncBridgeViewer'):
         w.close()
         w.deleteLater()
+from maya import cmds
+for p in cmds.getPanel(type='modelPanel') or []:
+    try:
+        if cmds.modelEditor(p, q=True, rendererOverrideName=True) == 'SyncBridgeLayerStack':
+            cmds.modelEditor(p, e=True, rendererOverrideName='')
+    except RuntimeError:
+        pass
+if cmds.pluginInfo('syncbridge_layer_stack.py', q=True, loaded=True):
+    cmds.unloadPlugin('syncbridge_layer_stack.py')   # loaded again with the new code when used
 for name in [n for n in sys.modules if n.split('.')[0] in ('syncbridge', 'syncbridge_maya')]:
     del sys.modules[name]
 import syncbridge_maya.ui

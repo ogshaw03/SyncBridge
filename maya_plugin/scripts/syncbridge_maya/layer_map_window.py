@@ -138,6 +138,7 @@ class LayerMapWindow(QtWidgets.QWidget):
         e.motion_all_requested.connect(self.transfer_all_motion)
         e.view_layer_requested.connect(self.view_layer)
         e.view_all_requested.connect(self.view_all)
+        e.viewer_requested.connect(self._open_viewer)
         e.select_objects_requested.connect(self.select_layer)
         e.remove_layer_requested.connect(self.remove_layer)
 
@@ -172,6 +173,16 @@ class LayerMapWindow(QtWidgets.QWidget):
             self.say(u"レイヤーマップを読めませんでした: %s" % exc, error=True)
             data = core_lm.empty_store()
         self.editor.set_data(_last_ae, data)
+        self._publish_stack()
+
+    def _publish_stack(self):
+        """Keep the layer stack view (D-32) in step with the layer map."""
+        from . import layer_stack
+        try:
+            if layer_stack.enabled_panels():
+                layer_stack.publish()
+        except Exception as exc:  # the view is a convenience: never break the window
+            print("SyncBridge: layer stack: %s" % exc)
 
     def load_ae_layers(self):
         if not service.is_connected():
@@ -317,6 +328,14 @@ class LayerMapWindow(QtWidgets.QWidget):
         self.editor.viewing = None
         self.refresh()
         self.say(u"ビュー %s の表示を戻しました（カメラはそのままです）。" % panel)
+
+    # -- D-33: the viewer ----------------------------------------------------------------------------------
+    def _open_viewer(self):
+        from . import viewer_window
+        try:
+            viewer_window.show()
+        except Exception as exc:
+            self.say(u"ビューアーを開けませんでした: %s" % exc, error=True)
 
     def select_layer(self, layer_id: str):
         try:

@@ -24,7 +24,12 @@ LINKED_ATTRS = ("focalLength", "horizontalFilmAperture", "verticalFilmAperture",
                 "lensSqueezeRatio", "cameraScale", "nearClipPlane", "farClipPlane", "orthographic",
                 "orthographicWidth", "fStop", "focusDistance", "depthOfField", "shutterAngle",
                 "shakeEnabled", "horizontalShake", "verticalShake", "shakeOverscanEnabled", "shakeOverscan")
-OWN_ATTRS = tuple(CAMERA_ATTRS.values()) + ("overscan",)   # overscan follows the gate of each view (D-27)
+OWN_ATTRS = tuple(CAMERA_ATTRS.values())
+# Overscan stays 1.0 on a dedicated camera, never linked: Maya's view does not shrink the film translate /
+# pan / offset with the overscan, so with an overscan other than 1 the layers slide off the comp frame
+# (the user, 2026-10-25; H-PM-10). The original's overscan (1.3 while its resolution gate is shown) must
+# not reach the viewer or "このレイヤーで見る" (D-34).
+OVERSCAN = 1.0
 
 
 def node_name(layer_name: str) -> str:
@@ -68,6 +73,39 @@ def _link(original_shape: str, shape: str) -> None:
         cmds.connectAttr("%s.%s" % (original_shape, attr), "%s.%s" % (shape, attr), force=True)
 
 
+def _set_overscan(shape: str) -> None:
+    plug = shape + ".overscan"
+    for src in cmds.listConnections(plug, source=True, destination=False, plugs=True) or []:
+        cmds.disconnectAttr(src, plug)
+    cmds.setAttr(plug, OVERSCAN)
+
+
+def needs_repair(camera: str) -> List[str]:
+    """What a dedicated camera made by an earlier version lacks: LINKED_ATTRS not driven by its original,
+    "overscan" when it is linked or not 1.0."""
+    shape = _shape(camera)
+    original = _shape(_transform(_transform(shape)))
+    out = [attr for attr in LINKED_ATTRS
+           if not cmds.isConnected("%s.%s" % (original, attr), "%s.%s" % (shape, attr))]
+    if cmds.listConnections(shape + ".overscan", source=True, destination=False) or \
+            abs(cmds.getAttr(shape + ".overscan") - OVERSCAN) > 1e-9:
+        out.append("overscan")
+    return out
+
+
+def repair(camera: str) -> List[str]:
+    """Fix what needs_repair finds; returns those attributes."""
+    shape = _shape(camera)
+    original = _shape(_transform(_transform(shape)))
+    found = needs_repair(shape)
+    for attr in found:
+        if attr == "overscan":
+            _set_overscan(shape)
+        else:
+            cmds.connectAttr("%s.%s" % (original, attr), "%s.%s" % (shape, attr), force=True)
+    return found
+
+
 def _copy_own(original_shape: str, shape: str) -> None:
     for attr in OWN_ATTRS:
         cmds.setAttr("%s.%s" % (shape, attr), cmds.getAttr("%s.%s" % (original_shape, attr)))
@@ -88,6 +126,7 @@ def create(original: str, layer_name: str, layer_id: str) -> str:
     _place(tr)
     _copy_own(original_shape, shape)
     _link(original_shape, shape)
+    _set_overscan(shape)
     return shape
 
 
@@ -117,6 +156,7 @@ def retarget(camera: str, original: str) -> str:
     shape = _shape(tr)
     _copy_own(original_shape, shape)
     _link(original_shape, shape)
+    _set_overscan(shape)
     return shape
 
 

@@ -144,6 +144,9 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.pm_layer_map.setToolTip(u"AE のレイヤーと SyncBridge の Maya レイヤー（カメラと表示するオブジェクト）を、"
                                      u"ノードをつなぐ形で対応付けます")
         self.pm_layer_map.clicked.connect(self.open_layer_map)
+        self.pm_viewer = QtWidgets.QPushButton(u"ビューアーを開く…")
+        self.pm_viewer.setToolTip(u"Maya レイヤーをそれぞれのカメラで描いて AE のように重ねて見ます（D-33）")
+        self.pm_viewer.clicked.connect(self.open_viewer)
 
         self.markers_label = QtWidgets.QLabel()
         self.markers_label.setWordWrap(True)
@@ -225,7 +228,10 @@ class SyncBridgePanel(QtWidgets.QDialog):
         pm_hint.setWordWrap(True)
         pm_hint.setStyleSheet("color: #9a9a9a;")
         pm_layout.addWidget(self.pm_summary)
-        pm_layout.addWidget(self.pm_layer_map)
+        pm_buttons = QtWidgets.QHBoxLayout()
+        pm_buttons.addWidget(self.pm_layer_map)
+        pm_buttons.addWidget(self.pm_viewer)
+        pm_layout.addLayout(pm_buttons)
         pm_layout.addWidget(pm_hint)
         layout.addWidget(pm_box)
         markers_box = QtWidgets.QGroupBox(u"AE のキーのマーカー")
@@ -359,6 +365,13 @@ class SyncBridgePanel(QtWidgets.QDialog):
     def open_layer_map(self):
         from . import layer_map_window
         layer_map_window.show()
+
+    def open_viewer(self):
+        from . import viewer_window
+        try:
+            viewer_window.show()
+        except Exception as exc:
+            self.write(u"ビューアーを開けませんでした: %s" % exc)
 
     # -- Scene Time Warp: save / restore / change range ---------------------------------
     def save_warp(self):

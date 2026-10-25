@@ -81,6 +81,12 @@ class LayerMapViewTest(unittest.TestCase):
         self.editor.rebuild()
         self.assertIn(u"表示中", self.nodes("maya")[0].title)
 
+    def test_viewer_button(self):
+        got = []
+        self.editor.viewer_requested.connect(lambda: got.append(True))
+        self.editor.viewer_btn.click()
+        self.assertEqual(got, [True])
+
     def test_wires_and_delete(self):
         link = lm.connect(self.store, lm.ae_from_layers_info(COMP, AE["layers"][0]), self.layer["id"])
         lm.connect(self.store, {"comp_id": 99, "comp": "c009", "layer_id": 1, "layer": "OLD"}, self.layer["id"],

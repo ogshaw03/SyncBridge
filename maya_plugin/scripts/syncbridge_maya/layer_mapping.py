@@ -312,6 +312,15 @@ def select_layer(layer_id: str) -> List[str]:
     return missing
 
 
+def reorder_layers(layer_ids: List[str]) -> None:
+    """The stacking order of the viewer's layer list (top / front first, D-33)."""
+    _edit("SyncBridge layer order", lambda data: core.reorder_layers(data, layer_ids))
+
+
+def set_layer_visible(layer_id: str, visible: bool) -> None:
+    _edit("SyncBridge layer visibility", lambda data: core.set_layer_visible(data, layer_id, visible))
+
+
 def remove_layer(layer_id: str) -> int:
     """Remove the layer, its links and its dedicated camera (one undo). Returns how many links went."""
     from . import layer_camera

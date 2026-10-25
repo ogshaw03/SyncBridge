@@ -115,6 +115,41 @@ def set_layer_camera(store: dict, layer_id: str, camera_uuid: Optional[str], cam
     return layer
 
 
+def stack(store: dict) -> List[dict]:
+    """The Maya layers to draw on top of each other in the layer stack view (D-32), bottom first:
+    the layer listed first in the layer map is on top (like AE). Layers without a camera or without
+    objects are left out. [{id, name, camera_uuid (the camera it is drawn with), original_camera_uuid
+    (the layer's camera, for the comp frame), object_uuids}]"""
+    out = []
+    for layer in reversed(store["maya_layers"]):
+        if not layer.get("visible", True):
+            continue
+        cam = driven_camera(layer)
+        uuids = [o.get("uuid") for o in layer.get("objects") or [] if o.get("uuid")]
+        if cam["camera_uuid"] and uuids:
+            out.append({"id": layer["id"], "name": layer["name"], "camera_uuid": cam["camera_uuid"],
+                        "original_camera_uuid": layer.get("camera_uuid") or cam["camera_uuid"],
+                        "object_uuids": uuids})
+    return out
+
+
+def reorder_layers(store: dict, layer_ids: List[str]) -> None:
+    """Put the Maya layers in this order (top / front first, the stacking order, D-33); layers not named
+    keep their place after the named ones."""
+    by_id = {layer["id"]: layer for layer in store["maya_layers"]}
+    ordered = [by_id[i] for i in layer_ids if i in by_id]
+    store["maya_layers"] = ordered + [layer for layer in store["maya_layers"] if layer["id"] not in layer_ids]
+
+
+def set_layer_visible(store: dict, layer_id: str, visible: bool) -> dict:
+    """Show / hide a Maya layer in the layer stack view (the eye of the viewer's layer list, D-33)."""
+    layer = maya_layer(store, layer_id)
+    if layer is None:
+        raise ValueError("no Maya layer %r" % layer_id)
+    layer["visible"] = bool(visible)
+    return layer
+
+
 def links_of(store: dict, layer_id: str) -> List[dict]:
     return [m for m in store["mappings"] if m.get("maya_layer") == layer_id]
 

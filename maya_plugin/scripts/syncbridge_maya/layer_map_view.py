@@ -286,6 +286,7 @@ class LayerMapEditor(QtWidgets.QWidget):
     motion_all_requested = QtCore.Signal()                # every link at once
     view_layer_requested = QtCore.Signal(str)             # Maya layer id: show it in the view (D-31)
     view_all_requested = QtCore.Signal()                  # Isolate Select off
+    viewer_requested = QtCore.Signal()                    # open the SyncBridge viewer (D-33)
     rename_layer_requested = QtCore.Signal(str, str)      # layer id, name
     camera_requested = QtCore.Signal(str)                 # layer id: use the selected camera
     add_objects_requested = QtCore.Signal(str)            # layer id: add the selected objects
@@ -333,6 +334,11 @@ class LayerMapEditor(QtWidgets.QWidget):
         self.view_all_btn = QtWidgets.QPushButton(u"表示を戻す")
         self.view_all_btn.setToolTip(u"「このレイヤーで見る」をやめ、ビューにすべてを表示します（カメラはそのまま）")
         self.view_all_btn.clicked.connect(self.view_all_requested.emit)
+        self.viewer_btn = QtWidgets.QPushButton(u"ビューアー…")
+        self.viewer_btn.setToolTip(u"Maya レイヤーをそれぞれのカメラで描いて AE のように重ねて見るウィンドウを開きます"
+                                   u"（下に AE のようなレイヤーの一覧。シーンは変えません）")
+        self.viewer_btn.clicked.connect(self.viewer_requested.emit)
+        bar2.addWidget(self.viewer_btn)
         bar2.addWidget(self.view_all_btn)
         bar2.addWidget(self.add_btn)
         bar2.addSpacing(12)

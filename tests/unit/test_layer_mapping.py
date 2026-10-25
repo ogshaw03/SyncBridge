@@ -125,6 +125,24 @@ class LayerMappingTest(unittest.TestCase):
         legacy = lm.new_maya_layer("OLD", "CAM-UUID", "|BG_CAM|BG_CAMShape")
         self.assertEqual(lm.driven_camera(legacy), {"camera_uuid": "CAM-UUID", "camera": "|BG_CAM|BG_CAMShape"})
 
+    def test_stack_order(self):
+        # D-32: the first layer in the layer map is on top (drawn last); no camera / no objects -> left out
+        store = lm.empty_store()
+        top = lm.new_maya_layer("CHAR", "SHOT", "|SHOT", [{"uuid": "c1", "name": "|char"}], "SB-CHAR", "|SB_CHAR")
+        none = lm.new_maya_layer("EMPTY", "SHOT", "|SHOT", [])
+        bottom = lm.new_maya_layer("BG", "SHOT", "|SHOT", [{"uuid": "t1", "name": "|town"}, {"uuid": "t2", "name": "|sky"}],
+                                   "SB-BG", "|SB_BG")
+        store["maya_layers"] += [top, none, bottom]
+        self.assertEqual([(s["name"], s["camera_uuid"], s["object_uuids"]) for s in lm.stack(store)],
+                         [("BG", "SB-BG", ["t1", "t2"]), ("CHAR", "SB-CHAR", ["c1"])])
+        # D-33: any order; hidden layers are not drawn
+        lm.reorder_layers(store, [bottom["id"], top["id"]])
+        self.assertEqual([layer["name"] for layer in store["maya_layers"]], ["BG", "CHAR", "EMPTY"])
+        self.assertEqual([s["name"] for s in lm.stack(store)], ["CHAR", "BG"])
+        lm.set_layer_visible(store, top["id"], False)
+        self.assertEqual([s["name"] for s in lm.stack(store)], ["BG"])
+        self.assertFalse(lm.load_store(lm.dump_store(store))["maya_layers"][1]["visible"])
+
     def test_layer_for_camera(self):
         store = lm.empty_store()
         first = lm.layer_for_camera(store, "CAM-UUID", "|BG_CAM|BG_CAMShape")

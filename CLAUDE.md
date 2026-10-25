@@ -35,7 +35,7 @@ Maya の Scene Time Warp と After Effects の Time Remap を双方向に転送�
 | `tools/pixel_mapping/` | Pixel Mapping の検証ツール（mayapy の通し確認、AE の参照フレームの確認） |
 | `src/syncbridge/updater/` | Phase 6（未実装） |
 | `maya_plugin/scripts/syncbridge_maya/` | Maya アダプタ。`maya/` という名前は使わない（D-1） |
-| `maya_plugin/plug-ins/` | Maya のプラグイン（Python API 2.0）。`syncbridge_guide.py` = AE の解像度の枠（D-16） |
+| `maya_plugin/plug-ins/` | Maya のプラグイン（Python API 2.0）。`syncbridge_guide.py` = AE の解像度の枠（D-16）、`syncbridge_layer_stack.py` = レイヤーを重ねて描くビュー（D-32） |
 | `after_effects/` | CEP 拡張機能のルート（`CSXS/manifest.xml`、`panel/`）。`jsx/` は ExtendScript。詳細は `after_effects/README.md` |
 | `schemas/` | 交換形式の JSON Schema |
 | `tests/unit`, `tests/integration` | DCC 不要のテスト |

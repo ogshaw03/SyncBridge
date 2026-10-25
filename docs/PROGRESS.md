@@ -46,6 +46,11 @@
 
 ### 2026-10-25（Windows 11, Python 3.10.6）
 
+- **開発用の状態（利用者の要望: 毎回インストールし直さない）:** Maya の「SB Dev」ボタン（`tools/dev_maya_shelf.py` をドラッグ）は
+  押すたびに `syncbridge*` を読み直してパネルを開き直す（mayapy 2024 で 2 回押して読み直しとパネル 1 枚を確認）。
+  リポジトリから動かすときは、インストール版があっても `.venv` のサーバーを使うようにした（`launcher.in_repository`）。
+  手順は `docs/RELEASE.md`「開発用の状態」。AE は既存の `tools/dev_env_on.ps1`。**GUI の Maya では未確認。**
+
 - **レイヤーマップ（ノードエディター、D-28、作業中・未コミット）:** 対応付けの保存形式を schema 2 に
   （`maya_layers` = SyncBridge の Maya レイヤー: カメラと表示するオブジェクト。schema 1 は読み込み時にカメラごとの
   レイヤーへ移す）。ハブに `layers.request`（Maya → AE、`LayersFlow`）、AE に `SBCep.layersInfo()`（H-AE-28 ❓）、

@@ -185,6 +185,23 @@ class LauncherTest(unittest.TestCase):
                 os.environ[launcher.ENV_SERVER_EXE] = old
             shutil.rmtree(tmp)
 
+    def test_repository_uses_its_venv_before_an_installed_release(self):
+        if not launcher.in_repository():
+            self.skipTest("no .venv in this checkout")
+        tmp = tempfile.mkdtemp()
+        os.makedirs(os.path.join(tmp, "Programs", "SyncBridge", "server"))
+        open(os.path.join(tmp, "Programs", "SyncBridge", "server", launcher.SERVER_EXE), "w").close()
+        old = os.environ.get("LOCALAPPDATA"), os.environ.pop(launcher.ENV_SERVER_EXE, None)
+        os.environ["LOCALAPPDATA"] = tmp
+        try:
+            argv, env, cwd = launcher.server_command()
+            self.assertEqual((argv[0], argv[1:]), (launcher.venv_python(), ["-m", "syncbridge.server"]))
+        finally:
+            os.environ["LOCALAPPDATA"] = old[0]
+            if old[1] is not None:
+                os.environ[launcher.ENV_SERVER_EXE] = old[1]
+            shutil.rmtree(tmp)
+
     def test_development_fallback(self):
         argv, env, cwd = launcher.server_command(python=sys.executable)
         self.assertEqual(argv[1:], ["-m", "syncbridge.server"])

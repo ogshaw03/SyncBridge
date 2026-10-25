@@ -53,6 +53,29 @@
 - 2024 年 11 月の Adobe の既知の問題（KnownIssue2024: 拡張機能内のシンボリックリンクと UPIA）を避けるため、
   リンクを含めない（ビルドで確認）・Windows で署名・UPIA ではなく自前で展開してインストールする。
 
+### 開発用の状態（zip を作らずにリポジトリのまま試す）
+
+インストールし直さずに、リポジトリのコードをそのまま Maya と AE で使う。準備は PC ごとに 1 回だけ。
+
+1. リポジトリを置き、`.venv` を作る（CLAUDE.md の「新しい PC では」。サーバーとモニターはここから動く）。
+2. インストール版が入っていれば、`%LOCALAPPDATA%\Programs\SyncBridge\Uninstall.bat` で外す
+   （AE のパネルの置き場が同じ名前のため）。
+3. AE: Maya と AE を終了して、開発者が自分で実行する（レジストリの PlayerDebugMode を変えるため）。
+   AE のパネルの置き場がリポジトリの `after_effects` へのリンクになる。
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File tools\dev_env_on.ps1
+   ```
+4. Maya: `tools\dev_maya_shelf.py` をビューポートへドラッグする。今のシェルフに「SB Dev」ボタンができる。
+
+その後の使い方:
+
+- **Maya:** 「SB Dev」を押すたびに、リポジトリの最新のコードを読み直してパネルを開き直す（Maya の再起動は不要）。
+  例外は `maya_plugin/plug-ins` のプラグイン（解像度の枠など）で、これを変えたときは Maya を開き直す。
+- **AE:** パネルの HTML / JS を変えたら、パネルを閉じて開き直す（ウィンドウ > エクステンション）。
+  `jsx` を変えたときは AE を開き直すのが確実。
+- **サーバー（ハブ）:** リポジトリから動かすときは、インストール版があっても `.venv` のサーバーを起動する（`client/launcher.py`）。
+  すでに動いているハブはそのまま使われるので、サーバー側のコードを変えたら、モニターでハブを止めてから Connect し直す。
+
 ### 開発用 PC でインストーラーを試すとき
 
 開発中の設定（AE パネルの開発用リンク、PlayerDebugMode、開発用サーバー）が残っていると、インストール版を正しく確認できない。

@@ -3,6 +3,12 @@
 Maya の Scene Time Warp と After Effects の Time Remap を双方向に転送・同期するツール。
 自宅 PC と会社 PC で開発するため、**会話履歴ではなくこのリポジトリのファイルから作業状況を復元する。**
 
+## 言語（利用者の指示、最優先）
+
+- **思考も、利用者への返答も、作業の途中の一言（ツールを呼ぶ前の説明）も、すべて日本語で書く。**
+  英語のツール結果やエラーを読んだ直後や、会話の要約から再開した直後に英語へ戻りやすいので、特に注意する。
+- 英語にしてよいのは、コードのコメント・識別子・コミットの技術用語など、下の規約で英語と決めたものだけ。
+
 ## 作業開始時に読むもの
 
 1. `docs/PROGRESS.md` — 現在のフェーズ、実装済み、未検証、次の作業
@@ -19,6 +25,7 @@ Maya の Scene Time Warp と After Effects の Time Remap を双方向に転送�
 | `src/syncbridge/protocol.py` | Phase 1 のメッセージ（標準ライブラリのみ、Maya からも使う） |
 | `src/syncbridge/client/` | サーバーへのクライアント（WebSocket、SyncClient、サーバー起動）。標準ライブラリのみ（Maya 内で動く） |
 | `tools/fake_ae.py` | 開発用の AE の代役（AE パネルなしで Maya 側を試す） |
+| `tools/dev_env_on.ps1`, `tools/dev_maya_shelf.py` | 開発用の状態（AE パネルをリポジトリへリンク / Maya の「SB Dev」ボタン。`docs/RELEASE.md`） |
 | `src/syncbridge/server/` | Local Sync Server（FastAPI、`.venv` が必要）。`session.py` だけは標準ライブラリのみ |
 | `src/syncbridge/hubs.py` | ハブの発見・確認・強制終了、管理 API の呼び出し（標準ライブラリのみ、D-15） |
 | `src/syncbridge/monitor/` | モニター（P-B）。`model.py` は Qt なし、`window.py` は PySide6（`requirements-monitor.txt`） |

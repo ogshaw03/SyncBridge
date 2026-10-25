@@ -4,8 +4,10 @@ Where the server comes from, first match wins (server_command):
   1. SYNCBRIDGE_SERVER_EXE environment variable (a SyncServer.exe path)
   2. installed release: <install root>/server/SyncServer.exe, where this file is
      <install root>/maya/scripts/syncbridge/client/launcher.py
-  3. the default install folder %LOCALAPPDATA%/Programs/SyncBridge/server/SyncServer.exe
-  4. development: <repo>/.venv python with `-m syncbridge.server` and <repo>/src on PYTHONPATH
+  3. development: <repo>/.venv python with `-m syncbridge.server` and <repo>/src on PYTHONPATH,
+     when this file is the repository's own and the .venv exists (an installed release on the same
+     PC must not answer for the code being developed)
+  4. the default install folder %LOCALAPPDATA%/Programs/SyncBridge/server/SyncServer.exe
 
 The child must not inherit the host application's Python settings: Maya sets
 PYTHONHOME / PYTHONPATH for its own interpreter, which would make the venv
@@ -58,6 +60,13 @@ def venv_python(root: Optional[str] = None) -> str:
     return os.path.join(root, ".venv", "bin", "python")
 
 
+def in_repository() -> bool:
+    """Is this the repository's code with its development .venv (not an installed release)?"""
+    root = repo_root()
+    return os.path.isfile(os.path.join(root, "src", "syncbridge", "client", "launcher.py")) and \
+        os.path.isfile(venv_python(root))
+
+
 def server_env(base: Optional[dict] = None, root: Optional[str] = None) -> dict:
     env = dict(os.environ if base is None else base)
     for name in STRIP_ENV:
@@ -77,7 +86,7 @@ def server_command(python: Optional[str] = None) -> Tuple[List[str], dict, str]:
         candidates = [os.environ.get(ENV_SERVER_EXE),
                       os.path.join(install_root(), "server", SERVER_EXE)]
         default_root = default_install_root()
-        if default_root:
+        if default_root and not in_repository():
             candidates.append(os.path.join(default_root, "server", SERVER_EXE))
         for exe in candidates:
             if exe and os.path.isfile(exe):

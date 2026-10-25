@@ -38,6 +38,8 @@ probe_results/
 after_effects/jsx/*.json
 # Pixel Mapping test images and result folders (made by tools/pixel_mapping, AE, Maya)
 tools/pixel_mapping/*.png
+tools/pixel_mapping/*.ma
+tools/pixel_mapping/*.mb
 tools/pixel_mapping/*/
 
 # Claude Code local

@@ -192,6 +192,7 @@ def apply_from_ae(info: dict, options: dict = None, confirm: bool = True) -> dic
                            bg_plane_data(bg_node, ae["source_width"], ae["source_height"]), matrix,
                            {"width": info["comp"]["width"], "height": info["comp"]["height"],
                             "pixelAspect": info["comp"].get("pixelAspect", 1.0)})
+    warnings += solved.get("warnings") or []
     if created and confirm:
         from . import dialogs
         text = (u"AE のレイヤー「%s」（コンプ「%s」）を、Maya のカメラ「%s」と BG「%s」に対応付けて、%s を設定しますか？\n\n"

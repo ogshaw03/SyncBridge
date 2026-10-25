@@ -46,6 +46,9 @@
 
 ### 2026-10-25（Windows 11, Python 3.10.6）
 
+- **Pixel Mapping Phase 2 を利用者が GUI で確認: 動作 OK。** カメラの距離 18.670（正確には 18.67092）で断られる問題を、
+  画面の端のずれ（1 px で拒否、0.1 px で警告）で判断するように直した（mayapy で 0.041 px）。テスト 313 件 OK。
+  要望: BG は建物・町並みのモデルのこともあり、カメラワークもある → **相対モード（Phase 2.5）の案**を `docs/PIXEL_MAPPING.md` 8 章に。
 - **Pixel Mapping Phase 2（D-24、`docs/PIXEL_MAPPING.md` 7 章、未リリース）:**
   - core `layer_mapping.py`（Virtual Layer）、ハブの `PixelMapFlow`（`pixelmap.*`）、Maya の `layer_mapping.py`
     （シーンに保存、UUID）と `pixel_mapping.apply_from_ae`、パネルの「Pixel Mapping（BG スライド）」欄、
@@ -386,8 +389,8 @@
 
 ## 次にやること
 
-0. **[利用者] Pixel Mapping の Phase 2 を GUI で確認する**（`docs/PIXEL_MAPPING.md` 7 章）。そのあと Phase 3（Position の
-   アニメーション、Linear / Hold / Bezier のサンプリング、全フレームの精度確認）。
+0. **Pixel Mapping Phase 2.5: 相対モード**（3D の BG・カメラワーク対応、`docs/PIXEL_MAPPING.md` 8 章）→ Phase 3（アニメーション、
+   Linear / Hold / Bezier のサンプリング、全フレームの精度確認）。Phase 2 は 2026-10-25 に GUI で確認済み。
 0. **[実機・利用者] シーン設定の転送とタイムスライダーの同期（D-21 / D-22）を GUI で確認する:** 両方向の設定の転送と取り消し、
    開始フレームを変えたあとでもタイムワープの転送とマーカーが同じ位置か（H-AE-22）、スクラブ・コマ送り・再生と停止での追従、
    「再生中も追従」、AE でスクラブしたときの Maya の追従と AE の重さ。確認できたら 0.1.8 として配布する。

@@ -28,7 +28,8 @@ Matrix = List[List[float]]          # 3 x 3, column vectors: [x', y', 1] = M [x,
 METHODS = ("film_offset", "film_translate", "pan_zoom")
 FIT_NAMES = {0: "fill", 1: "horizontal", 2: "vertical", 3: "overscan"}
 AFFINE_TOLERANCE = 1e-4      # px: deviation from an affine map (plane not parallel to the film)
-SCALE_TOLERANCE = 1e-5       # relative: AE and Maya show the BG at the same size
+ERROR_LIMIT_PX = 1.0         # refuse when a size / angle difference leaves this error in the frame (spec 10)
+WARN_PX = 0.1                # warn above this
 
 
 # -- 2D affine helpers ---------------------------------------------------------------------------
@@ -60,6 +61,16 @@ def multiply(*ms: Matrix) -> Matrix:
 
 def apply(m: Matrix, x: float, y: float) -> Tuple[float, float]:
     return (m[0][0] * x + m[0][1] * y + m[0][2], m[1][0] * x + m[1][1] * y + m[1][2])
+
+
+def invert(m: Matrix) -> Matrix:
+    a, b, c = m[0]
+    d, e, f = m[1]
+    det = a * e - b * d
+    if abs(det) < 1e-15:
+        raise ValueError("matrix is not invertible")
+    return [[e / det, -b / det, (b * f - c * e) / det], [-d / det, a / det, (c * d - a * f) / det],
+            [0.0, 0.0, 1.0]]
 
 
 def affine_from_points(src: Sequence[Tuple[float, float]], dst: Sequence[Tuple[float, float]]) -> Matrix:
@@ -238,14 +249,12 @@ def solve(method: str, camera: dict, render: dict, bg: dict, source_to_comp: Mat
     if method == "pan_zoom":
         zero["pan_zoom_enabled"] = zero["render_pan_zoom"] = True
     base = maya_source_to_render(zero, render, bg)
-    lin_ae = (source_to_comp[0][0], source_to_comp[0][1], source_to_comp[1][0], source_to_comp[1][1])
-    lin_maya = (base[0][0], base[0][1], base[1][0], base[1][1])
-    scale = max(abs(v) for v in lin_maya) or 1.0
-    if any(abs(a - b) > SCALE_TOLERANCE * scale for a, b in zip(lin_ae, lin_maya)):
-        ratio = math.hypot(lin_ae[0], lin_ae[2]) / math.hypot(lin_maya[0], lin_maya[2])
-        raise ValueError(u"Maya のカメラに映る BG の大きさ・向きが AE と違います（AE は Maya の %.4f 倍）。"
-                         u"オフセットでは位置しか合わせられません。" % ratio)
-    cx, cy = float(bg["width"]) / 2.0, float(bg["height"]) / 2.0
+    # Offsets only move the picture: match the source point that AE shows at the comp center, then
+    # judge a size / angle difference by the error it leaves in the frame (corners), not by a ratio
+    # (a camera distance typed as 18.670 instead of 18.67092 is a 0.005 % size difference, 0.05 px).
+    to_source = invert(source_to_comp)
+    w_c, h_c = float(comp["width"]), float(comp["height"])
+    cx, cy = apply(to_source, w_c / 2.0, h_c / 2.0)
     ax, ay = apply(source_to_comp, cx, cy)
     mx, my = apply(base, cx, cy)
     dx, dy = ax - mx, ay - my
@@ -260,12 +269,19 @@ def solve(method: str, camera: dict, render: dict, bg: dict, source_to_comp: Mat
     solved[hx], solved[hy] = vx, vy
     result = maya_source_to_render(solved, render, bg)
     err = 0.0
-    for p in ((0.0, 0.0), (float(bg["width"]), 0.0), (0.0, float(bg["height"])),
-              (float(bg["width"]), float(bg["height"])), (cx, cy)):
-        ex, ey = apply(source_to_comp, *p)
+    for corner in ((0.0, 0.0), (w_c, 0.0), (0.0, h_c), (w_c, h_c), (w_c / 2.0, h_c / 2.0)):
+        p = apply(to_source, *corner)
         rx, ry = apply(result, *p)
-        err = max(err, math.hypot(ex - rx, ey - ry))
+        err = max(err, math.hypot(corner[0] - rx, corner[1] - ry))
+    warnings = []
+    if err >= ERROR_LIMIT_PX:
+        ratio = math.hypot(source_to_comp[0][0], source_to_comp[1][0]) / math.hypot(base[0][0], base[1][0])
+        raise ValueError(u"Maya のカメラに映る BG の大きさ・向きが AE と違い、画面の端で %.2f px ずれます"
+                         u"（AE は Maya の %.5f 倍）。オフセットでは位置しか合わせられません。カメラの焦点距離・距離、"
+                         u"BG の大きさを AE に合わせてください。" % (err, ratio))
+    if err >= WARN_PX:
+        warnings.append(u"BG の大きさ・向きが AE とわずかに違い、画面の端で %.2f px ずれます（中心は合っています）。" % err)
     values = {hx: vx, hy: vy}
     if method == "pan_zoom":
         values.update(pan_zoom_enabled=True, render_pan_zoom=True)
-    return {"values": values, "shift_px": [dx, dy], "max_error_px": err, "base": base}
+    return {"values": values, "shift_px": [dx, dy], "max_error_px": err, "base": base, "warnings": warnings}

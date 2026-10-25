@@ -115,6 +115,31 @@ class SolverTest(unittest.TestCase):
         self.assertAlmostEqual(r["values"]["hfo"], -123.25 * HFA / W)
         self.assertAlmostEqual(r["values"]["vfo"], -47.5 * HFA / W)
 
+    def test_small_size_differences_are_judged_in_pixels(self):
+        # 2026-10-25: the user typed the camera distance as 18.670 (exact 18.67092): 0.005 % larger
+        m, _ = pm.ae_layer_matrix(ae_layer(960.0 + 500.0, 540.0))
+        typed = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -18.670, 1.0]
+        scale = DIST / 18.670                                    # the plane is 1 unit = 1 px at DIST
+        cam = camera(world_inverse=typed)
+        bg = {"width": 6000, "height": 4000, "top_left": (-3000.0 / scale, 2000.0 / scale, 0.0),
+              "top_right": (3000.0 / scale, 2000.0 / scale, 0.0), "bottom_left": (-3000.0 / scale, -2000.0 / scale, 0.0)}
+        # this test's plane and camera are scaled together: exact. Now nudge the distance like the user did
+        bg_user = {"width": 6000, "height": 4000, "top_left": (-30.0, 20.0, 0.0), "top_right": (30.0, 20.0, 0.0),
+                   "bottom_left": (-30.0, -20.0, 0.0)}
+        r = pm.solve("film_offset", cam, RENDER, bg_user, m, COMP)
+        self.assertLess(r["max_error_px"], 0.1)
+        self.assertEqual(r["warnings"], [])
+        self.assertLess(pm.solve("film_offset", cam, RENDER, bg, m, COMP)["max_error_px"], 1e-6)
+        # 0.03 % larger: about 0.3 px at the corners -> applied with a warning
+        near = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -18.665, 1.0]
+        r = pm.solve("film_offset", camera(world_inverse=near), RENDER, bg_user, m, COMP)
+        self.assertTrue(0.1 <= r["max_error_px"] < 1.0, r["max_error_px"])
+        self.assertEqual(len(r["warnings"]), 1)
+        # the comp center is exact whatever the size difference
+        far = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -18.60, 1.0]
+        with self.assertRaises(ValueError):
+            pm.solve("film_offset", camera(world_inverse=far), RENDER, bg_user, m, COMP)
+
     def test_pan_with_a_zoomed_camera_is_refused(self):
         m, _ = pm.ae_layer_matrix(ae_layer(1000.0, 500.0))
         with self.assertRaises(ValueError):

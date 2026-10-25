@@ -136,39 +136,14 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.origin.valueChanged.connect(service.set_time_origin)
         service.set_time_origin(self.origin.value())
 
-        # Pixel Mapping (D-24): the camera / BG / method used when an AE layer is sent the first time
-        self.pm_mode = QtWidgets.QComboBox()
-        self.pm_mode.addItem(u"相対（3D の BG・カメラワーク）", "relative")
-        self.pm_mode.addItem(u"絶対（BG の板ポリに合わせる）", "absolute")
-        self.pm_mode.setToolTip(u"相対: 最初に送ったときの見え方を基準に、AE の BG の 2D の動きをカメラに足します（BG のモデルは何でも可）。\n"
-                                u"絶対: BG の画像を貼った板ポリに、画素単位で合わせます。")
-        self.pm_camera = QtWidgets.QComboBox()
-        self.pm_bg = QtWidgets.QComboBox()
-        self.pm_method = QtWidgets.QComboBox()
-        for key in ("pan_zoom", "film_roll", "film_translate", "film_offset"):
-            self.pm_method.addItem(pixel_mapping.METHOD_LABELS[key], key)
-        self.pm_refresh = QtWidgets.QPushButton(u"↻")
-        self.pm_refresh.setToolTip(u"シーンのカメラと板ポリの一覧を読み直します")
-        self.pm_refresh.setFixedWidth(28)
-        self.pm_list = QtWidgets.QListWidget()
-        self.pm_list.setWordWrap(True)                 # the long descriptions were cut (mock, 2026-10-25)
-        self.pm_list.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        self.pm_list.setMaximumHeight(110)
-        self.pm_method.setToolTip(u"2D Pan/Zoom: 平行移動と拡大縮小\n"
-                                  u"Film Translate・Scale・Roll: 平行移動・拡大縮小・回転（Film Translate / Post Scale / Film Roll）\n"
-                                  u"Film Translate / Film Offset: 平行移動だけ")
-        self.pm_change_method = QtWidgets.QPushButton(u"方式を変更")
-        self.pm_change_method.setToolTip(u"一覧で選んだ対応付けを、上の「方式」に変えます（相対モードは次の送信で基準を取り直します）")
-        self.pm_change_method.clicked.connect(self.change_mapping_method)
-        self.pm_rebase = QtWidgets.QPushButton(u"基準をやり直す")
-        self.pm_rebase.setToolTip(u"相対モード: 選んだ対応付けの基準を消し、次に AE から送ったときの見え方を新しい基準にします")
-        self.pm_rebase.clicked.connect(self.reset_reference)
-        self.pm_remove = QtWidgets.QPushButton(u"対応付けを削除")
-        self.pm_remove.setToolTip(u"選んだ対応付けをこのシーンから消します（カメラの値はそのまま。Ctrl+Z で戻せます）")
-        self.pm_refresh.clicked.connect(self.refresh_pixel_mapping)
-        self.pm_remove.clicked.connect(self.remove_mapping)
-        for combo in (self.pm_mode, self.pm_camera, self.pm_bg, self.pm_method):
-            combo.activated.connect(self.save_pixel_mapping_defaults)
+        # Pixel Mapping (D-24, D-28): everything is set in the layer map window; the panel only opens it
+        # (two places to set it were confusing, the user, 2026-10-25)
+        self.pm_summary = QtWidgets.QLabel()
+        self.pm_summary.setWordWrap(True)
+        self.pm_layer_map = QtWidgets.QPushButton(u"レイヤーマップを開く…")
+        self.pm_layer_map.setToolTip(u"AE のレイヤーと SyncBridge の Maya レイヤー（カメラと表示するオブジェクト）を、"
+                                     u"ノードをつなぐ形で対応付けます")
+        self.pm_layer_map.clicked.connect(self.open_layer_map)
 
         self.markers_label = QtWidgets.QLabel()
         self.markers_label.setWordWrap(True)
@@ -244,33 +219,14 @@ class SyncBridgePanel(QtWidgets.QDialog):
         layout.addWidget(guide_box)
         pm_box = QtWidgets.QGroupBox(u"Pixel Mapping（BG スライド）")
         pm_layout = QtWidgets.QVBoxLayout(pm_box)
-        pm_form = QtWidgets.QFormLayout()
-        camera_row = QtWidgets.QHBoxLayout()
-        camera_row.addWidget(self.pm_camera, 1)
-        camera_row.addWidget(self.pm_refresh)
-        pm_form.addRow(u"モード", self.pm_mode)
-        pm_form.addRow(u"カメラ", camera_row)
-        pm_form.addRow(u"BG の板ポリ", self.pm_bg)
-        pm_form.addRow(u"方式", self.pm_method)
-        pm_hint = QtWidgets.QLabel(u"AE のパネルで BG のレイヤーを選んで「BG の位置を Maya のカメラへ」を押します。"
-                                   u"相対モードでは、最初の 1 回は今の見え方を基準として記録し（カメラは変えません）、"
-                                   u"次から AE の BG の動きをカメラに足します。AE と見比べるときは、解像度ゲートを"
-                                   u"隠して（Overscan 1.0）見てください。")
+        pm_hint = QtWidgets.QLabel(u"設定はすべてレイヤーマップで行います。つないだレイヤーを AE のパネルで選び、"
+                                   u"「BG の位置を Maya のカメラへ」で送ります（相対モードの最初の 1 回は基準の記録）。"
+                                   u"見比べるときは解像度ゲートを隠して（Overscan 1.0）。")
         pm_hint.setWordWrap(True)
-        pm_remove_row = QtWidgets.QHBoxLayout()
-        self.pm_layer_map = QtWidgets.QPushButton(u"レイヤーマップ…")
-        self.pm_layer_map.setToolTip(u"AE のレイヤーと SyncBridge の Maya レイヤー（カメラと表示するオブジェクト）を、"
-                                     u"ノードをつなぐ形で対応付けます")
-        self.pm_layer_map.clicked.connect(self.open_layer_map)
-        pm_remove_row.addWidget(self.pm_layer_map)
-        pm_remove_row.addStretch(1)
-        pm_remove_row.addWidget(self.pm_change_method)
-        pm_remove_row.addWidget(self.pm_rebase)
-        pm_remove_row.addWidget(self.pm_remove)
-        pm_layout.addLayout(pm_form)
+        pm_hint.setStyleSheet("color: #9a9a9a;")
+        pm_layout.addWidget(self.pm_summary)
+        pm_layout.addWidget(self.pm_layer_map)
         pm_layout.addWidget(pm_hint)
-        pm_layout.addWidget(self.pm_list)
-        pm_layout.addLayout(pm_remove_row)
         layout.addWidget(pm_box)
         markers_box = QtWidgets.QGroupBox(u"AE のキーのマーカー")
         markers_row = QtWidgets.QHBoxLayout(markers_box)
@@ -385,95 +341,24 @@ class SyncBridgePanel(QtWidgets.QDialog):
         for w in data.get("warnings") or []:
             self.write(u"注意: %s" % w)
 
-    # -- Pixel Mapping (D-24) -------------------------------------------------------------------
+    # -- Pixel Mapping (D-24, D-28): set in the layer map window ---------------------------------
     def refresh_pixel_mapping(self, *_args):
-        chosen = layer_mapping.defaults()
-        for combo, nodes, current in ((self.pm_camera, layer_mapping.cameras(), chosen["camera"]),
-                                      (self.pm_bg, layer_mapping.meshes(), chosen["bg"])):
-            combo.blockSignals(True)
-            combo.clear()
-            combo.addItem(u"（選んでください）", None)
-            for node in nodes:
-                combo.addItem(node.split("|")[-1], node)
-            index = combo.findData(current) if current else 0
-            combo.setCurrentIndex(max(index, 0))
-            combo.blockSignals(False)
-        self.pm_method.setCurrentIndex(max(self.pm_method.findData(chosen["method"]), 0))
-        self.pm_mode.setCurrentIndex(max(self.pm_mode.findData(chosen["mode"]), 0))
-        self.pm_bg.setEnabled(chosen["mode"] == "absolute")
-        self.pm_list.clear()
         try:
-            mappings = layer_mapping.stored()
+            data = layer_mapping.store()
         except Exception as exc:
-            self.write(u"Pixel Mapping の対応付けを読めませんでした: %s" % exc)
-            mappings = []
-        for m in mappings:
-            item = QtWidgets.QListWidgetItem(core_layer_mapping.describe(m))
-            item.setData(QtCore.Qt.UserRole, m["id"])
-            self.pm_list.addItem(item)
-        if not mappings:
-            self.pm_list.addItem(u"このシーンには対応付けがありません")
-        self.pm_remove.setEnabled(bool(mappings))
-        self.pm_change_method.setEnabled(bool(mappings))
-        self.pm_rebase.setEnabled(any(core_layer_mapping.mode_of(m) == "relative" for m in mappings))
-
-    def save_pixel_mapping_defaults(self, *_args):
-        try:
-            layer_mapping.set_defaults(self.pm_camera.currentData(), self.pm_bg.currentData(),
-                                       self.pm_method.currentData(), self.pm_mode.currentData())
-            self.pm_bg.setEnabled(self.pm_mode.currentData() == "absolute")
-        except Exception as exc:
-            self.write(u"選んだカメラか BG を使えません: %s" % exc)
+            self.pm_summary.setText(u"レイヤーマップを読めませんでした: %s" % exc)
+            return
+        links = data["mappings"]
+        if not links:
+            self.pm_summary.setText(u"このシーンにはまだ接続がありません。")
+            return
+        no_ref = sum(1 for m in links if core_layer_mapping.mode_of(m) == "relative" and not m.get("reference"))
+        self.pm_summary.setText(u"接続 %d 本（Maya レイヤー %d）%s" % (
+            len(links), len(data["maya_layers"]), u"・基準なし %d 本" % no_ref if no_ref else u""))
 
     def open_layer_map(self):
         from . import layer_map_window
         layer_map_window.show()
-
-    def change_mapping_method(self):
-        item = self.pm_list.currentItem()
-        mapping_id = item.data(QtCore.Qt.UserRole) if item else None
-        if not mapping_id:
-            self.write(u"方式を変える対応付けを一覧で選んでください。")
-            return
-        method = self.pm_method.currentData()
-        try:
-            changed = layer_mapping.change_method(mapping_id, method)
-        except Exception as exc:
-            self.write(u"方式を変えられませんでした: %s" % exc)
-            return
-        note = u"次に AE から送ったときの見え方を新しい基準にします（カメラは変わりません）。" \
-            if core_layer_mapping.mode_of(changed) == "relative" else u""
-        self.write(u"方式を %s に変えました: %s。%s" % (pixel_mapping.METHOD_LABELS[method],
-                                                    core_layer_mapping.describe(changed), note))
-        self.refresh_pixel_mapping()
-
-    def reset_reference(self):
-        item = self.pm_list.currentItem()
-        mapping_id = item.data(QtCore.Qt.UserRole) if item else None
-        if not mapping_id:
-            self.write(u"基準をやり直す対応付けを一覧で選んでください。")
-            return
-        try:
-            layer_mapping.reset_reference(mapping_id)
-        except Exception as exc:
-            self.write(u"基準を消せませんでした: %s" % exc)
-            return
-        self.write(u"基準を消しました。Maya と AE の見え方を合わせてから、AE で送ると新しい基準になります（カメラは変わりません）。")
-        self.refresh_pixel_mapping()
-
-    def remove_mapping(self):
-        item = self.pm_list.currentItem()
-        mapping_id = item.data(QtCore.Qt.UserRole) if item else None
-        if not mapping_id:
-            self.write(u"消す対応付けを一覧で選んでください。")
-            return
-        try:
-            layer_mapping.remove(mapping_id)
-        except Exception as exc:
-            self.write(u"対応付けを消せませんでした: %s" % exc)
-            return
-        self.write(u"対応付けを消しました: %s（カメラの値はそのまま。Ctrl+Z で戻せます）" % item.text())
-        self.refresh_pixel_mapping()
 
     # -- Scene Time Warp: save / restore / change range ---------------------------------
     def save_warp(self):
@@ -651,21 +536,19 @@ class SyncBridgePanel(QtWidgets.QDialog):
                 self.write(u"AE の設定を適用できませんでした: %s" % payload.get("message"))
         elif event == "pixelmap":
             if payload.get("reference_recorded"):
-                self.write(u"%s今の見え方を基準として記録しました（カメラは変えていません）: %s。次から AE の BG の動きを足します。"
-                           % (u"［新しい対応付け］" if payload.get("created") else u"", payload["mapping"]["text"]))
+                self.write(u"今の見え方を基準として記録しました（カメラは変えていません）: %s。次から AE の BG の動きを足します。"
+                           % payload["mapping"]["text"])
                 for w in payload.get("warnings") or []:
                     self.write(u"注意: %s" % w)
             elif payload.get("status") == "applied":
                 values = u"、".join(u"%s %.6g" % (k, v) for k, v in payload["values"].items()
                                    if not isinstance(v, bool))
-                self.write(u"%sAE の BG の位置をカメラに設定しました: %s（%s、ずれ %.3f, %.3f px、計算上の誤差 %.1e px）。"
+                self.write(u"AE の BG の位置をカメラに設定しました: %s（%s、ずれ %.3f, %.3f px、計算上の誤差 %.1e px）。"
                            u"元に戻すときは Ctrl+Z を 1 回。" % (
-                               u"［新しい対応付け］" if payload.get("created") else u"", payload["mapping"]["text"],
-                               values, payload["shift_px"][0], payload["shift_px"][1], payload["max_error_px"]))
+                               payload["mapping"]["text"], values, payload["shift_px"][0], payload["shift_px"][1],
+                               payload["max_error_px"]))
                 for w in payload.get("warnings") or []:
                     self.write(u"注意: %s" % w)
-            elif payload.get("status") == "cancelled":
-                self.write(u"Pixel Mapping はキャンセルしました（カメラは変えていません）。")
             else:
                 self.write(u"AE の BG の位置を設定できませんでした: %s" % payload.get("message"))
             self.refresh_pixel_mapping()

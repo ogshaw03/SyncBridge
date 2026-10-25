@@ -19,6 +19,7 @@ import maya.cmds as cmds
 
 REPO = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 sys.path[:0] = [os.path.join(REPO, "src"), os.path.join(REPO, "maya_plugin", "scripts")]
+from syncbridge.core import layer_mapping as core_lm
 from syncbridge.core import pixel_mapping as pm
 from syncbridge.pixelcheck import measure, png, testgrid
 from syncbridge_maya import layer_mapping, pixel_mapping
@@ -128,9 +129,12 @@ def per_depth(rep):
     return {k: "%d markers max %.3f" % (len(v), max(v)) for k, v in sorted(by.items())}
 
 
-layer_mapping.set_defaults(camera=shape, method=METHOD, mode="relative")
+store = layer_mapping.store()                   # wire the AE layer as the layer map does (D-28)
+maya_layer = core_lm.layer_for_camera(store, layer_mapping.uuid_of(shape), shape)
+core_lm.connect(store, pixel_mapping._ae_layer(info((960.0, 540.0))), maya_layer["id"], METHOD, "relative")
+layer_mapping.save_store(store)
 points = marker_world_points()
-r0 = pixel_mapping.apply_from_ae(info((960.0, 540.0)), confirm=False)
+r0 = pixel_mapping.apply_from_ae(info((960.0, 540.0)))
 print("reference:", r0["status"], r0.get("reference_recorded"), r0["mapping"]["text"])
 img0 = render("rel_%s_ref" % METHOD)
 exp0 = expected_now(points)
@@ -146,7 +150,7 @@ if METHOD == "film_roll":
 ref_m, _ = pm.ae_layer_matrix(info((960.0, 540.0))["layer"])
 for position, scale, rotation in CASES:
     try:
-        r = pixel_mapping.apply_from_ae(info(position, scale, rotation), confirm=False)
+        r = pixel_mapping.apply_from_ae(info(position, scale, rotation))
     except ValueError as exc:
         print("RESULT %-14s AE %s scale %g%% rot %g: refused: %s" % (METHOD, position, scale, rotation, exc))
         continue

@@ -263,6 +263,7 @@ class LayerMapEditor(QtWidgets.QWidget):
     the owner changes the store and calls set_data again."""
 
     reload_requested = QtCore.Signal()                    # AE のレイヤーを読み込む
+    new_method_changed = QtCore.Signal(str)               # method for new links
     add_layer_requested = QtCore.Signal()                 # Maya レイヤーを追加
     link_requested = QtCore.Signal(object, str)           # (ae dict for core.layer_mapping.connect, layer id)
     unlink_requested = QtCore.Signal(str)                 # mapping id
@@ -292,10 +293,21 @@ class LayerMapEditor(QtWidgets.QWidget):
         self.all_check.toggled.connect(lambda _: self.rebuild())
         self.comp_label = QtWidgets.QLabel(u"AE: 未読み込み")
         self.comp_label.setStyleSheet("color: #9a9a9a;")
+        self.new_method = QtWidgets.QComboBox()
+        for method in ("pan_zoom", "film_roll", "film_translate", "film_offset"):
+            self.new_method.addItem(METHOD_LABELS[method], method)
+        self.new_method.setToolTip(u"新しくつなぐ線の方式（相対モードで始まります。あとから線ごとに変えられます）\n"
+                                   u"2D Pan/Zoom: 平行移動と拡大縮小\n"
+                                   u"Film Translate・Scale・Roll: 平行移動・拡大縮小・回転\n"
+                                   u"Film Translate / Film Offset: 平行移動だけ")
+        self.new_method.activated.connect(lambda i: self.new_method_changed.emit(self.new_method.itemData(i)))
         bar = QtWidgets.QHBoxLayout()
         for w in (self.reload_btn, self.all_check, self.comp_label):
             bar.addWidget(w)
         bar.addStretch(1)
+        bar.addWidget(QtWidgets.QLabel(u"新しい接続の方式"))
+        bar.addWidget(self.new_method)
+        bar.addSpacing(12)
         bar.addWidget(self.add_btn)
 
         self.scene = LayerMapScene(self)
@@ -326,6 +338,9 @@ class LayerMapEditor(QtWidgets.QWidget):
         lay.addLayout(bar)
         lay.addWidget(split, 1)
         lay.addWidget(self.hint)
+
+    def set_new_method(self, method: str) -> None:
+        self.new_method.setCurrentIndex(max(0, self.new_method.findData(method)))
 
     # -- inspector --------------------------------------------------------------------------------------
     def _build_inspector(self):
@@ -453,8 +468,10 @@ class LayerMapEditor(QtWidgets.QWidget):
             self.inspector.setCurrentIndex(0)
             return
         self.layer_name.setText(layer["name"])
-        self.camera_label.setText(core_lm.short_name(layer.get("camera")) if layer.get("camera")
-                                  else u"<span style='color:#e0a040'>未設定</span>")
+        self.camera_label.setText(_camera_text(layer) if layer.get("camera")
+                                  else u"<span style='color:#e08a40'>未設定</span>")
+        self.camera_label.setToolTip(u"元のカメラ → SyncBridge の専用カメラ（元のカメラの子。AE の動きはこちらに入ります）"
+                                     if layer.get("layer_camera") else u"")
         self.objects.clear()
         for obj in layer.get("objects") or []:
             item = QtWidgets.QListWidgetItem(core_lm.short_name(obj.get("name")))
@@ -553,8 +570,9 @@ class LayerMapEditor(QtWidgets.QWidget):
         y = 0.0
         for layer in self.store["maya_layers"]:
             objects = layer.get("objects") or []
-            lines = [u"カメラ: %s" % core_lm.short_name(layer.get("camera")) if layer.get("camera")
-                     else u"⚠ カメラ未設定"]
+            lines = [u"カメラ: %s" % _short_camera(layer.get("camera")) if layer.get("camera") else u"⚠ カメラ未設定"]
+            if layer.get("layer_camera"):
+                lines.append(u"専用カメラ: %s" % _short_camera(layer["layer_camera"]))
             names = [core_lm.short_name(o.get("name")) for o in objects]
             lines.append(u"オブジェクト: %d" % len(objects) + (u"（%s）" % ", ".join(names[:3]) +
                                                               (u" ほか %d" % (len(names) - 3) if len(names) > 3 else "")
@@ -592,6 +610,17 @@ class LayerMapEditor(QtWidgets.QWidget):
         node.setPos(self._positions.get((node.kind, node.key), QtCore.QPointF(x, y)))
         nodes[(node.kind, node.key)] = node
         return y + node.height + GAP
+
+
+def _short_camera(path) -> str:
+    return core_lm.short_name(path).replace("Shape", "")
+
+
+def _camera_text(layer: dict) -> str:
+    """'SHOT_CAM → SB_BG_CAM' (original → dedicated camera, D-29), or the camera alone."""
+    if layer.get("layer_camera"):
+        return u"%s → %s" % (_short_camera(layer["camera"]), _short_camera(layer["layer_camera"]))
+    return _short_camera(layer.get("camera"))
 
 
 def _fps(rate) -> str:

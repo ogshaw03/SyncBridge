@@ -105,6 +105,26 @@ class LayerMappingTest(unittest.TestCase):
         self.assertEqual(lm.remove_maya_layer(store, book["id"]), 1)
         self.assertEqual((store["mappings"], [layer["id"] for layer in store["maya_layers"]]), ([], [bg["id"]]))
 
+    def test_dedicated_camera(self):
+        # D-29: links move the layer's dedicated camera; a layer without one (schema 1) moves its camera
+        store = lm.empty_store()
+        bg = lm.new_maya_layer("BG", "SHOT", "|SHOT_CAM|SHOT_CAMShape", layer_camera_uuid="SB-BG",
+                               layer_camera="|SHOT_CAM|SB_BG_CAM|SB_BG_CAMShape")
+        char = lm.new_maya_layer("CHAR", "SHOT", "|SHOT_CAM|SHOT_CAMShape", layer_camera_uuid="SB-CHAR",
+                                 layer_camera="|SHOT_CAM|SB_CHAR_CAM|SB_CHAR_CAMShape")
+        store["maya_layers"] += [bg, char]
+        a = lm.connect(store, AE, bg["id"], method="pan_zoom")
+        b = lm.connect(store, dict(AE, layer_id=2, layer="CHAR"), char["id"], method="pan_zoom")
+        self.assertEqual((a["maya"]["camera_uuid"], b["maya"]["camera_uuid"]), ("SB-BG", "SB-CHAR"))
+        self.assertEqual(lm.camera_conflicts(store["mappings"], a), [])      # same original, no conflict
+        a["reference"] = {"matrix": [], "camera": {}}
+        lm.set_layer_camera(store, bg["id"], "SHOT", "|SHOT_CAM|SHOT_CAMShape", "SB-BG", "|SHOT_CAM|SB_BG2_CAM|S")
+        self.assertEqual((a["maya"]["camera"], a["reference"] is not None), ("|SHOT_CAM|SB_BG2_CAM|S", True))
+        lm.set_layer_camera(store, bg["id"], "ALT", "|ALT|ALTShape", "SB-BG", "|ALT|SB_BG_CAM|S")
+        self.assertIsNone(a["reference"])                                    # another original camera
+        legacy = lm.new_maya_layer("OLD", "CAM-UUID", "|BG_CAM|BG_CAMShape")
+        self.assertEqual(lm.driven_camera(legacy), {"camera_uuid": "CAM-UUID", "camera": "|BG_CAM|BG_CAMShape"})
+
     def test_layer_for_camera(self):
         store = lm.empty_store()
         first = lm.layer_for_camera(store, "CAM-UUID", "|BG_CAM|BG_CAMShape")

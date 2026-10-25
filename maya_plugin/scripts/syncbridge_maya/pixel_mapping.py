@@ -159,16 +159,16 @@ REFERENCE_KEYS = {"film_offset": ("hfo", "vfo"), "film_translate": ("ft_h", "ft_
                   "film_roll": ("ft_h", "ft_v", "post_scale", "film_roll")}
 
 
-def apply_from_ae(info: dict, options: dict = None, confirm: bool = True) -> dict:
+def apply_from_ae(info: dict, options: dict = None) -> dict:
     """pixelmap.apply.request: put the AE BG layer's position on the mapped camera (D-24, D-25).
 
-    The virtual layer for the AE layer is found in the scene; when there is none, it is made from the
-    camera / BG / method / mode chosen in the SyncBridge panel, after the user confirms.
+    The link of the AE layer is found in the scene's layer map (D-28); an AE layer that is not linked
+    is refused (links are made in the layer map window only).
       absolute mode: the BG plane in the scene gives the camera values (core.pixel_mapping.solve).
       relative mode: the first send records the reference (AE layer now, camera values now) and changes
                      nothing; later sends add the AE layer's 2D change since the reference
                      (core.pixel_mapping.solve_relative). No BG geometry needed.
-    Returns {status: applied | unchanged | cancelled, mapping, values, before, max_error_px, warnings, ...}."""
+    Returns {status: applied | unchanged, mapping, values, before, max_error_px, warnings, ...}."""
     from syncbridge.core import layer_mapping as core_lm
     from syncbridge.core import pixel_mapping as core_pm
     from . import layer_mapping
@@ -177,22 +177,13 @@ def apply_from_ae(info: dict, options: dict = None, confirm: bool = True) -> dic
     data = layer_mapping.store()
     mappings = data["mappings"]
     mapping = core_lm.find(mappings, ae)
-    created = mapping is None
-    if created:
-        # not wired in the layer map yet: wire it to the Maya layer of the camera chosen in the panel
-        chosen = layer_mapping.defaults()
-        mode = options.get("mode") or chosen["mode"]
-        if not chosen["camera"] or (mode == "absolute" and not chosen["bg"]):
-            raise ValueError(u"AE のレイヤー「%s」はまだ Maya のカメラに対応付けられていません。Maya の SyncBridge パネルの"
-                             u"「Pixel Mapping」欄で、カメラ%sを選んでから、もう一度送ってください。"
-                             % (ae["layer"], u"と BG" if mode == "absolute" else u""))
-        layer = core_lm.layer_for_camera(data, layer_mapping.uuid_of(chosen["camera"]), chosen["camera"])
-        bg = {"uuid": layer_mapping.uuid_of(chosen["bg"]), "name": chosen["bg"]} if mode == "absolute" else None
-        mapping = core_lm.connect(data, ae, layer["id"], options.get("method") or chosen["method"], mode, bg)
-        mappings = [m for m in data["mappings"] if m["id"] != mapping["id"]]
-    else:
-        mapping = dict(mapping, ae=dict(mapping["ae"], **{k: v for k, v in ae.items() if v is not None}),
-                       maya=dict(mapping["maya"]))
+    if mapping is None:
+        # Links are made only in the layer map (the user's decision, 2026-10-25): nothing is changed.
+        raise ValueError(u"AE のレイヤー「%s」は、まだ Maya レイヤーにつながっていません。Maya の SyncBridge パネルで"
+                         u"「レイヤーマップを開く…」を押し、このレイヤーを Maya レイヤーにつないでから、もう一度送ってください。"
+                         % ae["layer"])
+    mapping = dict(mapping, ae=dict(mapping["ae"], **{k: v for k, v in ae.items() if v is not None}),
+                   maya=dict(mapping["maya"]))
     if not mapping.get("enabled", True):
         raise ValueError(u"対応付け「%s」は無効になっています。" % mapping["name"])
     mode = core_lm.mode_of(mapping)
@@ -224,18 +215,7 @@ def apply_from_ae(info: dict, options: dict = None, confirm: bool = True) -> dic
         warnings.append(overscan_note(cam["overscan"]))
     method = mapping["method"]
 
-    if created and confirm:
-        from . import dialogs
-        what = (u"今の見え方を基準として記録しますか？（カメラは変えません。次から AE の BG の動きを %s に足します）"
-                % METHOD_LABELS.get(method, method)) if mode == "relative" else \
-            (u"BG「%s」に合わせて %s を設定しますか？" % (bg_node.split("|")[-1], METHOD_LABELS.get(method, method)))
-        text = (u"AE のレイヤー「%s」（コンプ「%s」）を、Maya のカメラ「%s」に対応付けて、%s\n\n"
-                u"対応付けはこのシーンに保存され、次からは確認なしで設定します。元に戻すときは Ctrl+Z を 1 回。"
-                % (ae["layer"], ae["comp"], camera.split("|")[-1], what))
-        if not dialogs.ask("SyncBridge", text, u"対応付ける", u"キャンセル"):
-            return {"status": "cancelled"}
-
-    base = {"status": "applied", "created": created, "camera": camera, "frame": cmds.currentTime(q=True),
+    base = {"status": "applied", "camera": camera, "frame": cmds.currentTime(q=True),
             "mode": mode}
     if mode == "relative" and not mapping.get("reference"):
         values_now = {k: cam[k] for k in REFERENCE_KEYS[method]}

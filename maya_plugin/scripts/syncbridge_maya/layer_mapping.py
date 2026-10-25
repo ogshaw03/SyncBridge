@@ -198,7 +198,7 @@ def selected_camera() -> Optional[str]:
 def selected_objects() -> List[str]:
     """Selected DAG objects (transforms of shapes are kept as transforms), without cameras."""
     out = []
-    for node in cmds.ls(selection=True, long=True, dag=True, objectsOnly=True) or []:
+    for node in cmds.ls(selection=True, long=True, objectsOnly=True, type="dagNode") or []:   # not their children
         if cmds.nodeType(node) == "camera" or (cmds.listRelatives(node, shapes=True, type="camera") or []):
             continue
         if cmds.objectType(node, isAType="shape"):
@@ -215,30 +215,63 @@ def selected_mesh() -> Optional[str]:
     return None
 
 
-def add_layer(name: Optional[str] = None) -> dict:
-    """A new Maya layer; it uses the selected camera and objects when there are any."""
+def _use_camera(data: dict, layer: dict, camera: str) -> List[str]:
+    """Make `camera` the layer's camera: its dedicated camera is made under it, or moved there (D-29).
+    Returns warnings."""
+    from . import layer_camera
+    if layer_camera.layer_of(camera):
+        raise ValueError(u"%s は SyncBridge の専用カメラです。元のカメラ（カメラワークのあるカメラ）を選んでください。"
+                         % core.short_name(camera))
+    own = node_by_uuid(layer.get("layer_camera_uuid"))
+    shape = layer_camera.retarget(own, camera) if own else layer_camera.create(camera, layer["name"], layer["id"])
+    core.set_layer_camera(data, layer["id"], uuid_of(camera), camera, uuid_of(shape), shape)
+    moving = layer_camera.unfollowed_motion(camera)
+    if moving:
+        return [u"%s の %s にキーか接続があります。専用カメラには今の値を写しただけなので、この動きは専用カメラに入りません。"
+                % (core.short_name(camera), ", ".join(moving))]
+    return []
+
+
+def add_layer(name: Optional[str] = None):
+    """A new Maya layer; it uses the selected camera (a dedicated camera is made under it) and the
+    selected objects when there are any. Returns (layer, warnings)."""
     camera = selected_camera()
     objects = object_entries(selected_objects())
 
     def fn(data):
         layer = core.new_maya_layer(name or (core.short_name(camera).replace("Shape", "") if camera else
-                                             u"Layer %d" % (len(data["maya_layers"]) + 1)),
-                                    uuid_of(camera) if camera else None, camera, objects)
+                                             u"Layer %d" % (len(data["maya_layers"]) + 1)), objects=objects)
         data["maya_layers"].append(layer)
-        return layer
+        warnings = _use_camera(data, layer, camera) if camera else []
+        return dict(layer), warnings
     return _edit("SyncBridge add layer", fn)
 
 
 def rename_layer(layer_id: str, name: str) -> None:
-    _edit("SyncBridge rename layer", lambda data: _layer(data, layer_id).update(name=name))
+    from . import layer_camera
+
+    def fn(data):
+        layer = _layer(data, layer_id)
+        layer["name"] = name
+        own = node_by_uuid(layer.get("layer_camera_uuid"))
+        if own:
+            layer["layer_camera"] = layer_camera.rename(own, name)
+            core.set_layer_camera(data, layer_id, layer.get("camera_uuid"), layer.get("camera"),
+                                  layer["layer_camera_uuid"], layer["layer_camera"])
+    _edit("SyncBridge rename layer", fn)
 
 
-def set_camera_from_selection(layer_id: str) -> dict:
+def set_camera_from_selection(layer_id: str):
+    """Returns (layer, warnings)."""
     camera = selected_camera()
     if not camera:
         raise ValueError(u"カメラを選んでから押してください。")
-    return _edit("SyncBridge layer camera",
-                 lambda data: core.set_layer_camera(data, layer_id, uuid_of(camera), camera))
+
+    def fn(data):
+        layer = _layer(data, layer_id)
+        warnings = _use_camera(data, layer, camera)
+        return dict(layer), warnings
+    return _edit("SyncBridge layer camera", fn)
 
 
 def add_selected_objects(layer_id: str) -> int:
@@ -266,7 +299,8 @@ def select_layer(layer_id: str) -> List[str]:
     """Select the layer's camera and objects in Maya. Returns the names of those no longer in the scene."""
     layer = _layer(store(), layer_id)
     found, missing = [], []
-    entries = ([{"uuid": layer.get("camera_uuid"), "name": layer.get("camera")}] if layer.get("camera_uuid")
+    cam = core.driven_camera(layer)
+    entries = ([{"uuid": cam["camera_uuid"], "name": cam["camera"]}] if cam["camera_uuid"]
                else []) + list(layer.get("objects") or [])
     for entry in entries:
         node = node_by_uuid(entry.get("uuid"))
@@ -279,21 +313,22 @@ def select_layer(layer_id: str) -> List[str]:
 
 
 def remove_layer(layer_id: str) -> int:
-    return _edit("SyncBridge remove layer", lambda data: core.remove_maya_layer(data, layer_id))
+    """Remove the layer, its links and its dedicated camera (one undo). Returns how many links went."""
+    from . import layer_camera
+
+    def fn(data):
+        own = node_by_uuid(_layer(data, layer_id).get("layer_camera_uuid"))
+        if own:
+            layer_camera.delete(own)
+        return core.remove_maya_layer(data, layer_id)
+    return _edit("SyncBridge remove layer", fn)
 
 
 def connect(ae: dict, layer_id: str) -> dict:
-    """Link an AE layer (core.layer_mapping.ae_from_layers_info) to a Maya layer with the panel's method
-    and mode; absolute mode uses the panel's BG."""
-    chosen = defaults()
-
-    def fn(data):
-        mode = chosen["mode"]
-        bg = {"uuid": uuid_of(chosen["bg"]), "name": chosen["bg"]} if mode == "absolute" and chosen["bg"] else None
-        if mode == "absolute" and bg is None:
-            mode = "relative"
-        return dict(core.connect(data, ae, layer_id, chosen["method"], mode, bg))
-    return _edit("SyncBridge connect", fn)
+    """Link an AE layer (core.layer_mapping.ae_from_layers_info) to a Maya layer: relative mode with the
+    method chosen for new links in the layer map (change_mode switches a link to absolute)."""
+    method = defaults()["method"]
+    return _edit("SyncBridge connect", lambda data: dict(core.connect(data, ae, layer_id, method, "relative")))
 
 
 def disconnect(mapping_id: str) -> None:

@@ -9,8 +9,13 @@ The store kept in the Maya scene (syncbridge_maya.layer_mapping), so it travels 
 A Maya layer (D-28) holds the camera it uses and the objects it shows (recorded and selectable; showing
 only them is a later phase):
 
-    {"id": "ml-1a2b...", "name": "BG", "camera_uuid": "...", "camera": "|BG_CAM|BG_CAMShape",
+    {"id": "ml-1a2b...", "name": "BG", "camera_uuid": "...", "camera": "|SHOT_CAM|SHOT_CAMShape",
+     "layer_camera_uuid": "...", "layer_camera": "|SHOT_CAM|SB_BG_CAM|SB_BG_CAMShape",
      "objects": [{"uuid": "...", "name": "|town|building01"}, ...]}
+
+`camera` is the camera the layer uses (the original, it has the camera work); `layer_camera` is the
+layer's dedicated camera, a child of it (D-29), which its links move. Layers moved from schema 1 have
+no dedicated camera: their links move the original camera (as before).
 
 A link (the former "virtual layer" record of D-24; `maya_layer` added in schema 2, its camera fields are
 kept in step with the Maya layer):
@@ -57,9 +62,19 @@ def short_name(path: Optional[str]) -> str:
 
 
 def new_maya_layer(name: str, camera_uuid: Optional[str] = None, camera: Optional[str] = None,
-                   objects: Optional[List[dict]] = None) -> dict:
+                   objects: Optional[List[dict]] = None, layer_camera_uuid: Optional[str] = None,
+                   layer_camera: Optional[str] = None) -> dict:
     return {"id": "ml-" + uuid.uuid4().hex[:12], "name": name or "Layer", "camera_uuid": camera_uuid,
-            "camera": camera, "objects": list(objects or [])}
+            "camera": camera, "layer_camera_uuid": layer_camera_uuid, "layer_camera": layer_camera,
+            "objects": list(objects or [])}
+
+
+def driven_camera(layer: dict) -> dict:
+    """{camera_uuid, camera} that the layer's links move: its dedicated camera (D-29), else the camera
+    itself (layers moved from schema 1)."""
+    if layer.get("layer_camera_uuid"):
+        return {"camera_uuid": layer["layer_camera_uuid"], "camera": layer.get("layer_camera")}
+    return {"camera_uuid": layer.get("camera_uuid"), "camera": layer.get("camera")}
 
 
 def empty_store() -> dict:
@@ -83,16 +98,18 @@ def layer_for_camera(store: dict, camera_uuid: str, camera: Optional[str] = None
     return layer
 
 
-def set_layer_camera(store: dict, layer_id: str, camera_uuid: Optional[str], camera: Optional[str]) -> dict:
-    """Change a Maya layer's camera; its links follow (their references are dropped: they held the
-    old camera's values)."""
+def set_layer_camera(store: dict, layer_id: str, camera_uuid: Optional[str], camera: Optional[str],
+                     layer_camera_uuid: Optional[str] = None, layer_camera: Optional[str] = None) -> dict:
+    """Change a Maya layer's camera (and its dedicated camera); its links follow (their references are
+    dropped: they held the old camera's values)."""
     layer = maya_layer(store, layer_id)
     if layer is None:
         raise ValueError("no Maya layer %r" % layer_id)
     changed = layer.get("camera_uuid") != camera_uuid
-    layer.update(camera_uuid=camera_uuid, camera=camera)
+    layer.update(camera_uuid=camera_uuid, camera=camera, layer_camera_uuid=layer_camera_uuid,
+                 layer_camera=layer_camera)
     for m in links_of(store, layer_id):
-        m["maya"] = dict(m.get("maya") or {}, camera_uuid=camera_uuid, camera=camera)
+        m["maya"] = dict(m.get("maya") or {}, **driven_camera(layer))
         if changed:
             m["reference"] = None
     return layer
@@ -119,7 +136,7 @@ def connect(store: dict, ae: dict, layer_id: str, method: str = "pan_zoom", mode
         raise ValueError("no Maya layer %r" % layer_id)
     if not layer.get("camera_uuid"):
         raise ValueError(u"Maya レイヤー「%s」にカメラがありません。先にカメラを選んでください。" % layer["name"])
-    maya = {"camera_uuid": layer["camera_uuid"], "camera": layer.get("camera")}
+    maya = driven_camera(layer)
     if bg:
         maya.update(bg_uuid=bg.get("uuid"), bg=bg.get("name"))
     old = find(store["mappings"], ae)

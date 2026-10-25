@@ -30,6 +30,10 @@ _window = None
 _last_ae: Optional[dict] = None         # the AE layers read last (kept while Maya runs)
 
 
+def _with_warnings(text: str, warnings) -> str:
+    return text + "".join(u"\n注意: %s" % w for w in warnings or [])
+
+
 def _maya_main_window():
     ptr = omui.MQtUtil.mainWindow()
     return wrapInstance(int(ptr), QtWidgets.QWidget) if ptr is not None else None
@@ -51,12 +55,17 @@ class LayerMapWindow(QtWidgets.QWidget):
         layout.addWidget(self.status)
 
         e = self.editor
+        e.set_new_method(layer_mapping.defaults()["method"])
+        e.new_method_changed.connect(lambda method: layer_mapping.set_defaults(method=method))
         e.reload_requested.connect(self.load_ae_layers)
         e.add_layer_requested.connect(lambda: self._do(
             lambda: layer_mapping.add_layer(),
-            lambda layer: u"Maya レイヤー「%s」を追加しました%s。" % (
-                layer["name"], u"（選択中のカメラとオブジェクトを使用）" if layer.get("camera") or layer["objects"]
-                else u"。カメラとオブジェクトを選んで、右の欄から設定してください")))
+            lambda result: _with_warnings(u"Maya レイヤー「%s」を追加しました%s。" % (
+                result[0]["name"],
+                u"（専用カメラ %s を %s の下に作りました）" % (core_lm.short_name(result[0]["layer_camera"]),
+                                                             core_lm.short_name(result[0]["camera"]))
+                if result[0].get("layer_camera") else
+                u"。カメラとオブジェクトを選んで、右の欄から設定してください"), result[1])))
         e.link_requested.connect(lambda ae, layer_id: self._do(
             lambda: layer_mapping.connect(ae, layer_id),
             lambda m: u"つなぎました: %s" % core_lm.describe(m)))
@@ -75,8 +84,10 @@ class LayerMapWindow(QtWidgets.QWidget):
             lambda: layer_mapping.rename_layer(layer_id, name), u"名前を「%s」にしました。" % name))
         e.camera_requested.connect(lambda layer_id: self._do(
             lambda: layer_mapping.set_camera_from_selection(layer_id),
-            lambda layer: u"カメラを %s にしました（つながっている接続は次の送信で基準を取り直します）。"
-            % core_lm.short_name(layer.get("camera"))))
+            lambda result: _with_warnings(
+                u"カメラを %s にしました（専用カメラ %s をその下へ。つながっている接続は次の送信で基準を取り直します）。"
+                % (core_lm.short_name(result[0]["camera"]), core_lm.short_name(result[0]["layer_camera"])),
+                result[1])))
         e.add_objects_requested.connect(lambda layer_id: self._do(
             lambda: layer_mapping.add_selected_objects(layer_id), lambda n: u"オブジェクトを %d 個追加しました。" % n))
         e.remove_objects_requested.connect(lambda layer_id, uuids: self._do(
@@ -153,7 +164,9 @@ class LayerMapWindow(QtWidgets.QWidget):
         text = u"Maya レイヤー「%s」を削除しますか？" % layer["name"]
         if links:
             text += u"\nつながっている接続 %d 本も外れます。" % links
-        text += u"\n（カメラとオブジェクトはそのまま。Ctrl+Z で戻せます）"
+        if layer.get("layer_camera"):
+            text += u"\n専用カメラ %s（SyncBridge が付けた動きごと）も削除します。" % core_lm.short_name(layer["layer_camera"])
+        text += u"\n（元のカメラとオブジェクトはそのまま。Ctrl+Z で戻せます）"
         answer = QtWidgets.QMessageBox.question(self, "SyncBridge", text)
         if answer != QtWidgets.QMessageBox.StandardButton.Yes:
             return

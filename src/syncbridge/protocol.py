@@ -35,6 +35,9 @@ Pixel Mapping (D-23 / D-24), the AE BG layer's position on the mapped Maya camer
 AE layers for Maya's layer map (D-28):
     maya -> server    layers.request {}     server -> ae  layers.export.request {}
     ae -> server      layers.export.result {comp, layers}     server -> maya  layers.result {comp, layers, ...}
+    maya -> server    motion.request {comp_id, comp, layer_id, layer, times}  (Phase 3, D-30)
+                      server -> ae  motion.export.request (same)
+    ae -> server      motion.export.result {comp, layer, samples}   server -> maya  motion.result (same, ...)
 Time slider sync (D-22), no replies:
     client -> server  time.sync {enabled, follow_playback}   server -> all  time.sync.state {...}
     client -> server  time.update {t}    server -> the other app  time.set {t, source}
@@ -86,6 +89,8 @@ REPLIES = {
     "pixelmap.apply.request": "pixelmap.apply.result",
     "layers.request": "layers.result",
     "layers.export.request": "layers.export.result",
+    "motion.request": "motion.result",
+    "motion.export.request": "motion.export.result",
 }
 
 # required data fields per kind (minimal structural validation)
@@ -121,6 +126,10 @@ REQUIRED = {
     "layers.result": ("layers",),
     "layers.export.request": (),
     "layers.export.result": ("layers",),
+    "motion.request": ("times",),
+    "motion.result": ("samples",),
+    "motion.export.request": ("times",),
+    "motion.export.result": ("samples",),
     "time.sync": ("enabled",),
     "time.sync.state": ("enabled",),
     "time.update": ("t",),

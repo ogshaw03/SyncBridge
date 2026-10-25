@@ -57,6 +57,11 @@ KINDS = (
     "layers.result",
     "layers.export.request",
     "layers.export.result",
+    # AE layer motion for Phase 3 (D-30)
+    "motion.request",
+    "motion.result",
+    "motion.export.request",
+    "motion.export.result",
     # time slider sync (D-22)
     "time.sync",
     "time.sync.state",

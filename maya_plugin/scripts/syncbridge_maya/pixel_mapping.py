@@ -33,11 +33,14 @@ def _shape(camera: str) -> str:
     return shapes[0]
 
 
-def camera_data(camera: str) -> dict:
+def camera_data(camera: str, time=None) -> dict:
+    """The camera for core.pixel_mapping, now or at frame `time` (getAttr -time, H-MY-31)."""
     shape = _shape(camera)
 
     def get(attr):
-        return cmds.getAttr("%s.%s" % (shape, attr))
+        if time is None:
+            return cmds.getAttr("%s.%s" % (shape, attr))
+        return cmds.getAttr("%s.%s" % (shape, attr), time=time)
     data = {
         "name": shape,
         "orthographic": bool(get("orthographic")),
@@ -50,7 +53,7 @@ def camera_data(camera: str) -> dict:
         "camera_scale": get("cameraScale"),
         "film_fit_offset": get("filmFitOffset"),
         "overscan": get("overscan"),
-        "world_inverse": list(cmds.getAttr(shape + ".worldInverseMatrix[0]")),
+        "world_inverse": list(get("worldInverseMatrix[0]")),
     }
     for key, attr in CAMERA_ATTRS.items():
         data[key] = get(attr)

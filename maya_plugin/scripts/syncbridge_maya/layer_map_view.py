@@ -221,6 +221,7 @@ class LayerMapScene(QtWidgets.QGraphicsScene):
             self._drag.end = event.scenePos()
             self._drag.update_path()
             self.addItem(self._drag)
+            event.accept()                 # the view must not start anything else with this press
             return
         super().mousePressEvent(event)
 
@@ -247,7 +248,8 @@ class LayerMapView(QtWidgets.QGraphicsView):
     def __init__(self, scene, parent=None):
         super().__init__(scene, parent)
         self.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        self.setDragMode(QtWidgets.QGraphicsView.DragMode.RubberBandDrag)
+        # no rubber band: it showed up while wiring and got in the way (the user, 2026-10-25)
+        self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
         self.setViewportUpdateMode(QtWidgets.QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
         self.setTransformationAnchor(QtWidgets.QGraphicsView.ViewportAnchor.AnchorUnderMouse)
 
@@ -270,6 +272,8 @@ class LayerMapEditor(QtWidgets.QWidget):
     method_requested = QtCore.Signal(str, str)            # mapping id, method
     mode_requested = QtCore.Signal(str, str)              # mapping id, mode
     reset_reference_requested = QtCore.Signal(str)        # mapping id
+    motion_requested = QtCore.Signal(str)                 # mapping id: transfer the AE layer's motion (Phase 3)
+    motion_all_requested = QtCore.Signal()                # every link at once
     rename_layer_requested = QtCore.Signal(str, str)      # layer id, name
     camera_requested = QtCore.Signal(str)                 # layer id: use the selected camera
     add_objects_requested = QtCore.Signal(str)            # layer id: add the selected objects
@@ -301,14 +305,21 @@ class LayerMapEditor(QtWidgets.QWidget):
                                    u"Film Translate・Scale・Roll: 平行移動・拡大縮小・回転\n"
                                    u"Film Translate / Film Offset: 平行移動だけ")
         self.new_method.activated.connect(lambda i: self.new_method_changed.emit(self.new_method.itemData(i)))
-        bar = QtWidgets.QHBoxLayout()
+        self.motion_all_btn = QtWidgets.QPushButton(u"すべてのアニメーションを転送…")
+        self.motion_all_btn.setToolTip(u"すべての接続について、AE のレイヤーの動きを範囲の各フレームのキーとして"
+                                       u"それぞれのカメラに打ちます（範囲の指定と確認は 1 回。Ctrl+Z 1 回で全部戻ります）")
+        self.motion_all_btn.clicked.connect(self.motion_all_requested.emit)
+        bar = QtWidgets.QHBoxLayout()                       # AE side
         for w in (self.reload_btn, self.all_check, self.comp_label):
             bar.addWidget(w)
         bar.addStretch(1)
-        bar.addWidget(QtWidgets.QLabel(u"新しい接続の方式"))
-        bar.addWidget(self.new_method)
-        bar.addSpacing(12)
-        bar.addWidget(self.add_btn)
+        bar2 = QtWidgets.QHBoxLayout()                      # Maya side
+        bar2.addWidget(QtWidgets.QLabel(u"新しい接続の方式"))
+        bar2.addWidget(self.new_method)
+        bar2.addStretch(1)
+        bar2.addWidget(self.add_btn)
+        bar2.addSpacing(12)
+        bar2.addWidget(self.motion_all_btn)
 
         self.scene = LayerMapScene(self)
         self.scene.link_requested.connect(self._on_link)
@@ -336,6 +347,7 @@ class LayerMapEditor(QtWidgets.QWidget):
         self.hint.setWordWrap(True)
         lay = QtWidgets.QVBoxLayout(self)
         lay.addLayout(bar)
+        lay.addLayout(bar2)
         lay.addWidget(split, 1)
         lay.addWidget(self.hint)
 
@@ -405,8 +417,9 @@ class LayerMapEditor(QtWidgets.QWidget):
         self.unlink_btn = QtWidgets.QPushButton(u"接続を外す")
         self.unlink_btn.clicked.connect(lambda: self.unlink_requested.emit(self._selected_mapping_id()))
         self.anim_btn = QtWidgets.QPushButton(u"アニメーションを転送…")
-        self.anim_btn.setEnabled(False)
-        self.anim_btn.setToolTip(u"Phase 3 で使えるようになります。")
+        self.anim_btn.setToolTip(u"AE のレイヤーの動き（位置・スケール・回転）を、範囲の各フレームのキーとして"
+                                 u"カメラに打ちます（相対モードは先に基準が要ります）")
+        self.anim_btn.clicked.connect(lambda: self.motion_requested.emit(self._selected_mapping_id()))
         form = QtWidgets.QFormLayout()
         form.addRow(u"モード", self.mode_combo)
         form.addRow(u"方式", self.method_combo)
@@ -602,6 +615,7 @@ class LayerMapEditor(QtWidgets.QWidget):
         for node in nodes.values():
             if keep_key is not None and node.key == keep_key:
                 node.setSelected(True)
+        self.motion_all_btn.setEnabled(bool(self.store["mappings"]))
         self.scene.setSceneRect(self.scene.itemsBoundingRect().adjusted(-60, -40, 60, 40))
         self._on_selection()
 

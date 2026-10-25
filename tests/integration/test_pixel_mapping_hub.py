@@ -95,5 +95,37 @@ class LayersFlowTest(ServerFixture):
         self.assertIn(u"After Effects が接続されていません", reply["data"]["message"])
 
 
+@unittest.skipUnless(HAVE_SERVER, "server packages not installed (requirements-server.txt)")
+class MotionFlowTest(ServerFixture):
+    """motion.request from Maya (Phase 3, D-30): AE samples the layer at the asked times."""
+    connect = LayersFlowTest.connect
+
+    def ask(self, query):
+        maya = self.connect("maya")
+        q = queue.Queue()
+        maya.request("motion.request", query, q.put)
+        return q.get(timeout=10)
+
+    def test_samples_come_back(self):
+        asked = []
+
+        def ae_handler(msg):
+            asked.append(msg["data"])
+            return {"comp": LAYERS["comp"], "layer": {"name": "BG"},
+                    "samples": [{"t": t, "position": [960 + t, 540]} for t in msg["data"]["times"]]}
+        self.connect("ae", {"motion.export.request": ae_handler})
+        reply = self.ask({"comp_id": 12, "comp": "c010", "layer_id": 345, "layer": "BG", "times": [0, 0.5, 1]})
+        self.assertEqual(reply["kind"], "motion.result", reply)
+        self.assertEqual([s["t"] for s in reply["data"]["samples"]], [0, 0.5, 1])
+        self.assertEqual(asked[0], {"comp_id": 12, "comp": "c010", "layer_id": 345, "layer": "BG",
+                                    "times": [0.0, 0.5, 1.0]})
+        self.assertEqual(self.app.state.hub.history.recent(5), [])
+
+    def test_bad_times(self):
+        self.connect("ae", {"motion.export.request": lambda msg: {"samples": []}})
+        reply = self.ask({"layer": "BG", "times": []})
+        self.assertEqual(reply["data"]["code"], protocol.E_BAD_MESSAGE)
+
+
 if __name__ == "__main__":
     unittest.main()

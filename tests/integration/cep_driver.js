@@ -66,6 +66,13 @@ const host = {
                 callback({ comp: { id: 12, name: 'Comp 1', width: 1920, height: 1080, frameRate: 24, duration: 4, time: 0 },
                            layers: [{ id: 345, index: 1, name: 'BG', kind: 'still', source: 'bg.png' },
                                     { id: 346, index: 2, name: 'CHAR_A', kind: 'sequence', source: 'char_a_[0001-0096].png' }] });
+            } else if (name === 'layerMotion') {
+                const query = JSON.parse(args[0]);
+                callback({ comp: { id: 12, name: 'Comp 1', width: 1920, height: 1080, pixelAspect: 1, time: 0 },
+                           layer: { id: query.layer_id, name: query.layer, threeD: false, parent: null, effects: [],
+                                    source_width: 6000, source_height: 4000 },
+                           samples: query.times.map((t) => ({ t, position: [960 + 100 * t, 540],
+                                                              anchorPoint: [3000, 2000], scale: [100, 100], rotation: 0 })) });
             } else if (name === 'sceneSettings') {
                 callback(Object.assign({}, COMP));
             } else if (name === 'applySceneSettings') {

@@ -143,6 +143,24 @@ class LayersFlow(RelayToMaya):
         return {}
 
 
+class MotionFlow(LayersFlow):
+    """motion.request {comp_id, comp, layer_id, layer, times: [AE comp seconds]} from Maya (Phase 3, D-30):
+    AE answers the layer's transform at each time; Maya keys the linked camera with it."""
+    DATA_TYPE = "ae_motion"
+    MAYA_KIND = "motion.export.request"
+
+    def payload(self, data: dict) -> dict:
+        try:
+            times = [float(t) for t in data["times"]]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RequestFailed(protocol.E_BAD_MESSAGE, "times: %s" % exc)
+        if not times:
+            raise RequestFailed(protocol.E_BAD_MESSAGE, "times is empty")
+        out = {k: data.get(k) for k in ("comp_id", "comp", "layer_id", "layer")}
+        out["times"] = times
+        return out
+
+
 class PixelMapFlow(RelayToMaya):
     """pixelmap.request {info: SBCep.pixelMapInfo(), options} (D-24).
 

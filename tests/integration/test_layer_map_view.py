@@ -65,6 +65,7 @@ class LayerMapViewTest(unittest.TestCase):
             QtTest.QTest.mouseMove(vp, QtCore.QPoint(int(p.x()), int(p.y())))
         QtTest.QTest.mouseRelease(vp, QtCore.Qt.MouseButton.LeftButton, QtCore.Qt.KeyboardModifier.NoModifier, end)
         self.assertEqual(len(got), 1)
+        self.assertEqual(view.dragMode(), QtWidgets.QGraphicsView.DragMode.NoDrag)      # no rubber band
         self.assertEqual((got[0][0], got[0][1]), (lm.ae_from_layers_info(COMP, AE["layers"][0]), self.layer["id"]))
 
     def test_wires_and_delete(self):

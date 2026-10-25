@@ -73,6 +73,12 @@
         no_source: function (p) {
             return 'レイヤー「' + p.layer + '」には画像がありません。BG の画像（フッテージ）のレイヤーを選んでください。';
         },
+        no_comp_named: function (p) {
+            return 'コンポ「' + p.comp + '」がプロジェクトにありません。レイヤーマップで AE のレイヤーを読み込み直し、つなぎ直してください。';
+        },
+        no_layer_named: function (p) {
+            return 'コンポ「' + p.comp + '」にレイヤー「' + p.layer + '」がありません。レイヤーマップでつなぎ直してください。';
+        },
         no_server: function () {
             return 'SyncBridge サーバーが起動していません。Maya のパネルで Connect を押すか、syncbridge-server.cmd で起動してください。';
         }
@@ -361,6 +367,16 @@
         });
     };
 
+    // Phase 3 (D-30): Maya asks for one layer's transform at many comp times
+    SBPanelClient.prototype._motionExport = function (request) {
+        var self = this;
+        this.host.call('layerMotion', [JSON.stringify(request.data)], function (result) {
+            if (result.error) { self._hostError(request, result); return; }
+            self._send(message('motion.export.result',
+                { comp: result.comp, layer: result.layer, samples: result.samples }, request.event_id));
+        });
+    };
+
     SBPanelClient.prototype._settingsExport = function (request) {
         var self = this;
         this.host.call('sceneSettings', [], function (result) {
@@ -420,6 +436,9 @@
             break;
         case 'layers.export.request':
             this._layersExport(msg);
+            break;
+        case 'motion.export.request':
+            this._motionExport(msg);
             break;
         case 'settings.apply.request':
             this._settingsApply(msg);

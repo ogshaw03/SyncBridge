@@ -304,6 +304,19 @@ def request_ae_layers(callback) -> str:
     return _client.request("layers.request", {}, callback)
 
 
+def request_ae_motion(query: dict, callback) -> str:
+    """One AE layer's transform at many comp times (Phase 3, D-30): query = {comp_id, comp, layer_id,
+    layer, times}; callback(reply) gets motion.result {comp, layer, samples} or an error."""
+    if not is_connected():
+        raise ConnectError("not connected to the SyncBridge server")
+    return _client.request("motion.request", query, callback)
+
+
+def time_sync_origin() -> float:
+    """The Origin frame of the panel (Maya frame of AE comp time 0)."""
+    return _timesync.origin
+
+
 def time_sync_state() -> dict:
     return dict(_time_state)
 

@@ -181,37 +181,110 @@ var SBCep = (function () {
         return [v[0], v[1]];
     }
 
+    // position / anchorPoint / scale / rotation of a 2D layer at comp time t (expressions applied)
+    function transformAt(layer, t) {
+        var tr = layer.property('ADBE Transform Group'), pos = tr.property('ADBE Position'), position;
+        if (pos.dimensionsSeparated) {
+            position = [tr.property('ADBE Position_0').valueAtTime(t, false),
+                        tr.property('ADBE Position_1').valueAtTime(t, false)];
+        } else {
+            position = v2(pos, t);
+        }
+        return { position: position, anchorPoint: v2(tr.property('ADBE Anchor Point'), t),
+                 scale: v2(tr.property('ADBE Scale'), t), rotation: tr.property('ADBE Rotate Z').valueAtTime(t, false) };
+    }
+
+    function imageSource(layer) {
+        var src = layer.source;
+        if (!src || !(src.width > 0)) {
+            throw SB.userError('Layer "' + layer.name + '" has no image source.', 'no_source', { layer: layer.name });
+        }
+        return src;
+    }
+
+    function effectNames(layer) {
+        var effects = [], fx = layer.property('ADBE Effect Parade'), i;
+        if (fx) {
+            for (i = 1; i <= fx.numProperties; i++) {
+                if (fx.property(i).enabled) { effects.push(fx.property(i).name); }
+            }
+        }
+        return effects;
+    }
+
+    function layerInfo(layer, src, t) {
+        var out = transformAt(layer, t);
+        out.id = (layer.id !== undefined) ? layer.id : null;
+        out.name = layer.name;
+        out.index = layer.index;
+        out.threeD = layer.threeDLayer;
+        out.parent = layer.parent ? layer.parent.name : null;
+        out.effects = effectNames(layer);
+        out.source = src.name;
+        out.source_id = src.id;
+        out.source_width = src.width;
+        out.source_height = src.height;
+        return out;
+    }
+
+    function compSummary(comp, t) {
+        return { id: comp.id, name: comp.name, width: comp.width, height: comp.height,
+                 pixelAspect: comp.pixelAspect, frameRate: comp.frameRate, time: t };
+    }
+
     function pixelMapInfo() {
         try {
             var sel = SB.activeCompAndLayer(), comp = sel.comp, layer = sel.layer, t = comp.time;
-            var tr = layer.property('ADBE Transform Group'), pos = tr.property('ADBE Position'), position;
-            var src = layer.source, effects = [], fx = layer.property('ADBE Effect Parade'), i;
-            if (!src || !(src.width > 0)) {
-                throw SB.userError('Layer "' + layer.name + '" has no image source.', 'no_source', { layer: layer.name });
+            return ok({ comp: compSummary(comp, t), layer: layerInfo(layer, imageSource(layer), comp.time) });
+        } catch (e) { return fail(e); }
+    }
+
+    // ---- Phase 3 (D-30): one layer's transform at many comp times, asked by Maya ---------------------
+    //   argsText = {comp_id, comp, layer_id, layer, times: [seconds]} as JSON text.
+    //   H-AE-29: app.project.itemByID(id) finds the comp by its id; Layer.id finds the layer.
+    function findLayer(args) {
+        var comp = null, layer = null, i, item;
+        if (args.comp_id !== null && args.comp_id !== undefined) {
+            try { comp = app.project.itemByID(Number(args.comp_id)); } catch (e1) { comp = null; }
+        }
+        if (!(comp instanceof CompItem)) {
+            for (i = 1; i <= app.project.numItems; i++) {
+                item = app.project.item(i);
+                if (item instanceof CompItem && item.name === args.comp) { comp = item; break; }
             }
-            if (pos.dimensionsSeparated) {
-                position = [tr.property('ADBE Position_0').valueAtTime(t, false),
-                            tr.property('ADBE Position_1').valueAtTime(t, false)];
-            } else {
-                position = v2(pos, t);
+        }
+        if (!(comp instanceof CompItem)) {
+            throw SB.userError('Comp "' + args.comp + '" was not found.', 'no_comp_named', { comp: args.comp });
+        }
+        for (i = 1; i <= comp.numLayers; i++) {
+            if (args.layer_id !== null && args.layer_id !== undefined && comp.layer(i).id === Number(args.layer_id)) {
+                layer = comp.layer(i);
+                break;
             }
-            if (fx) {
-                for (i = 1; i <= fx.numProperties; i++) {
-                    if (fx.property(i).enabled) { effects.push(fx.property(i).name); }
-                }
+        }
+        if (!layer) {
+            for (i = 1; i <= comp.numLayers; i++) {
+                if (comp.layer(i).name === args.layer) { layer = comp.layer(i); break; }
             }
-            return ok({
-                comp: { id: comp.id, name: comp.name, width: comp.width, height: comp.height,
-                        pixelAspect: comp.pixelAspect, frameRate: comp.frameRate, time: t },
-                layer: {
-                    id: (layer.id !== undefined) ? layer.id : null, name: layer.name, index: layer.index,
-                    position: position, anchorPoint: v2(tr.property('ADBE Anchor Point'), t),
-                    scale: v2(tr.property('ADBE Scale'), t),
-                    rotation: tr.property('ADBE Rotate Z').valueAtTime(t, false),
-                    threeD: layer.threeDLayer, parent: layer.parent ? layer.parent.name : null, effects: effects,
-                    source: src.name, source_id: src.id, source_width: src.width, source_height: src.height
-                }
-            });
+        }
+        if (!layer) {
+            throw SB.userError('Layer "' + args.layer + '" was not found in comp "' + comp.name + '".',
+                               'no_layer_named', { comp: comp.name, layer: args.layer });
+        }
+        return { comp: comp, layer: layer };
+    }
+
+    function layerMotion(argsText) {
+        try {
+            var args = SBJSON.parse(argsText), found = findLayer(args), comp = found.comp, layer = found.layer;
+            var src = imageSource(layer), samples = [], i, t, s;
+            for (i = 0; i < args.times.length; i++) {
+                t = Number(args.times[i]);
+                s = transformAt(layer, t);
+                s.t = t;
+                samples.push(s);
+            }
+            return ok({ comp: compSummary(comp, comp.time), layer: layerInfo(layer, src, comp.time), samples: samples });
         } catch (e) { return fail(e); }
     }
 
@@ -272,6 +345,7 @@ var SBCep = (function () {
         readSession: readSession,
         pixelMapInfo: pixelMapInfo,
         layersInfo: layersInfo,
+        layerMotion: layerMotion,
         info: info,
         exportSelected: exportSelected,
         applyEnvelope: applyEnvelope,

@@ -26,6 +26,108 @@ def ae_layer(x, y):
             "source": {"width": 6000, "height": 4000}}
 
 
+class SourceCameraTest(unittest.TestCase):
+    """D-39: the AE source is a render of the camera (a wide BG plate, or the character's render)."""
+
+    def check(self, camera, values, source_size, m, render, comp, points=((0.3, -0.2, -2.0), (-1.5, 0.7, -9.0))):
+        """Each direction lands in the render where AE puts its source pixel."""
+        solved = dict(camera, **values)
+        src = {"width": source_size[0], "height": source_size[1], "pixel_aspect": 1.0}
+        to_render, _ = pm.to_render_space(m, comp, render)
+        for p in points:
+            want = pm.apply(to_render, *pm.project(camera, src, p))
+            got = pm.project(solved, render, p)
+            self.assertAlmostEqual(got[0], want[0], places=6)
+            self.assertAlmostEqual(got[1], want[1], places=6)
+
+    def test_wide_plate(self):
+        # the plate camera: film back x3, rendered at 5760x3240; AE: plate at 100 %, slid
+        plate = camera(hfa=HFA * 3, vfa=HFA * 3 * H / W, pan_zoom_enabled=False, render_pan_zoom=False)
+        m, _ = pm.ae_layer_matrix(dict(ae_layer(960.0 + 400.0, 540.0 - 250.0), anchorPoint=[2880.0, 1620.0],
+                                       source={"width": 5760, "height": 3240}))
+        result = pm.solve_source("pan_zoom", plate, RENDER, (5760, 3240), m, COMP)
+        self.assertAlmostEqual(result["values"]["zoom"], 1.0 / 3.0)
+        self.check(plate, result["values"], (5760, 3240), m, RENDER, COMP)
+
+    def test_character_at_rest_changes_nothing(self):
+        cam = camera(pan_zoom_enabled=False, render_pan_zoom=False)
+        m, _ = pm.ae_layer_matrix(dict(ae_layer(960.0, 540.0), anchorPoint=[960.0, 540.0],
+                                       source={"width": 1920, "height": 1080}))
+        result = pm.solve_source("pan_zoom", cam, RENDER, (1920, 1080), m, COMP)
+        self.assertAlmostEqual(result["values"]["zoom"], 1.0)
+        self.assertAlmostEqual(result["values"]["hpan"], 0.0)
+        self.assertLess(result["max_error_px"], 1e-6)
+
+    def test_supersampled_plate_and_a_margin(self):
+        # (a) the same camera at twice the resolution, AE at 50 %; the Maya render has a margin
+        cam = camera(pan_zoom_enabled=False, render_pan_zoom=False)
+        m, _ = pm.ae_layer_matrix({"position": [1000.0, 500.0], "anchorPoint": [1920.0, 1080.0], "scale": [50.0, 50.0],
+                                   "rotation": 0.0})
+        render = dict(RENDER, width=2112, height=1188)
+        result = pm.solve_source("film_roll", cam, render, (3840, 2160), m, COMP)
+        self.check(cam, result["values"], (3840, 2160), m, render, COMP)
+
+    def test_rotation_needs_film_roll(self):
+        cam = camera(pan_zoom_enabled=False, render_pan_zoom=False)
+        m, _ = pm.ae_layer_matrix({"position": [960.0, 540.0], "anchorPoint": [960.0, 540.0], "scale": [100.0, 100.0],
+                                   "rotation": 10.0})
+        with self.assertRaises(ValueError):
+            pm.solve_source("pan_zoom", cam, RENDER, (1920, 1080), m, COMP)
+        result = pm.solve_source("film_roll", cam, RENDER, (1920, 1080), m, COMP)
+        self.check(cam, result["values"], (1920, 1080), m, RENDER, COMP)
+
+
+class ParentTest(unittest.TestCase):
+    """A null parent that pans everything (the user's PAN, H-AE-30)."""
+
+    def test_parent_chain(self):
+        null = {"name": "PAN", "position": [960.0 + 150.0, 540.0 - 40.0], "anchorPoint": [50.0, 50.0],
+                "scale": [100.0, 100.0], "rotation": 0.0, "threeD": False}
+        # the child is placed in the null's layer space: (child pos - null anchor) is its offset from the null
+        child = dict(ae_layer(50.0 + 10.0, 50.0 + 5.0), parent="PAN", parents=[null])
+        m, _ = pm.ae_layer_matrix(child)
+        alone, _ = pm.ae_layer_matrix(ae_layer(960.0 + 150.0 + 10.0, 540.0 - 40.0 + 5.0))
+        for row, other in zip(m, alone):
+            for a, b in zip(row, other):
+                self.assertAlmostEqual(a, b)
+        # the null's scale scales the child around the null's anchor
+        big = dict(null, scale=[200.0, 200.0])
+        m2, warnings = pm.ae_layer_matrix(dict(child, parents=[big]))
+        self.assertAlmostEqual(pm.apply(m2, 3000.0, 2000.0)[0], 1110.0 + 2 * 10.0)
+        self.assertTrue(any(u"親「PAN」" in w for w in warnings))
+        # two levels: grandparent first in AE's list order (parent, then its parent)
+        top = {"name": "CAM", "position": [100.0, 0.0], "anchorPoint": [0.0, 0.0], "scale": [100.0, 100.0],
+               "rotation": 0.0}
+        m3, _ = pm.ae_layer_matrix(dict(child, parents=[null, top]))
+        self.assertAlmostEqual(pm.apply(m3, 3000.0, 2000.0)[0], pm.apply(m, 3000.0, 2000.0)[0] + 100.0)
+
+    def test_precomp(self):
+        # D-37: BG inside a 1920x1080 precomp, the precomp layer pans in the main comp
+        pre = {"name": "SC_PRE", "position": [960.0 + 150.0, 540.0 - 40.0], "anchorPoint": [960.0, 540.0],
+               "scale": [100.0, 100.0], "rotation": 0.0, "threeD": False, "parents": []}
+        inner = dict(ae_layer(960.0 + 10.0, 540.0 + 5.0), containers=[pre])
+        m, _ = pm.ae_layer_matrix(inner)
+        alone, _ = pm.ae_layer_matrix(ae_layer(960.0 + 150.0 + 10.0, 540.0 - 40.0 + 5.0))
+        self.assertAlmostEqual(pm.apply(m, 3000.0, 2000.0)[0], pm.apply(alone, 3000.0, 2000.0)[0])
+        self.assertAlmostEqual(pm.apply(m, 3000.0, 2000.0)[1], pm.apply(alone, 3000.0, 2000.0)[1])
+        # two levels, and a null parent of the precomp layer
+        null = {"name": "PAN", "position": [100.0, 0.0], "anchorPoint": [0.0, 0.0], "scale": [100.0, 100.0],
+                "rotation": 0.0}
+        outer = dict(pre, name="SC_ALL", position=[960.0, 540.0], parents=[null])
+        m2, _ = pm.ae_layer_matrix(dict(inner, containers=[outer, pre]))
+        self.assertAlmostEqual(pm.apply(m2, 3000.0, 2000.0)[0], pm.apply(m, 3000.0, 2000.0)[0] + 100.0)
+        with self.assertRaises(ValueError):
+            pm.ae_layer_matrix(dict(inner, containers=[dict(pre, threeD=True)]))
+
+    def test_refusals(self):
+        with self.assertRaises(ValueError):                      # a parent name but no transform (old panel)
+            pm.ae_layer_matrix(dict(ae_layer(0, 0), parent="PAN"))
+        with self.assertRaises(ValueError) as ctx:               # a 3D parent: AE camera PAN, later
+            pm.ae_layer_matrix(dict(ae_layer(0, 0), parent="PAN", parents=[
+                {"name": "PAN", "position": [0, 0, 0], "anchorPoint": [0, 0, 0], "threeD": True}]))
+        self.assertIn(u"3D", str(ctx.exception))
+
+
 class CameraModelTest(unittest.TestCase):
     """The formulas that the renders confirmed (mayapy 2024, 2026-10-24)."""
 

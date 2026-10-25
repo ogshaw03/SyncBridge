@@ -32,6 +32,20 @@ class LayerStackListTest(unittest.TestCase):
         self.addCleanup(self.list.deleteLater)
         self.list.set_data(self.store)
 
+    def test_motion_from_the_right_click_menu(self):
+        # the viewer can transfer without the layer map (the user, 2026-10-25): only layers with a link
+        lm.connect(self.store, {"comp_id": 1, "comp": "c", "layer_id": 5, "layer": "BG"}, self.bg["id"])
+        self.list.set_data(self.store)
+        got = []
+        self.list.motion_requested.connect(got.append)
+        tree = self.list.tree
+        char_action = self.list.menu_for(tree.topLevelItem(0)).actions()[0]
+        self.assertFalse(char_action.isEnabled())
+        bg_action = self.list.menu_for(tree.topLevelItem(1)).actions()[0]
+        self.assertTrue(bg_action.isEnabled())
+        bg_action.trigger()
+        self.assertEqual(got, [self.bg["id"]])
+
     def test_rows_top_first(self):
         tree = self.list.tree
         self.assertEqual([tree.topLevelItem(i).text(2) for i in range(3)], ["CHAR", "BG", "FX"])

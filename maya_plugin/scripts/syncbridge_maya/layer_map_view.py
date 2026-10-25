@@ -52,14 +52,22 @@ HEADER_H = 22
 LINE_H = 17
 PORT_R = 6
 AE_X, MAYA_X = 0, 430
+NEST_INDENT = 18         # px per precomp level (D-37)
+PAN_ROOM = 2000          # px of scene around the nodes the middle drag can move into
 GAP = 14
 
 
 def ae_key(ae: dict):
-    """What identifies an AE layer (core.layer_mapping.matches): ids when known, else names."""
+    """What identifies an AE layer (core.layer_mapping.matches): ids when known, else names, and the
+    precomp layers above it (D-37)."""
     if ae.get("layer_id") is not None:
-        return ("id", ae.get("comp_id"), ae.get("layer_id"))
-    return ("name", ae.get("comp"), ae.get("layer"))
+        return ("id", ae.get("comp_id"), ae.get("layer_id"), core_lm.via_key(ae))
+    return ("name", ae.get("comp"), ae.get("layer"), core_lm.via_key(ae))
+
+
+def ae_title(ae: dict) -> str:
+    """'SC_PRE › BG' for a layer inside a precomp."""
+    return u" › ".join([v.get("layer") or "?" for v in ae.get("via") or []] + [ae.get("layer") or "?"])
 
 
 class Node(QtWidgets.QGraphicsItem):
@@ -254,6 +262,11 @@ class LayerMapScene(QtWidgets.QGraphicsScene):
         super().mouseReleaseEvent(event)
 
 
+def _point(event):
+    """The mouse position in the viewport (PySide6: position(); PySide2: pos())."""
+    return event.position().toPoint() if hasattr(event, "position") else event.pos()
+
+
 class LayerMapView(QtWidgets.QGraphicsView):
     def __init__(self, scene, parent=None):
         super().__init__(scene, parent)
@@ -262,6 +275,61 @@ class LayerMapView(QtWidgets.QGraphicsView):
         self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
         self.setViewportUpdateMode(QtWidgets.QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
         self.setTransformationAnchor(QtWidgets.QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        # middle drag tracks the view like Maya's Node Editor (the user, 2026-10-25): no scroll bars, and
+        # the scene rect has room around the nodes (fit_room) so the view can move past them
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._track = None
+        self._centered = False
+        self._bounds = None
+
+    def sizeHint(self):
+        # the default is the scene rect (with PAN_ROOM: most of the screen), which made the window huge
+        # (the user, 2026-10-25)
+        return QtCore.QSize(560, 360)
+
+    def fit_room(self, bounds):
+        """Grow (never shrink: the view must not jump) the scene rect to the nodes plus PAN_ROOM; centers
+        on the nodes the first time."""
+        room = bounds.adjusted(-PAN_ROOM, -PAN_ROOM, PAN_ROOM, PAN_ROOM)
+        rect = self.scene().sceneRect()
+        self.scene().setSceneRect(room if not self._centered else rect.united(room))
+        self._bounds = bounds
+        if not self._centered and self.isVisible() and not bounds.isEmpty():
+            self.centerOn(bounds.center())
+            self._centered = True
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._centered and self._bounds is not None and not self._bounds.isEmpty():
+            self.centerOn(self._bounds.center())       # set_data may come before the view has its size
+            self._centered = True
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.MiddleButton:
+            self._track = _point(event)
+            self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._track is not None:
+            delta = _point(event) - self._track
+            self._track = _point(event)
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._track is not None and event.button() == Qt.MouseButton.MiddleButton:
+            self._track = None
+            self.viewport().unsetCursor()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event):
         factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
@@ -276,12 +344,14 @@ class LayerMapEditor(QtWidgets.QWidget):
 
     reload_requested = QtCore.Signal()                    # AE のレイヤーを読み込む
     new_method_changed = QtCore.Signal(str)               # method for new links
+    new_mode_changed = QtCore.Signal(str)                 # mode for new links (relative / source, D-39)
     add_layer_requested = QtCore.Signal()                 # Maya レイヤーを追加
     link_requested = QtCore.Signal(object, str)           # (ae dict for core.layer_mapping.connect, layer id)
     unlink_requested = QtCore.Signal(str)                 # mapping id
     method_requested = QtCore.Signal(str, str)            # mapping id, method
     mode_requested = QtCore.Signal(str, str)              # mapping id, mode
     reset_reference_requested = QtCore.Signal(str)        # mapping id
+    record_reference_requested = QtCore.Signal(str)       # mapping id: the reference from AE at this frame (D-37)
     motion_requested = QtCore.Signal(str)                 # mapping id: transfer the AE layer's motion (Phase 3)
     motion_all_requested = QtCore.Signal()                # every link at once
     view_layer_requested = QtCore.Signal(str)             # Maya layer id: show it in the view (D-31)
@@ -327,8 +397,16 @@ class LayerMapEditor(QtWidgets.QWidget):
         for w in (self.reload_btn, self.all_check, self.comp_label):
             bar.addWidget(w)
         bar.addStretch(1)
+        self.new_mode = QtWidgets.QComboBox()
+        for mode in ("source", "relative"):
+            self.new_mode.addItem(core_lm.MODE_LABELS[mode], mode)
+        self.new_mode.setToolTip(u"素材カメラ: AE の素材を書き出したカメラを Maya レイヤーのカメラにすると、素材の大きさから直接合わせます"
+                                 u"（基準を合わせる手間なし）\n"
+                                 u"相対: 基準のフレームで Maya と AE の見え方を合わせて記録し、そこからの動きを足します")
+        self.new_mode.activated.connect(lambda i: self.new_mode_changed.emit(self.new_mode.itemData(i)))
         bar2 = QtWidgets.QHBoxLayout()                      # Maya side
-        bar2.addWidget(QtWidgets.QLabel(u"新しい接続の方式"))
+        bar2.addWidget(QtWidgets.QLabel(u"新しい接続"))
+        bar2.addWidget(self.new_mode)
         bar2.addWidget(self.new_method)
         bar2.addStretch(1)
         self.view_all_btn = QtWidgets.QPushButton(u"表示を戻す")
@@ -378,6 +456,9 @@ class LayerMapEditor(QtWidgets.QWidget):
 
     def set_new_method(self, method: str) -> None:
         self.new_method.setCurrentIndex(max(0, self.new_method.findData(method)))
+
+    def set_new_mode(self, mode: str) -> None:
+        self.new_mode.setCurrentIndex(max(0, self.new_mode.findData(mode)))
 
     # -- inspector --------------------------------------------------------------------------------------
     def _build_inspector(self):
@@ -444,6 +525,10 @@ class LayerMapEditor(QtWidgets.QWidget):
             lambda i: self.method_requested.emit(self._selected_mapping_id(), self.method_combo.itemData(i)))
         self.reset_btn = QtWidgets.QPushButton(u"基準をやり直す")
         self.reset_btn.clicked.connect(lambda: self.reset_reference_requested.emit(self._selected_mapping_id()))
+        self.record_btn = QtWidgets.QPushButton(u"基準を記録（今のフレーム）")
+        self.record_btn.setToolTip(u"Maya の今のフレームにあたる AE の時間で、AE のレイヤーの位置を読み、基準として記録します"
+                                   u"（Maya と AE の見え方を合わせてから。プリコンポの中のレイヤーはこれで記録します）")
+        self.record_btn.clicked.connect(lambda: self.record_reference_requested.emit(self._selected_mapping_id()))
         self.unlink_btn = QtWidgets.QPushButton(u"接続を外す")
         self.unlink_btn.clicked.connect(lambda: self.unlink_requested.emit(self._selected_mapping_id()))
         self.anim_btn = QtWidgets.QPushButton(u"アニメーションを転送…")
@@ -456,6 +541,7 @@ class LayerMapEditor(QtWidgets.QWidget):
         v = QtWidgets.QVBoxLayout(link)
         v.addWidget(self.link_text)
         v.addLayout(form)
+        v.addWidget(self.record_btn)
         v.addWidget(self.reset_btn)
         v.addWidget(self.unlink_btn)
         v.addSpacing(8)
@@ -531,10 +617,14 @@ class LayerMapEditor(QtWidgets.QWidget):
         if core_lm.mode_of(mapping) == "absolute":
             state = u"BG: %s" % core_lm.short_name((mapping.get("maya") or {}).get("bg"))
         self.link_text.setText(u"<b>%s</b> → <b>%s</b><br>%s" % (
-            mapping["ae"].get("layer") or "?", layer.get("name", "?"), state))
+            ae_title(mapping["ae"]), layer.get("name", "?"), state))
         self.mode_combo.setCurrentIndex(max(0, self.mode_combo.findData(core_lm.mode_of(mapping))))
         self.method_combo.setCurrentIndex(max(0, self.method_combo.findData(mapping["method"])))
         self.reset_btn.setEnabled(core_lm.mode_of(mapping) == "relative")
+        self.record_btn.setEnabled(core_lm.mode_of(mapping) == "relative")
+        if core_lm.mode_of(mapping) == "source":
+            self.link_text.setText(self.link_text.text().split("<br>")[0] +
+                                   u"<br>素材カメラ: 素材を書き出したカメラと素材の大きさから直接合わせます（基準は不要）")
         self.inspector.setCurrentIndex(3)
 
     def _on_rename(self):
@@ -599,14 +689,17 @@ class LayerMapEditor(QtWidgets.QWidget):
             lines = [u"%s　%s" % (kind, size), layer.get("source") or ""]
             if not layer.get("enabled", True):
                 lines[0] += u"　（非表示）"
-            node = Node("ae", key, u"%d  %s" % (layer.get("index", 0), layer.get("name")), [l for l in lines if l],
+            depth = len(layer.get("via") or [])
+            title = u"%d  %s" % (layer.get("index", 0), layer.get("name")) if not depth else \
+                u"%d  %s" % (layer.get("index", 0), ae_title(core_lm.ae_from_layers_info(comp, layer)))
+            node = Node("ae", key, title, [l for l in lines if l],
                         QtGui.QColor(KIND_COLORS.get(layer.get("kind"), "#6a6a6a")), "right")
-            y = self._place(node, nodes, AE_X, y)
+            y = self._place(node, nodes, AE_X + NEST_INDENT * depth, y)       # inside a precomp: indented (D-37)
         for m in self.store["mappings"]:                   # linked AE layers that are not in this comp
             key = ae_key(m["ae"])
             if ("ae", key) in nodes:
                 continue
-            node = Node("ae", key, m["ae"].get("layer") or "?",
+            node = Node("ae", key, ae_title(m["ae"]),
                         [u"⚠ 現在のコンプにありません", u"コンポ: %s" % (m["ae"].get("comp") or "?")],
                         C_MISSING, "right", dim=True)
             y = self._place(node, nodes, AE_X, y)
@@ -647,7 +740,7 @@ class LayerMapEditor(QtWidgets.QWidget):
             if keep_key is not None and node.key == keep_key:
                 node.setSelected(True)
         self.motion_all_btn.setEnabled(bool(self.store["mappings"]))
-        self.scene.setSceneRect(self.scene.itemsBoundingRect().adjusted(-60, -40, 60, 40))
+        self.view.fit_room(self.scene.itemsBoundingRect())
         self._on_selection()
 
     def _place(self, node: Node, nodes: dict, x: float, y: float) -> float:

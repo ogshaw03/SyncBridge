@@ -137,6 +137,26 @@ class TimeSyncTest(ServerFixture):
         _, late = self.connect("maya")
         self.assertTrue(late["state"].get(timeout=5)["enabled"])
 
+    def test_one_origin_frame(self):
+        # D-38: Maya hands its scene's Origin frame to the hub, every panel gets it (also later ones),
+        # and a change from AE goes to Maya
+        origins = {"maya": queue.Queue(), "ae": queue.Queue(), "late": queue.Queue()}
+
+        def client(app, key):
+            c = SyncClient(app, {}, notices={"timing.state": lambda m: origins[key].put(m["data"])})
+            c.connect(port=self.port, token=TOKEN)
+            self.addCleanup(c.disconnect)
+            return c
+        maya = client("maya", "maya")
+        ae = client("ae", "ae")
+        maya.send("timing.set", {"origin": 1001})
+        self.assertEqual(origins["ae"].get(timeout=5), {"origin": 1001.0, "by": maya.client_id})
+        ae.send("timing.set", {"origin": 1009})
+        self.assertEqual(origins["maya"].get(timeout=5)["origin"], 1001.0)          # its own, then AE's
+        self.assertEqual(origins["maya"].get(timeout=5), {"origin": 1009.0, "by": ae.client_id})
+        client("ae", "late")
+        self.assertEqual(origins["late"].get(timeout=5)["origin"], 1009.0)
+
     def test_bad_time_is_an_error(self):
         maya, _ = self.connect("maya")
         errors = queue.Queue()

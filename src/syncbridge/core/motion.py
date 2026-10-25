@@ -32,13 +32,14 @@ def frame_times(start: float, end: float, maya_fps, origin: float) -> List[Tuple
 
 
 def solve_motion(link: dict, samples: Sequence[dict], cameras: Sequence[dict], render: dict, comp: dict,
-                 bg: Optional[dict] = None) -> Dict[str, object]:
+                 bg: Optional[dict] = None, source_size: Optional[Sequence[float]] = None) -> Dict[str, object]:
     """Camera values for every sample (an AE layer transform, as SBCep.layerMotion() gives it) with the
     camera at the same frame (pixel_mapping.camera_data at that frame).
 
-    Relative links need their reference (recorded by a first single send). Returns {values: [dict per
-    frame], max_error_px, worst_frame (index), warnings}. ValueError (Japanese) naming the first frame
-    that cannot be shown."""
+    Relative links need their reference (recorded by a first single send). Source camera links (D-39)
+    need the AE layer's source size, and `cameras` are the source camera's (the Maya layer's camera, as
+    it rendered the source). Returns {values: [dict per frame], max_error_px, worst_frame (index),
+    warnings}. ValueError (Japanese) naming the first frame that cannot be shown."""
     if len(samples) != len(cameras):
         raise ValueError("samples and cameras differ in length")
     mode, method = mode_of(link), link["method"]
@@ -49,14 +50,27 @@ def solve_motion(link: dict, samples: Sequence[dict], cameras: Sequence[dict], r
                          % link.get("name", ""))
     if mode == "absolute" and bg is None:
         raise ValueError("absolute mode needs the BG plane")
+    if mode == "source" and not source_size:
+        raise ValueError("source camera mode needs the source size")
     values, warnings, worst, worst_i = [], [], 0.0, 0
     for i, (sample, camera) in enumerate(zip(samples, cameras)):
         try:
             matrix, more = pm.ae_layer_matrix(sample)
+            if mode == "source":
+                solved = pm.solve_source(method, camera, render, source_size, matrix, comp)
+                values.append(solved["values"])
+                for w in more + list(solved.get("warnings") or []):
+                    if w not in warnings:
+                        warnings.append(w)
+                if solved["max_error_px"] > worst:
+                    worst, worst_i = solved["max_error_px"], i
+                continue
+            matrix, in_render = pm.to_render_space(matrix, comp, render)     # a render with a margin (D-36)
             if mode == "relative":
-                solved = pm.solve_relative(method, dict(camera, **ref["camera"]), render, comp, ref["matrix"], matrix)
+                solved = pm.solve_relative(method, dict(camera, **ref["camera"]), render, in_render, ref["matrix"],
+                                           matrix)
             else:
-                solved = pm.solve(method, camera, render, bg, matrix, comp)
+                solved = pm.solve(method, camera, render, bg, matrix, in_render)
         except ValueError as exc:
             raise ValueError(u"AE の %.3f 秒（%d フレーム目）: %s" % (float(sample.get("t", 0.0)), i + 1, exc))
         values.append(solved["values"])

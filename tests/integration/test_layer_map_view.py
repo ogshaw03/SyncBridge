@@ -68,6 +68,27 @@ class LayerMapViewTest(unittest.TestCase):
         self.assertEqual(view.dragMode(), QtWidgets.QGraphicsView.DragMode.NoDrag)      # no rubber band
         self.assertEqual((got[0][0], got[0][1]), (lm.ae_from_layers_info(COMP, AE["layers"][0]), self.layer["id"]))
 
+    def test_middle_drag_tracks_the_view(self):
+        # like Maya's Node Editor (the user, 2026-10-25); the nodes start in the middle of the view
+        view, vp = self.editor.view, self.editor.view.viewport()
+        middle = QtCore.QPoint(vp.width() // 2, vp.height() // 2)
+        nodes = self.editor.scene.itemsBoundingRect().center()
+        self.assertLess((view.mapToScene(middle) - nodes).manhattanLength(), 2.0)
+        before = view.mapToScene(middle)
+        mid = QtCore.Qt.MouseButton.MiddleButton
+        QtTest.QTest.mousePress(vp, mid, QtCore.Qt.KeyboardModifier.NoModifier, middle)
+        for i in range(1, 6):
+            QtTest.QTest.mouseMove(vp, middle + QtCore.QPoint(60 * i, 30 * i))
+        QtTest.QTest.mouseRelease(vp, mid, QtCore.Qt.KeyboardModifier.NoModifier, middle + QtCore.QPoint(300, 150))
+        moved = before - view.mapToScene(middle)
+        scale = view.transform().m11()
+        self.assertAlmostEqual(moved.x(), 300 / scale, delta=1.0)        # the scene follows the mouse
+        self.assertAlmostEqual(moved.y(), 150 / scale, delta=1.0)
+        self.assertEqual(view.dragMode(), QtWidgets.QGraphicsView.DragMode.NoDrag)
+        self.assertLessEqual(view.sizeHint().width(), 600)              # the room must not make the window huge
+        self.editor.set_data(AE, self.store)                             # a refresh does not jump back
+        self.assertLess((before - view.mapToScene(middle) - moved).manhattanLength(), 1.0)
+
     def test_double_click_shows_the_layer(self):
         # D-31: a double click on a Maya layer node asks to show it in the view; it is then marked
         got = []

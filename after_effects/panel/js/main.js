@@ -54,7 +54,8 @@
         mode: el('select', {}, [el('option', { value: 'editable', text: 'editable' }),
                                el('option', { value: 'precision', text: 'precision' })]),
         origin: el('input', { type: 'number', step: '1', value: '1',
-                              title: 'Maya frame for AE comp time 0 and source time 0 (usually the render start frame)' }),
+                              title: 'このコンプの 0 秒にあたる Maya のフレーム（ふつうはレンダーの開始フレーム）。' +
+                                     'Maya のシーンに保存され、Maya のパネルと共通です（どちらで変えても両方に反映）' }),
         tolerance: el('input', { type: 'number', step: '0.05', min: '0.001', value: '0.1' }),
         toAe: el('button', { 'class': 'send', text: 'Maya → AE' }),
         toMaya: el('button', { 'class': 'send', text: 'AE → Maya' }),
@@ -167,6 +168,13 @@
         WebSocketImpl: window.WebSocket,
         onLog: log,
         onState: refresh,
+        onOrigin: function (origin) {             // the shared Origin frame from Maya's scene (D-38)
+            if (parseFloat(ui.origin.value) !== origin) {
+                ui.origin.value = String(origin);
+                saveOptions();
+                log('Origin frame を ' + origin + ' にしました（Maya のシーンと共通）');
+            }
+        },
         onTimeSync: function (state) {
             log('タイムスライダーの同期: ' + (state.enabled ? 'オン' + (state.follow_playback ? '（Maya の再生中も追従）' : '') : 'オフ'));
             refresh();
@@ -397,6 +405,9 @@
     ui.toAe.addEventListener('click', function () { transfer('maya2ae'); });
     ui.toMaya.addEventListener('click', function () { transfer('ae2maya'); });
     [ui.mode, ui.origin, ui.tolerance].forEach(function (input) { input.addEventListener('change', saveOptions); });
+    ui.origin.addEventListener('change', function () {          // one Origin frame with Maya (D-38)
+        client.setOrigin(parseFloat(ui.origin.value));
+    });
 
     loadOptions();
     refresh();

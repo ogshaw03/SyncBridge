@@ -25,6 +25,10 @@ class TimeSync:
         self.enabled = False
         self.follow_playback = False
         self.changed_by: Optional[str] = None
+        # the Origin frame shared by every panel (D-38): Maya's scene holds it, a panel that changes it
+        # sends timing.set, everyone gets timing.state (also an app that connects later)
+        self.origin: Optional[float] = None
+        self.origin_by: Optional[str] = None
 
     def state(self) -> dict:
         return {"enabled": self.enabled, "follow_playback": self.follow_playback, "by": self.changed_by}
@@ -32,6 +36,9 @@ class TimeSync:
     async def send_state(self, client: Client) -> None:
         try:
             await self.manager.send(client, protocol.message("time.sync.state", self.state()))
+            if self.origin is not None:
+                await self.manager.send(client, protocol.message(
+                    "timing.state", {"origin": self.origin, "by": self.origin_by}))
         except Exception:
             pass
 
@@ -40,6 +47,19 @@ class TimeSync:
             await self._switch(client, msg["data"])
         elif msg["kind"] == "time.update":
             await self._relay(client, msg["data"])
+        elif msg["kind"] == "timing.set":
+            await self._set_origin(client, msg["data"])
+
+    async def _set_origin(self, client: Client, data: dict) -> None:
+        self.origin = float(data["origin"])
+        self.origin_by = client.client_id
+        log.info("origin frame %g set by %s", self.origin, client.client_id)
+        msg = protocol.message("timing.state", {"origin": self.origin, "by": self.origin_by})
+        for other in list(self.manager.clients.values()):
+            try:
+                await self.manager.send(other, msg)
+            except Exception:          # a closing socket must not stop the others
+                pass
 
     async def _switch(self, client: Client, data: dict) -> None:
         self.enabled = bool(data["enabled"])

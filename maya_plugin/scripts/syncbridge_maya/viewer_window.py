@@ -25,7 +25,7 @@ except ImportError:
 
 from syncbridge.core import layer_mapping as core_lm
 
-from . import layer_mapping, layer_stack, service
+from . import layer_mapping, layer_stack, motion_transfer, service
 from .layer_stack_view import LayerStackList
 
 WINDOW_NAME = "SyncBridgeViewer"
@@ -68,8 +68,15 @@ class ViewerWindow(QtWidgets.QWidget):
         self.margin_combo.setCurrentIndex(max(0, self.margin_combo.findData(round(layer_stack.margin(), 2))))
         self.margin_combo.activated.connect(
             lambda i: layer_stack.set_margin(self.margin_combo.itemData(i)))
+        # Phase 3 from here too: the layer map is not always open (the user, 2026-10-25)
+        self.motion = motion_transfer.MotionTransfer(self, self.say)
+        motion_btn = QtWidgets.QPushButton(u"すべてのアニメーションを転送…")
+        motion_btn.setToolTip(u"つないだすべての AE のレイヤーの動きを、範囲の各フレームのキーとしてそれぞれの専用カメラに打ちます"
+                              u"（範囲の指定と確認は 1 回。Ctrl+Z 1 回で全部戻ります）。1 つのレイヤーだけなら、下の一覧で右クリック")
+        motion_btn.clicked.connect(self.motion.all)
         bar = QtWidgets.QHBoxLayout()
         bar.addWidget(self.camera_label, 1)
+        bar.addWidget(motion_btn)
         bar.addWidget(QtWidgets.QLabel(u"余白"))
         bar.addWidget(self.margin_combo)
         bar.addWidget(self.frame_btn)
@@ -85,6 +92,7 @@ class ViewerWindow(QtWidgets.QWidget):
         self.layers = LayerStackList()
         self.layers.order_changed.connect(self._on_order)
         self.layers.visible_changed.connect(self._on_visible)
+        self.layers.motion_requested.connect(self.motion.layer)
         self.status = QtWidgets.QLabel()
         self.status.setWordWrap(True)
         split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)

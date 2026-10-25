@@ -116,6 +116,7 @@
         this.onState = opts.onState || function () {};
         this.onLog = opts.onLog || function () {};
         this.onTimeSync = opts.onTimeSync || function () {};
+        this.onOrigin = opts.onOrigin || function () {};      // the shared Origin frame changed (D-38)
         this.onSettingsApplied = opts.onSettingsApplied || function () {};
         this.setInterval = opts.setInterval || function (fn, ms) { return setInterval(fn, ms); };
         this.clearInterval = opts.clearInterval || function (id) { clearInterval(id); };
@@ -273,6 +274,14 @@
     SBPanelClient.prototype.setFollowPlayback = function (followPlayback) {
         if (!this.connected() || !this.timeSync.enabled) { return; }
         this._send(message('time.sync', { enabled: true, follow_playback: !!followPlayback }));
+    };
+
+    // One Origin frame for the whole tool (D-38): Maya's scene keeps it; a change here goes to the hub,
+    // which hands it to Maya (and back to every panel as timing.state).
+    SBPanelClient.prototype.setOrigin = function (origin) {
+        if (!this.connected() || !isFinite(origin)) { return false; }
+        this._send(message('timing.set', { origin: Number(origin) }));
+        return true;
     };
 
     SBPanelClient.prototype._setTimeState = function (state) {
@@ -445,6 +454,9 @@
             break;
         case 'time.sync.state':
             this._setTimeState(msg.data);
+            break;
+        case 'timing.state':
+            if (msg.data.by !== this.clientId) { this.onOrigin(Number(msg.data.origin)); }
             break;
         case 'time.set':
             this._applyTime(msg.data.t, msg.data.sent_at);

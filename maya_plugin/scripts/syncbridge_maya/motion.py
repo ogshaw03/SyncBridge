@@ -19,6 +19,7 @@ from maya import cmds
 
 from syncbridge.core import layer_mapping as core_lm
 from syncbridge.core import motion as core_motion
+from syncbridge.core import pixel_mapping as core_pm
 
 from . import layer_mapping, pixel_mapping
 from .pixel_mapping import CAMERA_ATTRS
@@ -45,7 +46,34 @@ def query(mapping_id: str, start: float, end: float, origin: float) -> Dict[str,
     ae = link["ae"]
     return {"frames": [f for f, _ in frames],
             "request": {"comp_id": ae.get("comp_id"), "comp": ae.get("comp"), "layer_id": ae.get("layer_id"),
-                        "layer": ae.get("layer"), "times": [t for _, t in frames]}}
+                        "layer": ae.get("layer"), "via": list(ae.get("via") or []), "times": [t for _, t in frames]}}
+
+
+def record_reference(mapping_id: str, frame: float, reply: dict) -> dict:
+    """Record a relative link's reference from AE at one frame (asked by Maya, for any link and the only
+    way for a layer inside a precomp, D-37). The camera values of the reference are the base values
+    (pixel_mapping.base_values), whatever the camera shows now (keys of an earlier transfer). One undo."""
+    link = _link(mapping_id)
+    if core_lm.mode_of(link) == "source":
+        raise ValueError(u"素材カメラのモードは基準が要りません（素材を書き出したカメラと素材の大きさから直接合わせます）。")
+    if core_lm.mode_of(link) != "relative":
+        raise ValueError(u"基準を使うのは相対モードの接続だけです。")
+    sample = dict(reply["samples"][0], threeD=reply["layer"].get("threeD"), parent=reply["layer"].get("parent"),
+                  effects=reply["layer"].get("effects") or [])
+    matrix, warnings = core_pm.ae_layer_matrix(sample)
+    comp = {"width": reply["comp"]["width"], "height": reply["comp"]["height"],
+            "pixelAspect": reply["comp"].get("pixelAspect", 1.0)}
+    matrix, _ = core_pm.to_render_space(matrix, comp, pixel_mapping.render_data())
+    values = pixel_mapping.base_values(link, link["method"])
+    data = layer_mapping.store()
+    updated = core_lm.with_reference(link, matrix, values, sample.get("t"))
+    data["mappings"] = core_lm.upsert(data["mappings"], updated)
+    cmds.undoInfo(openChunk=True, chunkName="SyncBridge record reference")
+    try:
+        layer_mapping.save_store(data)
+    finally:
+        cmds.undoInfo(closeChunk=True)
+    return {"mapping": updated, "frame": frame, "warnings": warnings}
 
 
 def plan(mapping_id: str, frames: List[float], reply: dict) -> Dict[str, object]:
@@ -59,7 +87,14 @@ def plan(mapping_id: str, frames: List[float], reply: dict) -> Dict[str, object]
         raise ValueError(u"AE から %d フレーム分が返りました（%d フレームを頼みました）。" % (len(samples), len(frames)))
     fixed = {"threeD": layer.get("threeD"), "parent": layer.get("parent"), "effects": layer.get("effects") or []}
     samples = [dict(s, **fixed) for s in samples]
-    cameras = [pixel_mapping.camera_data(camera, time=f) for f in frames]
+    source_size = None
+    if core_lm.mode_of(link) == "source":
+        # D-39: the source camera (the dedicated camera's original) as it rendered the source, every frame
+        source = pixel_mapping.source_camera(link)
+        cameras = [pixel_mapping.camera_data(source, time=f) for f in frames]
+        source_size = (layer["source_width"], layer["source_height"])
+    else:
+        cameras = [pixel_mapping.camera_data(camera, time=f) for f in frames]
     bg = None
     if core_lm.mode_of(link) == "absolute":
         bg_node = layer_mapping.node_by_uuid(link["maya"].get("bg_uuid"))
@@ -68,7 +103,7 @@ def plan(mapping_id: str, frames: List[float], reply: dict) -> Dict[str, object]
         bg = pixel_mapping.bg_plane_data(bg_node, layer["source_width"], layer["source_height"])
     comp = {"width": reply["comp"]["width"], "height": reply["comp"]["height"],
             "pixelAspect": reply["comp"].get("pixelAspect", 1.0)}
-    solved = core_motion.solve_motion(link, samples, cameras, pixel_mapping.render_data(), comp, bg)
+    solved = core_motion.solve_motion(link, samples, cameras, pixel_mapping.render_data(), comp, bg, source_size)
     keys, constant = core_motion.curves(frames, solved["values"])
     warnings = list(solved["warnings"])
     overscan = cameras[0].get("overscan", 1.0)

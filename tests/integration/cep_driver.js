@@ -104,6 +104,7 @@ const client = new SBPanelClient({
         out({ event: 'log', text });
         if (mode === 'request' && text.startsWith('connection closed')) { process.exit(3); }
     },
+    onOrigin: (origin) => out({ event: 'origin', origin }),
     onState: () => {
         if (client.connected()) {
             out({ event: 'peers', peers: client.peers.map((p) => p.app) });
@@ -120,7 +121,16 @@ const whenMaya = (fn) => {
     }, 50);
 };
 
-if (mode === 'pixelmap') {
+if (mode === 'origin') {
+    // D-38: the Origin frame from Maya shows in the panel; a change in the panel goes to Maya
+    whenMaya(() => {
+        const timer = setInterval(() => {
+            if (client.setOrigin(1009)) { clearInterval(timer); out({ event: 'sent' }); }
+        }, 300);
+    });
+    process.stdin.on('data', () => {});
+    process.stdin.on('end', () => { client.disconnect(); setTimeout(() => process.exit(0), 100); });
+} else if (mode === 'pixelmap') {
     whenMaya(() => {
         client.sendPixelMap({}, (reply) => {
             out({ event: 'result', reply });

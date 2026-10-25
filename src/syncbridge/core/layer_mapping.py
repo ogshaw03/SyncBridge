@@ -51,8 +51,9 @@ from .pixel_mapping import METHODS
 
 DIRECTIONS = ("ae2maya",)
 PROPERTIES = ("pan",)
-MODES = ("relative", "absolute")
-MODE_LABELS = {"relative": u"相対", "absolute": u"絶対"}
+MODES = ("relative", "absolute", "source")
+# source (D-39): the AE source is a render of the Maya layer's camera; no reference, no BG plane
+MODE_LABELS = {"relative": u"相対", "absolute": u"絶対", "source": u"素材カメラ"}
 SCHEMA_VERSION = 2
 
 
@@ -222,8 +223,8 @@ def new_mapping(ae: dict, maya: dict, method: str = "film_offset", name: Optiona
     return {
         "id": "vl-" + uuid.uuid4().hex[:12],
         "name": name or ae.get("layer") or "BG",
-        "ae": {k: ae.get(k) for k in ("comp_id", "comp", "layer_id", "layer", "source", "source_width",
-                                      "source_height")},
+        "ae": dict({k: ae.get(k) for k in ("comp_id", "comp", "layer_id", "layer", "source", "source_width",
+                                           "source_height")}, via=list(ae.get("via") or [])),
         "maya": {k: maya.get(k) for k in ("camera_uuid", "camera", "bg_uuid", "bg")},
         "enabled": True,
         "direction": "ae2maya",
@@ -273,9 +274,18 @@ def without_reference(mapping: dict) -> dict:
     return dict(mapping, reference=None)
 
 
+def via_key(ae: dict) -> tuple:
+    """The precomp layers above an AE layer (D-37), by id (else name): one precomp may be used twice."""
+    return tuple((v.get("comp_id"), v.get("layer_id")) if v.get("layer_id") is not None
+                 else (v.get("comp"), v.get("layer")) for v in ae.get("via") or [])
+
+
 def matches(mapping: dict, ae_layer: dict) -> bool:
-    """Does this record belong to the AE layer described by `ae_layer` ({comp_id, comp, layer_id, layer})?"""
+    """Does this record belong to the AE layer described by `ae_layer` ({comp_id, comp, layer_id, layer,
+    via})? A layer sent from the AE panel has no `via`: it matches a record of the same layer without one."""
     rec = mapping["ae"]
+    if via_key(rec) != via_key(ae_layer):
+        return False
     if rec.get("layer_id") is not None and ae_layer.get("layer_id") is not None:
         return rec["layer_id"] == ae_layer["layer_id"] and rec.get("comp_id") == ae_layer.get("comp_id")
     return rec.get("comp") == ae_layer.get("comp") and rec.get("layer") == ae_layer.get("layer")
@@ -341,10 +351,12 @@ def describe(mapping: dict) -> str:
 
 
 def ae_from_layers_info(comp: dict, layer: dict) -> dict:
-    """The `ae` of a link from SBCep.layersInfo() (its comp and one of its layers)."""
-    return {"comp_id": comp.get("id"), "comp": comp.get("name"), "layer_id": layer.get("id"),
-            "layer": layer.get("name"), "source": layer.get("source"), "source_width": layer.get("width"),
-            "source_height": layer.get("height")}
+    """The `ae` of a link from SBCep.layersInfo() (its comp and one of its layers). A layer inside a
+    precomp names its own comp and the precomp layers above it (`via`, D-37)."""
+    return {"comp_id": layer.get("comp_id", comp.get("id")), "comp": layer.get("comp", comp.get("name")),
+            "layer_id": layer.get("id"), "layer": layer.get("name"), "source": layer.get("source"),
+            "source_width": layer.get("width"), "source_height": layer.get("height"),
+            "via": list(layer.get("via") or [])}
 
 
 def ae_layer_from_export(data: dict):
@@ -360,5 +372,5 @@ def ae_layer_from_export(data: dict):
                         % ", ".join(effects))
     transform = {"position": layer["position"], "anchorPoint": layer["anchorPoint"], "scale": layer.get("scale"),
                  "rotation": layer.get("rotation", 0.0), "threeD": layer.get("threeD", False),
-                 "parent": layer.get("parent")}
+                 "parent": layer.get("parent"), "parents": layer.get("parents") or []}
     return transform, warnings

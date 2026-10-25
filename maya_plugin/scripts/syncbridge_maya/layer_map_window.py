@@ -22,7 +22,7 @@ except ImportError:
 
 from syncbridge.core import layer_mapping as core_lm
 
-from . import layer_mapping, service
+from . import layer_mapping, motion_transfer, service
 from .layer_map_view import LayerMapEditor
 
 WINDOW_NAME = "SyncBridgeLayerMap"
@@ -30,50 +30,8 @@ _window = None
 _last_ae: Optional[dict] = None         # the AE layers read last (kept while Maya runs)
 
 
-def _camera_label(path) -> str:
-    from .motion import camera_label
-    return camera_label(path)
-
-
-def _with_warnings(text: str, warnings) -> str:
-    return text + "".join(u"\n注意: %s" % w for w in warnings or [])
-
-
-class MotionDialog(QtWidgets.QDialog):
-    """The Maya frame range to key and the Origin frame (Maya frame of AE comp time 0)."""
-
-    def __init__(self, text: str, start: float, end: float, origin: float, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(u"SyncBridge - アニメーションを転送")
-        self.setMinimumWidth(460)
-        self.start, self.end, self.origin = (QtWidgets.QDoubleSpinBox() for _ in range(3))
-        for box, value in ((self.start, start), (self.end, end), (self.origin, origin)):
-            box.setRange(-1e6, 1e6)
-            box.setDecimals(0)
-            box.setValue(value)
-        form = QtWidgets.QFormLayout()
-        form.addRow(u"開始フレーム", self.start)
-        form.addRow(u"終了フレーム", self.end)
-        form.addRow(u"Origin frame", self.origin)
-        text = QtWidgets.QLabel(text + u"\nOrigin frame は AE のコンプの 0 秒にあたる Maya のフレームです（パネルと同じ値）。")
-        text.setWordWrap(True)
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok |
-                                             QtWidgets.QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self._accept)
-        buttons.rejected.connect(self.reject)
-        lay = QtWidgets.QVBoxLayout(self)
-        lay.addWidget(text)
-        lay.addLayout(form)
-        lay.addWidget(buttons)
-
-    def _accept(self):
-        if self.end.value() < self.start.value():
-            QtWidgets.QMessageBox.warning(self, "SyncBridge", u"終了フレームは開始フレームより後にしてください。")
-            return
-        self.accept()
-
-    def values(self):
-        return self.start.value(), self.end.value(), self.origin.value()
+_camera_label = motion_transfer.camera_label
+_with_warnings = motion_transfer.with_warnings
 
 
 def _maya_main_window():
@@ -99,6 +57,8 @@ class LayerMapWindow(QtWidgets.QWidget):
         e = self.editor
         e.set_new_method(layer_mapping.defaults()["method"])
         e.new_method_changed.connect(lambda method: layer_mapping.set_defaults(method=method))
+        e.set_new_mode(layer_mapping.defaults()["mode"])
+        e.new_mode_changed.connect(lambda mode: layer_mapping.set_defaults(mode=mode))
         e.reload_requested.connect(self.load_ae_layers)
         e.add_layer_requested.connect(lambda: self._do(
             lambda: layer_mapping.add_layer(),
@@ -122,6 +82,7 @@ class LayerMapWindow(QtWidgets.QWidget):
         e.reset_reference_requested.connect(lambda mapping_id: self._do(
             lambda: layer_mapping.reset_reference(mapping_id),
             u"基準を消しました。Maya と AE の見え方を合わせてから AE で送ると、新しい基準になります。"))
+        e.record_reference_requested.connect(self.record_reference)
         e.rename_layer_requested.connect(lambda layer_id, name: self._do(
             lambda: layer_mapping.rename_layer(layer_id, name), u"名前を「%s」にしました。" % name))
         e.camera_requested.connect(lambda layer_id: self._do(
@@ -134,8 +95,9 @@ class LayerMapWindow(QtWidgets.QWidget):
             lambda: layer_mapping.add_selected_objects(layer_id), lambda n: u"オブジェクトを %d 個追加しました。" % n))
         e.remove_objects_requested.connect(lambda layer_id, uuids: self._do(
             lambda: layer_mapping.remove_objects(layer_id, uuids), u"オブジェクトを外しました。"))
-        e.motion_requested.connect(self.transfer_motion)
-        e.motion_all_requested.connect(self.transfer_all_motion)
+        self.motion = motion_transfer.MotionTransfer(self, self.say)        # Phase 3 (D-30), shared with the viewer
+        e.motion_requested.connect(self.motion.link)
+        e.motion_all_requested.connect(self.motion.all)
         e.view_layer_requested.connect(self.view_layer)
         e.view_all_requested.connect(self.view_all)
         e.viewer_requested.connect(self._open_viewer)
@@ -204,100 +166,38 @@ class LayerMapWindow(QtWidgets.QWidget):
         except Exception as exc:
             self.say(u"AE のレイヤーを読み込めませんでした: %s" % exc, error=True)
 
-    # -- Phase 3 (D-30) ----------------------------------------------------------------------------------
-    def transfer_motion(self, mapping_id: str):
-        """One link (the selected wire)."""
-        link = next((m for m in layer_mapping.stored() if m["id"] == mapping_id), None)
-        if link is not None:
-            self._transfer([link], [], u"AE のレイヤー「%s」の動きを、範囲の各フレームのキーとしてカメラ %s に打ちます。"
-                           % (link["ae"].get("layer"), _camera_label(link["maya"].get("camera"))))
-
-    def transfer_all_motion(self):
-        """Every link: one range, AE asked link by link, one confirmation, one undo."""
-        from . import motion
-        links, skipped = motion.transferable(layer_mapping.store())
-        if not links:
-            self.say(u"転送できる接続がありません。" + u" ".join(skipped), error=True)
-            return
-        text = u"%d 本の接続の AE の動きを、範囲の各フレームのキーとしてそれぞれのカメラに打ちます。" % len(links)
-        if skipped:
-            text += u"（%d 本は打ちません: 確認の画面に理由が出ます）" % len(skipped)
-        self._transfer(links, skipped, text)
-
-    def _transfer(self, links, skipped, text):
-        """Range dialog -> ask AE for each link's layer at every frame -> solve -> confirm -> keys."""
+    def record_reference(self, mapping_id: str):
+        """The reference from AE at Maya's current frame (D-37): any relative link, and the way for a layer
+        inside a precomp, whose motion in the main comp the AE panel cannot send."""
         from . import motion
         if not service.is_connected():
             self.say(u"SyncBridge のサーバーに接続していません。SyncBridge のパネルで Connect を押してください。", error=True)
             return
-        dialog = MotionDialog(text, cmds.playbackOptions(q=True, minTime=True),
-                              cmds.playbackOptions(q=True, maxTime=True), service.time_sync_origin(), self)
-        run = getattr(dialog, "exec", None) or dialog.exec_       # PySide6 / PySide2
-        if not run():
-            return
-        start, end, origin = dialog.values()
-        skipped = list(skipped)
-        queries = []
-        for link in links:
-            try:
-                queries.append((link, motion.query(link["id"], start, end, origin)))
-            except Exception as exc:
-                skipped.append(u"%s: %s" % (link["ae"].get("layer"), exc))
-        if not queries:
-            self.say(u"アニメーションを転送できません: " + u" ".join(skipped), error=True)
-            return
-        plans = []
-
-        def ask(i):
-            if i == len(queries):
-                self._finish_transfer(plans, skipped, len(links) == 1)
-                return
-            link, q = queries[i]
-            self.say(u"AE から「%s」の動きを読み込んでいます…（%d / %d）" % (link["ae"].get("layer"), i + 1, len(queries)))
-
-            def done(reply):
-                name = link["ae"].get("layer")
-                if reply["kind"] == "error":
-                    skipped.append(u"%s: AE から読み込めませんでした（%s）" % (name, reply["data"].get("message")))
-                else:
-                    try:
-                        plans.append(motion.plan(link["id"], q["frames"], reply["data"]))
-                    except Exception as exc:
-                        skipped.append(u"%s: %s" % (name, exc))
-                ask(i + 1)
-            try:
-                service.request_ae_motion(q["request"], done)
-            except Exception as exc:
-                skipped.append(u"%s: %s" % (link["ae"].get("layer"), exc))
-                ask(i + 1)
-        ask(0)
-
-    def _finish_transfer(self, plans, skipped, single):
-        from . import motion
-        if not plans:
-            self.say(u"アニメーションを転送できませんでした（カメラは変えていません）: " + u" / ".join(skipped), error=True)
-            return
+        frame = cmds.currentTime(q=True)
         try:
-            results = motion.apply_all(plans, parent=self, skipped=[] if single else skipped)
+            q = motion.query(mapping_id, frame, frame, service.time_sync_origin())
         except Exception as exc:
-            self.say(u"アニメーションを転送できませんでした（カメラは変えていません）: %s" % exc, error=True)
+            self.say(u"基準を記録できません: %s" % exc, error=True)
             return
-        if results[0]["status"] == "cancelled":
-            self.say(u"アニメーションの転送はキャンセルしました（カメラは変えていません）。")
-            return
-        bad = [r for r in results if not r["readback"]["passed"]]
-        lines = [u"%s → %s（%s、誤差 最大 %.3f px）" % (r["ae_layer"], _camera_label(r["camera"]), ", ".join(r["attrs"]),
-                                                    r["max_error_px"]) for r in results]
-        warnings = []
-        for r in results:
-            warnings += [w for w in r["warnings"] if w not in warnings]
-        text = u"%g〜%g フレームのキーを打ちました（読み戻し %s）。元に戻すときは Ctrl+Z を 1 回。\n%s" % (
-            results[0]["frames"][0], results[0]["frames"][1],
-            u"一致" if not bad else u"不一致 %d 本" % len(bad), u"\n".join(lines))
-        if skipped and not single:
-            text += u"\n打たなかったもの: " + u" / ".join(skipped)
-        self.say(_with_warnings(text, warnings), error=bool(bad))
-        service.announce("layer_map")
+
+        def done(reply):
+            if reply["kind"] == "error":
+                self.say(u"AE のレイヤーを読み込めませんでした: %s" % reply["data"].get("message"), error=True)
+                return
+            try:
+                result = motion.record_reference(mapping_id, frame, reply["data"])
+            except Exception as exc:
+                self.say(u"基準を記録できませんでした: %s" % exc, error=True)
+                return
+            self.say(_with_warnings(u"%g フレーム（AE の %.3f 秒）の見え方を基準として記録しました: %s（Ctrl+Z で戻せます）。"
+                                    % (frame, q["request"]["times"][0], core_lm.describe(result["mapping"])),
+                                    result["warnings"]))
+            service.announce("layer_map")
+            self.refresh()
+        try:
+            service.request_ae_motion(q["request"], done)
+        except Exception as exc:
+            self.say(u"AE のレイヤーを読み込めませんでした: %s" % exc, error=True)
 
     # -- D-31: show one layer in the view ------------------------------------------------------------------
     def view_layer(self, layer_id: str):

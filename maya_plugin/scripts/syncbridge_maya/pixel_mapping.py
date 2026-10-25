@@ -160,6 +160,44 @@ def overscan_note(overscan: float) -> str:
 REFERENCE_KEYS = {"film_offset": ("hfo", "vfo"), "film_translate": ("ft_h", "ft_v"),
                   "pan_zoom": ("hpan", "vpan", "zoom", "pan_zoom_enabled", "render_pan_zoom"),
                   "film_roll": ("ft_h", "ft_v", "post_scale", "film_roll")}
+DEFAULT_VALUES = {"hfo": 0.0, "vfo": 0.0, "ft_h": 0.0, "ft_v": 0.0, "hpan": 0.0, "vpan": 0.0, "zoom": 1.0,
+                  "pan_zoom_enabled": False, "render_pan_zoom": False, "post_scale": 1.0, "film_roll": 0.0}
+
+
+def source_camera(link: dict) -> str:
+    """The camera that rendered the AE source in source camera mode (D-39): the Maya layer's camera, the
+    original of its dedicated camera. ValueError when the layer has no dedicated camera or it is gone."""
+    from . import layer_mapping
+    data = layer_mapping.store()
+    layer = next((l for l in data["maya_layers"] if l["id"] == link.get("maya_layer")), None)
+    if not layer or not layer.get("layer_camera_uuid"):
+        raise ValueError(u"素材カメラのモードには、Maya レイヤーの専用カメラが要ります（カメラを選び直してください）。")
+    original = layer_mapping.node_by_uuid(layer.get("camera_uuid"))
+    if original is None:
+        raise ValueError(u"素材カメラ（%s）がシーンにありません。" % layer.get("camera"))
+    return original
+
+
+def source_camera_data(link: dict, time=None) -> dict:
+    """The source camera as it rendered the source: its values now (or at frame `time`)."""
+    return camera_data(source_camera(link), time=time)
+
+
+def base_values(link: dict, method: str) -> dict:
+    """The camera values a relative reference holds: the base, not what the camera shows now. The
+    dedicated camera may already carry the keys of an earlier transfer (the user, 2026-10-25), so the
+    reference takes the values it started from, its original camera's (D-29: copied from there, and
+    never moved by SyncBridge); a link without a dedicated camera (made before D-29) takes Maya's defaults.
+    Every link of a layer then shares one base, and a new reference never builds on an old transfer."""
+    from . import layer_mapping
+    data = layer_mapping.store()
+    layer = next((l for l in data["maya_layers"] if l["id"] == link.get("maya_layer")), None)
+    original = layer_mapping.node_by_uuid(layer.get("camera_uuid")) if layer and layer.get("layer_camera_uuid") \
+        else None
+    if original is None:
+        return {k: DEFAULT_VALUES[k] for k in REFERENCE_KEYS[method]}
+    cam = camera_data(original)
+    return {k: cam[k] for k in REFERENCE_KEYS[method]}
 
 
 def apply_from_ae(info: dict, options: dict = None) -> dict:
@@ -181,6 +219,13 @@ def apply_from_ae(info: dict, options: dict = None) -> dict:
     mappings = data["mappings"]
     mapping = core_lm.find(mappings, ae)
     if mapping is None:
+        nested = [m for m in mappings if m["ae"].get("via") and core_lm.matches(dict(m, ae=dict(m["ae"], via=[])), ae)]
+        if nested:
+            # D-37: the panel only knows the selected layer, not how its precomp moves in the main comp
+            raise ValueError(u"AE のレイヤー「%s」はプリコンポ「%s」の中のレイヤーとしてつながっています。プリコンポの中のレイヤーは、"
+                             u"Maya のレイヤーマップで線を選び「基準を記録」「アニメーションを転送」で使ってください"
+                             u"（外のコンポでの動きも含めて AE から読みます）。"
+                             % (ae["layer"], nested[0]["ae"]["via"][-1].get("layer")))
         # Links are made only in the layer map (the user's decision, 2026-10-25): nothing is changed.
         raise ValueError(u"AE のレイヤー「%s」は、まだ Maya レイヤーにつながっていません。Maya の SyncBridge パネルで"
                          u"「レイヤーマップを開く…」を押し、このレイヤーを Maya レイヤーにつないでから、もう一度送ってください。"
@@ -209,6 +254,9 @@ def apply_from_ae(info: dict, options: dict = None) -> dict:
                         % (camera.split("|")[-1], other["name"]))
     comp = {"width": info["comp"]["width"], "height": info["comp"]["height"],
             "pixelAspect": info["comp"].get("pixelAspect", 1.0)}
+    source_to_comp, ae_comp = matrix, dict(comp)
+    # the render may be the comp with a margin around it (D-36): solve in render pixels
+    matrix, comp = core_pm.to_render_space(matrix, comp, render_data())
     cam = camera_data(camera)
     # overscan: the AE footage is a playblast (shows the overscan margin) or a render (does not), H-PM-9
     cam["view_overscan"] = layer_mapping.defaults()["view_overscan"]
@@ -221,8 +269,7 @@ def apply_from_ae(info: dict, options: dict = None) -> dict:
     base = {"status": "applied", "camera": camera, "frame": cmds.currentTime(q=True),
             "mode": mode}
     if mode == "relative" and not mapping.get("reference"):
-        values_now = {k: cam[k] for k in REFERENCE_KEYS[method]}
-        mapping = core_lm.with_reference(mapping, matrix, values_now, info["comp"].get("time"))
+        mapping = core_lm.with_reference(mapping, matrix, base_values(mapping, method), info["comp"].get("time"))
         data["mappings"] = core_lm.upsert(mappings, mapping)
         cmds.undoInfo(openChunk=True, chunkName="SyncBridge pixel mapping reference")
         try:
@@ -233,7 +280,12 @@ def apply_from_ae(info: dict, options: dict = None) -> dict:
                     max_error_px=0.0, warnings=warnings,
                     mapping={"id": mapping["id"], "name": mapping["name"], "text": core_lm.describe(mapping)})
 
-    if mode == "relative":
+    if mode == "source":
+        # D-39: the AE source is a render of the Maya layer's camera (the original of the dedicated one)
+        solved = core_pm.solve_source(method, source_camera_data(mapping), render_data(),
+                                      (ae["source_width"], ae["source_height"]), source_to_comp, ae_comp)
+        shift = [solved["change"]["dx"], solved["change"]["dy"]]
+    elif mode == "relative":
         ref = mapping["reference"]
         solved = core_pm.solve_relative(method, dict(cam, **ref["camera"]), render_data(), comp, ref["matrix"], matrix)
         shift = [solved["change"]["dx"], solved["change"]["dy"]]

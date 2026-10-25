@@ -152,7 +152,16 @@ class LayerMappingTest(unittest.TestCase):
     def test_layers_info_and_mode(self):
         comp = {"id": 12, "name": "c010"}
         layer = {"id": 345, "name": "BG", "source": "bg.png", "width": 6000, "height": 4000, "kind": "still"}
-        self.assertEqual(lm.ae_from_layers_info(comp, layer), AE)
+        self.assertEqual(lm.ae_from_layers_info(comp, layer), dict(AE, via=[]))
+        # D-37: a layer inside a precomp names its own comp and the precomp layer above it
+        inner = dict(layer, id=9, comp_id=40, comp="SC_PRE", via=[{"comp_id": 12, "comp": "c010", "layer_id": 7,
+                                                                   "layer": "SC_PRE"}])
+        ae_inner = lm.ae_from_layers_info(comp, inner)
+        self.assertEqual((ae_inner["comp_id"], ae_inner["comp"], len(ae_inner["via"])), (40, "SC_PRE", 1))
+        link = lm.new_mapping(ae_inner, {"camera_uuid": "C"}, mode="relative")
+        self.assertTrue(lm.matches(link, ae_inner))
+        self.assertFalse(lm.matches(link, dict(ae_inner, via=[])))           # the same precomp used elsewhere
+        self.assertFalse(lm.matches(lm.new_mapping(AE, MAYA), ae_inner))
         rel = lm.with_reference(lm.new_mapping(AE, dict(MAYA, bg_uuid=None, bg=None), mode="relative"),
                                 [[1, 0, 0], [0, 1, 0], [0, 0, 1]], {}, 0.0)
         with self.assertRaises(ValueError):                 # absolute needs a BG

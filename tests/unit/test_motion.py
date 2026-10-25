@@ -60,6 +60,35 @@ class MotionTest(unittest.TestCase):
         self.assertEqual(len(result["values"]), 3)
         self.assertNotEqual(result["values"][0]["hfo"], result["values"][2]["hfo"])
 
+    def test_render_with_a_margin(self):
+        # D-36: the Maya render is the comp with a margin around it (2112x1188 for a 1920x1080 comp):
+        # a pan in the comp is the same pan in the render, and its reference is in render pixels
+        render = dict(RENDER, width=2112, height=1188)
+        link = lm.new_mapping(AE, {"camera_uuid": "C"}, method="pan_zoom", mode="relative")
+        ref, _ = pm.ae_layer_matrix(ae_layer(960.0, 540.0))
+        ref, _ = pm.to_render_space(ref, COMP, render)
+        link = lm.with_reference(link, ref, {k: cam()[k] for k in ("hpan", "vpan", "zoom", "pan_zoom_enabled",
+                                                                   "render_pan_zoom")}, 0.0)
+        samples = [ae_layer(960.0, 540.0), ae_layer(1040.0, 540.0)]
+        result = motion.solve_motion(link, samples, [cam(), cam()], render, COMP)
+        self.assertEqual(result["values"][0]["hpan"], 0.0)
+        same, _ = pm.ae_layer_matrix(ae_layer(1040.0, 540.0))
+        alone = pm.solve_relative("pan_zoom", dict(cam(), **link["reference"]["camera"]), render,
+                                  {"width": 2112, "height": 1188}, ref, pm.to_render_space(same, COMP, render)[0])
+        self.assertAlmostEqual(result["values"][1]["hpan"], alone["values"]["hpan"])
+        self.assertNotEqual(result["values"][1]["hpan"], 0.0)
+
+    def test_source_camera_mode(self):
+        # D-39: the BG plate (film back x3, 5760x3240) slides; no reference needed
+        link = lm.new_mapping(AE, {"camera_uuid": "C"}, method="pan_zoom", mode="source")
+        plate = cam(hfa=cam()["hfa"] * 3, vfa=cam()["vfa"] * 3)
+        samples = [dict(ae_layer(960.0 + 10.0 * i, 540.0), anchorPoint=[2880.0, 1620.0], t=i / 24.0) for i in range(3)]
+        result = motion.solve_motion(link, samples, [plate] * 3, RENDER, COMP, source_size=(5760, 3240))
+        self.assertAlmostEqual(result["values"][0]["zoom"], 1.0 / 3.0)
+        self.assertNotEqual(result["values"][0]["hpan"], result["values"][2]["hpan"])
+        with self.assertRaises(ValueError):
+            motion.solve_motion(link, samples, [plate] * 3, RENDER, COMP)
+
     def test_refusals(self):
         no_ref = lm.new_mapping(AE, {"camera_uuid": "C"}, method="pan_zoom", mode="relative")
         with self.assertRaises(ValueError) as ctx:

@@ -131,6 +131,7 @@ mapping: --mode editable|precision --tol 0.1 --origin F --maya-in-origin F --may
 | `time.sync` | クライアント → サーバー（応答なし） | `enabled`, `follow_playback`。全員で共有する 1 つのスイッチ。D-22 |
 | `time.sync.state` | サーバー → 全員 | `enabled`, `follow_playback`, `by`（切り替えた client_id）。接続した直後にも送る |
 | `time.update` / `time.set` | アプリ → サーバー / サーバー → もう片方のアプリ（応答なし） | `t`（AE のコンプ時間、秒）/ `t`, `source`（maya / ae）。同期がオフなら中継しない |
+| `timing.set` / `timing.state` | アプリ → サーバー（応答なし）/ サーバー → 全員 | `{origin}`（Maya のフレーム）/ `{origin, by}`。ツールで 1 つの Origin frame（D-38）。接続した直後にも送る |
 | `error` | どちらでも | `code`, `message`（要求への応答なら `reply_to` 付き） |
 
 エラーコード: `bad_message`, `auth_failed`, `no_peer`, `timeout`, `peer_disconnected`, `app_error`, `conversion_failed`, `busy`,

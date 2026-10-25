@@ -47,7 +47,9 @@ class CepClientTest(ServerFixture):
             "settings.apply.request": self._maya_settings,
             "pixelmap.apply.request": self._maya_pixelmap,
         }, notices={"time.set": lambda msg: self.times.append(msg["data"]["t"]),
-                    "time.sync.state": lambda msg: self.states.append(msg["data"])})
+                    "time.sync.state": lambda msg: self.states.append(msg["data"]),
+                    "timing.state": lambda msg: self.origins.append(msg["data"])})
+        self.origins = []
         self.settings_plans = []
         self.pixelmaps = []
         self.times = []
@@ -226,6 +228,13 @@ class CepClientTest(ServerFixture):
         self.assertEqual(results[0]["kind"], "motion.result", results[0])
         self.assertEqual([s["position"][0] for s in results[0]["data"]["samples"]], [960, 1010])
         self.assertEqual(results[0]["data"]["layer"]["id"], 345)
+
+    def test_one_origin_frame(self):
+        # D-38: Maya's scene value reaches the panel's field, the panel's change reaches Maya
+        self.maya.send("timing.set", {"origin": 1001})
+        p, events = self.driver("origin")
+        self.assertTrue(self.wait(lambda: any(e["event"] == "origin" and e["origin"] == 1001 for e in events)), events)
+        self.assertTrue(self.wait(lambda: any(o["origin"] == 1009 for o in self.origins)), self.origins)
 
     def test_panel_requests_scene_settings_to_maya(self):
         p, events = self.driver("settings", "ae2maya")

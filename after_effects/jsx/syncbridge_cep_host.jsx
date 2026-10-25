@@ -194,6 +194,19 @@ var SBCep = (function () {
                  scale: v2(tr.property('ADBE Scale'), t), rotation: tr.property('ADBE Rotate Z').valueAtTime(t, false) };
     }
 
+    // the parent's transform, its parent's, ... at comp time t (a null that pans the layers, H-AE-30)
+    function parentChain(layer, t) {
+        var out = [], p = layer.parent, tr;
+        while (p) {
+            tr = transformAt(p, t);
+            tr.name = p.name;
+            tr.threeD = p.threeDLayer;
+            out.push(tr);
+            p = p.parent;
+        }
+        return out;
+    }
+
     function imageSource(layer) {
         var src = layer.source;
         if (!src || !(src.width > 0)) {
@@ -219,6 +232,7 @@ var SBCep = (function () {
         out.index = layer.index;
         out.threeD = layer.threeDLayer;
         out.parent = layer.parent ? layer.parent.name : null;
+        out.parents = parentChain(layer, t);
         out.effects = effectNames(layer);
         out.source = src.name;
         out.source_id = src.id;
@@ -242,49 +256,99 @@ var SBCep = (function () {
     // ---- Phase 3 (D-30): one layer's transform at many comp times, asked by Maya ---------------------
     //   argsText = {comp_id, comp, layer_id, layer, times: [seconds]} as JSON text.
     //   H-AE-29: app.project.itemByID(id) finds the comp by its id; Layer.id finds the layer.
-    function findLayer(args) {
-        var comp = null, layer = null, i, item;
-        if (args.comp_id !== null && args.comp_id !== undefined) {
-            try { comp = app.project.itemByID(Number(args.comp_id)); } catch (e1) { comp = null; }
+    function findComp(compId, compName) {
+        var comp = null, i, item;
+        if (compId !== null && compId !== undefined) {
+            try { comp = app.project.itemByID(Number(compId)); } catch (e1) { comp = null; }
         }
         if (!(comp instanceof CompItem)) {
             for (i = 1; i <= app.project.numItems; i++) {
                 item = app.project.item(i);
-                if (item instanceof CompItem && item.name === args.comp) { comp = item; break; }
+                if (item instanceof CompItem && item.name === compName) { comp = item; break; }
             }
         }
         if (!(comp instanceof CompItem)) {
-            throw SB.userError('Comp "' + args.comp + '" was not found.', 'no_comp_named', { comp: args.comp });
+            throw SB.userError('Comp "' + compName + '" was not found.', 'no_comp_named', { comp: compName });
+        }
+        return comp;
+    }
+
+    function findLayerIn(comp, layerId, layerName) {
+        var i;
+        if (layerId !== null && layerId !== undefined) {
+            for (i = 1; i <= comp.numLayers; i++) {
+                if (comp.layer(i).id === Number(layerId)) { return comp.layer(i); }
+            }
         }
         for (i = 1; i <= comp.numLayers; i++) {
-            if (args.layer_id !== null && args.layer_id !== undefined && comp.layer(i).id === Number(args.layer_id)) {
-                layer = comp.layer(i);
-                break;
+            if (comp.layer(i).name === layerName) { return comp.layer(i); }
+        }
+        throw SB.userError('Layer "' + layerName + '" was not found in comp "' + comp.name + '".',
+                           'no_layer_named', { comp: comp.name, layer: layerName });
+    }
+
+    // args.via = the precomp layers from the top comp down to the layer's comp (D-37):
+    // [{comp_id, comp, layer_id, layer}, ...], empty for a layer of the top comp itself
+    function findLayer(args) {
+        var via = args.via || [], top, comp, containers = [], i, holder;
+        if (via.length === 0) {
+            comp = findComp(args.comp_id, args.comp);
+            return { top: comp, containers: [], layer: findLayerIn(comp, args.layer_id, args.layer) };
+        }
+        top = findComp(via[0].comp_id, via[0].comp);
+        comp = top;
+        for (i = 0; i < via.length; i++) {
+            holder = findLayerIn(comp, via[i].layer_id, via[i].layer);
+            if (!(holder.source instanceof CompItem)) {
+                throw SB.userError('Layer "' + holder.name + '" is not a precomp.', 'no_layer_named',
+                                   { comp: comp.name, layer: holder.name });
             }
+            containers.push(holder);
+            comp = holder.source;
         }
-        if (!layer) {
-            for (i = 1; i <= comp.numLayers; i++) {
-                if (comp.layer(i).name === args.layer) { layer = comp.layer(i); break; }
-            }
+        return { top: top, containers: containers, layer: findLayerIn(comp, args.layer_id, args.layer) };
+    }
+
+    // The time inside a precomp layer's source at time t of the comp it is in. H-AE-31: there is no
+    // AVLayer.sourceTime in AE 26.5 ("undefined", the user, 2026-10-25): time remap when on, else
+    // (t - startTime) * 100 / stretch.
+    function sourceTimeOf(layer, t) {
+        if (layer.timeRemapEnabled) {
+            return layer.property('ADBE Time Remapping').valueAtTime(t, false);
         }
-        if (!layer) {
-            throw SB.userError('Layer "' + args.layer + '" was not found in comp "' + comp.name + '".',
-                               'no_layer_named', { comp: comp.name, layer: args.layer });
+        return (t - layer.startTime) * 100 / layer.stretch;
+    }
+
+    // The containers' transforms at top comp time t, and the time inside the innermost comp.
+    function throughContainers(containers, t) {
+        var out = [], i, tr, layerTime = t;
+        for (i = 0; i < containers.length; i++) {
+            tr = transformAt(containers[i], layerTime);
+            tr.name = containers[i].name;
+            tr.threeD = containers[i].threeDLayer;
+            tr.parents = parentChain(containers[i], layerTime);
+            out.push(tr);
+            layerTime = sourceTimeOf(containers[i], layerTime);
         }
-        return { comp: comp, layer: layer };
+        return { containers: out, time: layerTime };
     }
 
     function layerMotion(argsText) {
         try {
-            var args = SBJSON.parse(argsText), found = findLayer(args), comp = found.comp, layer = found.layer;
-            var src = imageSource(layer), samples = [], i, t, s;
+            var args = SBJSON.parse(argsText), found = findLayer(args), layer = found.layer;
+            var src = imageSource(layer), samples = [], i, t, s, inner;
             for (i = 0; i < args.times.length; i++) {
                 t = Number(args.times[i]);
-                s = transformAt(layer, t);
+                inner = throughContainers(found.containers, t);
+                s = transformAt(layer, inner.time);
                 s.t = t;
+                s.parents = parentChain(layer, inner.time);
+                s.containers = inner.containers;
                 samples.push(s);
             }
-            return ok({ comp: compSummary(comp, comp.time), layer: layerInfo(layer, src, comp.time), samples: samples });
+            inner = throughContainers(found.containers, found.top.time);
+            return ok({ comp: compSummary(found.top, found.top.time), layer: layerInfo(layer, src, inner.time),
+                        samples: samples });
         } catch (e) { return fail(e); }
     }
 
@@ -315,24 +379,37 @@ var SBCep = (function () {
         return !!(p && p.numKeys > 0);
     }
 
+    var MAX_DEPTH = 3;          // precomps inside precomps listed (D-37)
+
+    // The comp's layers, and the layers of its precomps under them (via = the precomp layers above).
+    function listLayers(comp, via, out) {
+        var i, layer, tr, src, kind;
+        for (i = 1; i <= comp.numLayers; i++) {
+            layer = comp.layer(i);
+            src = layer.source;
+            tr = layer.property('ADBE Transform Group');
+            kind = layerKind(layer);
+            out.push({
+                id: (layer.id !== undefined) ? layer.id : null, index: i, name: layer.name,
+                kind: kind, enabled: layer.enabled, comp_id: comp.id, comp: comp.name, via: via,
+                source: src ? src.name : null, source_id: src ? src.id : null,
+                width: (src && src.width) ? src.width : null, height: (src && src.height) ? src.height : null,
+                inPoint: layer.inPoint, outPoint: layer.outPoint, threeD: !!layer.threeDLayer,
+                parent: layer.parent ? layer.parent.name : null,
+                keyed: {position: keyed(tr, 'ADBE Position'), scale: keyed(tr, 'ADBE Scale'),
+                        rotation: keyed(tr, 'ADBE Rotate Z')}
+            });
+            if (kind === 'comp' && via.length < MAX_DEPTH) {
+                listLayers(src, via.concat([{ comp_id: comp.id, comp: comp.name, layer_id: layer.id,
+                                              layer: layer.name }]), out);
+            }
+        }
+    }
+
     function layersInfo() {
         try {
-            var comp = activeComp(), out = [], i, layer, tr, src;
-            for (i = 1; i <= comp.numLayers; i++) {
-                layer = comp.layer(i);
-                src = layer.source;
-                tr = layer.property('ADBE Transform Group');
-                out.push({
-                    id: (layer.id !== undefined) ? layer.id : null, index: i, name: layer.name,
-                    kind: layerKind(layer), enabled: layer.enabled,
-                    source: src ? src.name : null, source_id: src ? src.id : null,
-                    width: (src && src.width) ? src.width : null, height: (src && src.height) ? src.height : null,
-                    inPoint: layer.inPoint, outPoint: layer.outPoint, threeD: !!layer.threeDLayer,
-                    parent: layer.parent ? layer.parent.name : null,
-                    keyed: {position: keyed(tr, 'ADBE Position'), scale: keyed(tr, 'ADBE Scale'),
-                            rotation: keyed(tr, 'ADBE Rotate Z')}
-                });
-            }
+            var comp = activeComp(), out = [];
+            listLayers(comp, [], out);
             return ok({
                 comp: { id: comp.id, name: comp.name, width: comp.width, height: comp.height,
                         frameRate: comp.frameRate, duration: comp.duration, time: comp.time },

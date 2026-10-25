@@ -157,6 +157,7 @@ class MotionFlow(LayersFlow):
         if not times:
             raise RequestFailed(protocol.E_BAD_MESSAGE, "times is empty")
         out = {k: data.get(k) for k in ("comp_id", "comp", "layer_id", "layer")}
+        out["via"] = list(data.get("via") or [])          # precomp layers above it (D-37)
         out["times"] = times
         return out
 

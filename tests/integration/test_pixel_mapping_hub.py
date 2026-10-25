@@ -117,7 +117,7 @@ class MotionFlowTest(ServerFixture):
         reply = self.ask({"comp_id": 12, "comp": "c010", "layer_id": 345, "layer": "BG", "times": [0, 0.5, 1]})
         self.assertEqual(reply["kind"], "motion.result", reply)
         self.assertEqual([s["t"] for s in reply["data"]["samples"]], [0, 0.5, 1])
-        self.assertEqual(asked[0], {"comp_id": 12, "comp": "c010", "layer_id": 345, "layer": "BG",
+        self.assertEqual(asked[0], {"comp_id": 12, "comp": "c010", "layer_id": 345, "layer": "BG", "via": [],
                                     "times": [0.0, 0.5, 1.0]})
         self.assertEqual(self.app.state.hub.history.recent(5), [])
 

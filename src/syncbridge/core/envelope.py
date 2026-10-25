@@ -67,6 +67,9 @@ KINDS = (
     "time.sync.state",
     "time.update",
     "time.set",
+    # one Origin frame for every panel (D-38)
+    "timing.set",
+    "timing.state",
     "error",
 )
 

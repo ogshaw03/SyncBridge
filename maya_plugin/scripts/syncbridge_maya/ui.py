@@ -22,7 +22,7 @@ except ImportError:
 from syncbridge import __version__, protocol
 from syncbridge.core import layer_mapping as core_layer_mapping
 from syncbridge.core import scene_sync
-from . import comp_guide, key_markers, layer_mapping, pixel_mapping, service, snapshots
+from . import comp_guide, key_markers, layer_mapping, pixel_mapping, service, snapshots, timing
 
 WINDOW_NAME = "SyncBridgePanel"
 # <maya folder>/icons next to scripts/ (repository: maya_plugin/icons; release: <install>/maya/icons)
@@ -70,9 +70,9 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.origin = QtWidgets.QDoubleSpinBox()
         self.origin.setRange(-1e6, 1e6)
         self.origin.setDecimals(2)
-        self.origin.setValue(cmds.playbackOptions(q=True, minTime=True))
-        self.origin.setToolTip("Maya frame that corresponds to AE comp time 0 and source time 0\n"
-                               "(usually the render start frame)")
+        self.origin.setValue(timing.origin())          # one Origin frame, kept in the scene (D-38)
+        self.origin.setToolTip(u"AE のコンプの 0 秒にあたる Maya のフレーム（ふつうはレンダーの開始フレーム）。\n"
+                               u"シーンに保存され、AE のパネル・時間の同期・転送・レイヤーマップのすべてで共通です")
         self.tolerance = QtWidgets.QDoubleSpinBox()
         self.tolerance.setRange(0.001, 10.0)
         self.tolerance.setDecimals(3)
@@ -134,7 +134,6 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.time_sync_check.clicked.connect(self.toggle_time_sync)
         self.follow_check.clicked.connect(self.toggle_follow)
         self.origin.valueChanged.connect(service.set_time_origin)
-        service.set_time_origin(self.origin.value())
 
         # Pixel Mapping (D-24, D-28): everything is set in the layer map window; the panel only opens it
         # (two places to set it were confusing, the user, 2026-10-25)
@@ -567,6 +566,12 @@ class SyncBridgePanel(QtWidgets.QDialog):
             self.refresh_pixel_mapping()
         elif event == "layer_map":                       # changed in the layer map window
             self.refresh_pixel_mapping()
+        elif event == "timing":                          # the Origin frame (D-38): AE, or another scene
+            if abs(self.origin.value() - float(payload)) > 1e-9:
+                self.origin.blockSignals(True)
+                self.origin.setValue(float(payload))
+                self.origin.blockSignals(False)
+                self.write(u"Origin frame を %g にしました（AE のパネル・シーンと共通）。" % float(payload))
         elif event == "time_sync_stats":
             self.write(u"同期の計測（Maya が受け取った分）: %s" % payload)
         elif event == "time_sync":

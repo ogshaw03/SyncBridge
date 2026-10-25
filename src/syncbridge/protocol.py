@@ -41,6 +41,7 @@ AE layers for Maya's layer map (D-28):
 Time slider sync (D-22), no replies:
     client -> server  time.sync {enabled, follow_playback}   server -> all  time.sync.state {...}
     client -> server  time.update {t}    server -> the other app  time.set {t, source}
+    client -> server  timing.set {origin}   server -> all  timing.state {origin, by}  (one Origin frame, D-38)
     (t = AE comp time in seconds; Maya converts with its origin frame, core.time_sync)
 A reply carries `reply_to` = the request's event_id. Failures are `error`
 {code, message} with `reply_to` when they answer a request.
@@ -134,6 +135,8 @@ REQUIRED = {
     "time.sync.state": ("enabled",),
     "time.update": ("t",),
     "time.set": ("t",),
+    "timing.set": ("origin",),
+    "timing.state": ("origin",),
     "error": ("code", "message"),
 }
 
@@ -146,7 +149,7 @@ STATUSES = (APPLIED, CANCELLED, FAILED, UNCHANGED)
 RESULT_KINDS = ("apply.result", "transfer.result", "guide.result", "guide.apply.result",
                 "markers.result", "markers.apply.result", "settings.result", "settings.apply.result",
                 "pixelmap.result", "pixelmap.apply.result")
-TIME_KINDS = ("time.sync", "time.update")      # client -> server, no reply
+TIME_KINDS = ("time.sync", "time.update", "timing.set")      # client -> server, no reply
 
 
 class ProtocolError(ValueError):
@@ -219,6 +222,9 @@ def decode(text) -> dict:
         raise ProtocolError(E_BAD_MESSAGE, "status must be one of %s" % (STATUSES,))
     if kind in ("time.update", "time.set") and not isinstance(data["t"], (int, float)):
         raise ProtocolError(E_BAD_MESSAGE, "t must be a number (seconds)")
+    if kind in ("timing.set", "timing.state") and (isinstance(data["origin"], bool)
+                                                   or not isinstance(data["origin"], (int, float))):
+        raise ProtocolError(E_BAD_MESSAGE, "origin must be a number (Maya frame)")
     if kind == "hello" and data["app"] not in APPS:
         raise ProtocolError(E_BAD_MESSAGE, "app must be one of %s" % (APPS,))
     return msg

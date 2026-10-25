@@ -334,10 +334,12 @@ def remove_layer(layer_id: str) -> int:
 
 
 def connect(ae: dict, layer_id: str) -> dict:
-    """Link an AE layer (core.layer_mapping.ae_from_layers_info) to a Maya layer: relative mode with the
-    method chosen for new links in the layer map (change_mode switches a link to absolute)."""
-    method = defaults()["method"]
-    return _edit("SyncBridge connect", lambda data: dict(core.connect(data, ae, layer_id, method, "relative")))
+    """Link an AE layer (core.layer_mapping.ae_from_layers_info) to a Maya layer with the mode (relative or
+    source camera, D-39) and method chosen for new links in the layer map (change_mode switches a link
+    to absolute, which needs a BG plane)."""
+    chosen = defaults()
+    mode = chosen["mode"] if chosen["mode"] in ("relative", "source") else "relative"
+    return _edit("SyncBridge connect", lambda data: dict(core.connect(data, ae, layer_id, chosen["method"], mode)))
 
 
 def disconnect(mapping_id: str) -> None:

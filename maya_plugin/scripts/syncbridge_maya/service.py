@@ -195,6 +195,41 @@ def _on_time_set(msg: dict) -> None:
     _timesync.apply_time(float(msg["data"]["t"]), msg["data"].get("sent_at"))
 
 
+# -- one Origin frame (D-38): the scene holds it, the hub hands it to every panel ---------------------
+_scene_jobs: List[int] = []
+
+
+def _publish_origin() -> None:
+    """The scene's Origin frame to the hub (on connect and when a scene is opened)."""
+    from . import timing
+    value = timing.origin()
+    _timesync.origin = value
+    if is_connected():
+        _client.send("timing.set", {"origin": value})
+    _notify("timing", value)
+
+
+def _on_timing(msg: dict) -> None:
+    """Another panel (AE) changed the Origin frame: keep it in the scene."""
+    from . import timing
+    data = msg["data"]
+    if _client is not None and data.get("by") == _client.client_id:
+        return
+    value = float(data["origin"])
+    timing.set_origin(value)
+    _timesync.origin = value
+    _notify("timing", value)
+
+
+def _watch_scenes() -> None:
+    for job in _scene_jobs:
+        if job is not None and cmds.scriptJob(exists=job):
+            cmds.scriptJob(kill=job, force=True)
+    del _scene_jobs[:]
+    for event in ("SceneOpened", "NewSceneOpened"):
+        _scene_jobs.append(cmds.scriptJob(event=[event, _publish_origin]))      # None in mayapy
+
+
 def client() -> Optional[SyncClient]:
     return _client
 
@@ -223,7 +258,7 @@ def connect(start_server: bool = True, port: Optional[int] = None) -> dict:
                   "settings.export.request": _handle_settings_export,
                   "settings.apply.request": _handle_settings_apply,
                   "pixelmap.apply.request": _handle_pixelmap},
-        notices={"time.sync.state": _on_time_state, "time.set": _on_time_set},
+        notices={"time.sync.state": _on_time_state, "time.set": _on_time_set, "timing.state": _on_timing},
         dispatch=maya.utils.executeDeferred,
         on_event=_on_event,
         version=cmds.about(version=True),
@@ -231,6 +266,8 @@ def connect(start_server: bool = True, port: Optional[int] = None) -> dict:
     )
     welcome = _client.connect(port=port)
     _register(_client)
+    _watch_scenes()
+    _publish_origin()
     if info.get("note"):
         welcome = dict(welcome, note=info["note"])
     return welcome
@@ -241,6 +278,10 @@ def disconnect() -> None:
         _client.disconnect()
     if _registered() is _client:
         _register(None)
+    for job in _scene_jobs:
+        if job is not None and cmds.scriptJob(exists=job):
+            cmds.scriptJob(kill=job, force=True)
+    del _scene_jobs[:]
 
 
 def peers() -> list:
@@ -313,8 +354,9 @@ def request_ae_motion(query: dict, callback) -> str:
 
 
 def time_sync_origin() -> float:
-    """The Origin frame of the panel (Maya frame of AE comp time 0)."""
-    return _timesync.origin
+    """The tool's Origin frame (Maya frame of AE comp time 0), the scene's (D-38)."""
+    from . import timing
+    return timing.origin()
 
 
 def time_sync_state() -> dict:
@@ -322,8 +364,11 @@ def time_sync_state() -> dict:
 
 
 def set_time_origin(origin: float) -> None:
-    """The Origin frame used to convert Maya frames to AE comp time (the panel's field)."""
+    """Change the tool's Origin frame (the panel's field): kept in the scene, handed to the AE panel."""
+    from . import timing
     _timesync.origin = float(origin)
+    if timing.set_origin(origin) and is_connected():
+        _client.send("timing.set", {"origin": float(origin)})
 
 
 def set_time_sync(enabled: bool, follow_playback: bool = False, lead: bool = True) -> None:

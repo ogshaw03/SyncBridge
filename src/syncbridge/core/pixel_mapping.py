@@ -98,32 +98,79 @@ def affine_from_points(src: Sequence[Tuple[float, float]], dst: Sequence[Tuple[f
 
 
 # -- AE layer -----------------------------------------------------------------------------------
+def _layer_local(layer: dict) -> Matrix:
+    """position * R(rotation) * S(scale) * -anchorPoint: the layer's own 2D transform."""
+    px, py = layer["position"][:2]
+    ax, ay = layer["anchorPoint"][:2]
+    sx, sy = (layer.get("scale") or [100.0, 100.0])[:2]
+    rot = float(layer.get("rotation") or 0.0)
+    return multiply(translation(px, py), rotation(rot), scaling(sx / 100.0, sy / 100.0), translation(-ax, -ay))
+
+
 def ae_layer_matrix(layer: dict) -> Tuple[Matrix, List[str]]:
     """Source Pixel -> Comp Pixel for a 2D AE layer at one time, and the reasons it may be wrong.
 
     layer: {position: [x, y(, z)], anchorPoint: [x, y(, z)], scale: [sx, sy(, sz)] (percent),
             rotation: degrees, threeD: bool, parent: name or None, source: {width, height},
+            parents: [the parent's transform, its parent's, ...] (same keys + name, threeD),
             effects: [names of geometry-changing effects] (optional)}
     comp = position + R(rotation) * S(scale) * (source - anchorPoint)   (H-AE-24: AE renders a layer
     pixel's center at this comp position; checked only for position, scale 100 %, rotation 0).
-    Raises ValueError for what Phase 1 cannot map at all (3D layer, parent, geometry effects)."""
+    A parented layer (a null that pans everything, the user's PAN) is in its parent's layer space:
+    comp = M(top parent) * ... * M(parent) * M(layer), each M = position * R * S * -anchor (H-AE-30).
+    A layer inside precomps has `containers` (the precomp layers from the top comp down, each with its
+    `parents`): comp = C(outermost) * ... * C(innermost) * (parents * layer) (D-37).
+    Raises ValueError for what cannot be mapped yet (3D layer or parent, geometry effects, a parent
+    whose transform the AE panel did not send)."""
     if layer.get("threeD"):
         raise ValueError(u"3D レイヤーにはまだ対応していません（2D レイヤーにしてください）。")
-    if layer.get("parent"):
-        raise ValueError(u"親（ペアレント）のあるレイヤーにはまだ対応していません。")
+    parents = layer.get("parents")
+    if layer.get("parent") and not parents:
+        raise ValueError(u"親（ペアレント）の動きが AE から届いていません。AE のパネル（SyncBridge）を新しくしてください。")
+    for p in parents or []:
+        if p.get("threeD"):
+            raise ValueError(u"親「%s」が 3D レイヤーです。3D の親（AE のカメラの PAN）にはまだ対応していません。"
+                             % p.get("name", "?"))
     if layer.get("effects"):
         raise ValueError(u"形を変えるエフェクト（%s）のあるレイヤーにはまだ対応していません。" % ", ".join(layer["effects"]))
-    px, py = layer["position"][:2]
-    ax, ay = layer["anchorPoint"][:2]
-    sx, sy = (layer.get("scale") or [100.0, 100.0])[:2]
-    rot = float(layer.get("rotation") or 0.0)
     warnings = []
-    if abs(sx - 100.0) > 1e-9 or abs(sy - 100.0) > 1e-9:
-        warnings.append(u"スケール（%g%%, %g%%）は計算に入れていますが、AE のレンダーとの一致はまだ確かめていません。" % (sx, sy))
-    if abs(rot) > 1e-9:
-        warnings.append(u"回転（%g°）は Maya のカメラのオフセットでは表せません。" % rot)
-    m = multiply(translation(px, py), rotation(rot), scaling(sx / 100.0, sy / 100.0), translation(-ax, -ay))
+    for item in [layer] + list(parents or []):
+        sx, sy = (item.get("scale") or [100.0, 100.0])[:2]
+        rot = float(item.get("rotation") or 0.0)
+        name = u"" if item is layer else u"親「%s」の" % item.get("name", "?")
+        if abs(sx - 100.0) > 1e-9 or abs(sy - 100.0) > 1e-9:
+            warnings.append(u"%sスケール（%g%%, %g%%）は計算に入れていますが、AE のレンダーとの一致はまだ確かめていません。"
+                            % (name, sx, sy))
+        if abs(rot) > 1e-9:
+            warnings.append(u"%s回転（%g°）は Maya のカメラのオフセットでは表せません。" % (name, rot))
+    m = _with_parents(layer)
+    # a layer inside precomps (D-37): the precomp layers' transforms, outermost first, then the layer's
+    for container in reversed(layer.get("containers") or []):
+        if container.get("threeD") or any(p.get("threeD") for p in container.get("parents") or []):
+            raise ValueError(u"プリコンポのレイヤー「%s」（またはその親）が 3D レイヤーです。まだ対応していません。"
+                             % container.get("name", "?"))
+        m = multiply(_with_parents(container), m)
     return m, warnings
+
+
+def _with_parents(item: dict) -> Matrix:
+    """The item's transform in its comp: its parents' (nearest first in `parents`) times its own."""
+    m = _layer_local(item)
+    for p in item.get("parents") or []:
+        m = multiply(_layer_local(p), m)
+    return m
+
+
+def to_render_space(source_to_comp: Matrix, comp: dict, render: dict) -> Tuple[Matrix, dict]:
+    """(Source -> Render Pixel matrix, the render as the "comp") when the Maya render is the AE comp with
+    a margin around it (D-36): the comp sits in the middle of the render, one comp pixel = one render
+    pixel (the comp frame of D-16 shows it the same way). A comp the size of the render is unchanged."""
+    ox = (float(render["width"]) - float(comp["width"])) / 2.0
+    oy = (float(render["height"]) - float(comp["height"])) / 2.0
+    if abs(float(comp.get("pixelAspect", 1.0)) - float(render.get("pixel_aspect", 1.0))) > 1e-6:
+        raise ValueError(u"AE と Maya のピクセル縦横比が違います。")
+    as_comp = {"width": render["width"], "height": render["height"], "pixelAspect": comp.get("pixelAspect", 1.0)}
+    return multiply(translation(ox, oy), source_to_comp), as_comp
 
 
 # -- Maya camera ----------------------------------------------------------------------------------
@@ -332,6 +379,36 @@ def solve(method: str, camera: dict, render: dict, bg: dict, source_to_comp: Mat
     if method == "pan_zoom":
         values.update(pan_zoom_enabled=True, render_pan_zoom=True)
     return {"values": values, "shift_px": [dx, dy], "max_error_px": err, "base": base, "warnings": warnings}
+
+
+# -- source camera mode (D-39) ---------------------------------------------------------------------------
+# The AE layer's source IS a render of the Maya layer's camera (the BG plate camera, the character's
+# camera) at the source's size. Then nothing has to be lined up by hand: the source pixel of a direction
+# is known (the camera at the source size), AE puts that pixel in the comp (the layer matrix), and the
+# dedicated camera has to show it there at the scene's render size.
+
+def camera_affine(camera: dict, render: dict) -> Matrix:
+    """(x / -z, y / -z) in camera space -> render pixel, an affine map (every step of `project` after the
+    perspective divide is 2D affine); for an orthographic camera, (x, y) -> render pixel."""
+    o = project(camera, render, (0.0, 0.0, -1.0))
+    u = project(camera, render, (1.0, 0.0, -1.0))
+    v = project(camera, render, (0.0, 1.0, -1.0))
+    return [[u[0] - o[0], v[0] - o[0], o[0]], [u[1] - o[1], v[1] - o[1], o[1]], [0.0, 0.0, 1.0]]
+
+
+def solve_source(method: str, camera: dict, render: dict, source_size: Sequence[float], source_to_comp: Matrix,
+                 comp: dict) -> Dict[str, object]:
+    """Camera values that show what AE shows, when the source was rendered by `camera` (its values as
+    rendered) at `source_size` (the AE layer's source width and height): the source pixel of each
+    direction goes where AE puts it, at the scene's render size (with a margin around the comp, D-36).
+
+        C = margin * source_to_comp * A(camera, source size) * A(camera, render)^-1
+    is the 2D change from the camera's own view at the render size to what it must show; the values come
+    from solve_relative (reference = identity, current = C). ValueError (Japanese) as solve_relative."""
+    in_render, as_comp = to_render_space(source_to_comp, comp, render)
+    source_render = {"width": float(source_size[0]), "height": float(source_size[1]), "pixel_aspect": 1.0}
+    change = multiply(in_render, camera_affine(camera, source_render), invert(camera_affine(camera, render)))
+    return solve_relative(method, camera, render, as_comp, identity(), change)
 
 
 # -- relative mode (Phase 2.5, D-25) -------------------------------------------------------------------

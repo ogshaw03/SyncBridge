@@ -3,7 +3,8 @@
 The button opens the SyncBridge panel from THIS repository and reloads its code every time
 (syncbridge* modules are dropped from sys.modules first, the open SyncBridge windows are closed, the
 layer stack plug-in is unloaded after the views using it are put back to Viewport 2.0),
-so a change in the repository is picked up without restarting Maya. The release's button
+so a change in the repository is picked up without restarting Maya. The work is in tools/dev_reload.py,
+which the button runs from the repository (a change there needs no new button). The release's button
 (drag_to_maya_SyncBridge.py / Install.bat) is left alone.
 
 The hub is started from the repository's .venv (client/launcher.py). A hub that is already running
@@ -16,38 +17,17 @@ import os
 BUTTON_LABEL = "SB Dev"
 BUTTON_TAG = "SyncBridgeDev"
 
-COMMAND = u"""import sys
-p = r'{scripts}'
-if p not in sys.path:
-    sys.path.insert(0, p)
-try:
-    from PySide6 import QtWidgets
-except ImportError:
-    from PySide2 import QtWidgets
-for w in QtWidgets.QApplication.topLevelWidgets():
-    if w.objectName() in ('SyncBridgePanel', 'SyncBridgeLayerMap', 'SyncBridgeViewer'):
-        w.close()
-        w.deleteLater()
-from maya import cmds
-for p in cmds.getPanel(type='modelPanel') or []:
-    try:
-        if cmds.modelEditor(p, q=True, rendererOverrideName=True) == 'SyncBridgeLayerStack':
-            cmds.modelEditor(p, e=True, rendererOverrideName='')
-    except RuntimeError:
-        pass
-if cmds.pluginInfo('syncbridge_layer_stack.py', q=True, loaded=True):
-    cmds.unloadPlugin('syncbridge_layer_stack.py')   # loaded again with the new code when used
-for name in [n for n in sys.modules if n.split('.')[0] in ('syncbridge', 'syncbridge_maya')]:
-    del sys.modules[name]
-import syncbridge_maya.ui
-syncbridge_maya.ui.show()
-print('SyncBridge (dev): reloaded from ' + p)
-"""
+COMMAND = u"""exec(compile(open(r'{reload}', encoding='utf-8').read(), r'{reload}', 'exec'), dict(__file__=r'{reload}', __name__='__sb_dev__'))
+"""   # the work is in tools/dev_reload.py: changing it needs no new button
 
 
 def _repo_scripts():
     here = os.path.dirname(os.path.abspath(__file__))
     return os.path.normpath(os.path.join(here, "..", "maya_plugin", "scripts")).replace("\\", "/")
+
+
+def _reload_script():
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "dev_reload.py").replace("\\", "/")
 
 
 def install():
@@ -67,7 +47,7 @@ def install():
     cmds.shelfButton(parent=shelf, label=BUTTON_LABEL, imageOverlayLabel="Dev",
                      annotation=u"SyncBridge（開発用）: リポジトリの最新のコードを読み直してパネルを開く",
                      image=icon if os.path.isfile(icon) else "pythonFamily.png", docTag=BUTTON_TAG,
-                     sourceType="python", command=COMMAND.format(scripts=scripts))
+                     sourceType="python", command=COMMAND.format(reload=_reload_script()))
     mel.eval("saveAllShelves $gShelfTopLevel")
     cmds.confirmDialog(title="SyncBridge",
                        message=u"シェルフ「%s」に開発用のボタン（Dev）を追加しました。\n"

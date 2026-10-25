@@ -6,6 +6,7 @@ Qt only (PySide2 / PySide6), Maya is not imported: the viewer window (viewer_win
     lst.set_data(store)                         # the scene's layer map (core.layer_mapping)
     lst.order_changed.connect(...)              # [layer ids], top first, after a row is dragged
     lst.visible_changed.connect(...)            # (layer id, bool), the eye
+    lst.motion_requested.connect(...)           # layer id, from the row's right-click menu
 """
 from __future__ import annotations
 
@@ -36,6 +37,7 @@ class _Tree(QtWidgets.QTreeWidget):
 class LayerStackList(QtWidgets.QWidget):
     order_changed = QtCore.Signal(list)        # layer ids, top (front) first
     visible_changed = QtCore.Signal(str, bool)
+    motion_requested = QtCore.Signal(str)      # layer id: transfer the AE motion of its links (D-30)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -54,6 +56,8 @@ class LayerStackList(QtWidgets.QWidget):
         header.setStretchLastSection(True)
         self.tree.dropped.connect(self._on_drop)
         self.tree.itemChanged.connect(self._on_item_changed)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._menu)
         self.hint = QtWidgets.QLabel(u"上の行ほど手前に重なります。行をドラッグして並べ替え、左のチェックで表示・非表示。"
                                      u"カメラか表示するオブジェクトのないレイヤーは描きません。")
         self.hint.setStyleSheet("color: #9a9a9a;")
@@ -105,6 +109,22 @@ class LayerStackList(QtWidgets.QWidget):
         for i in range(self.tree.topLevelItemCount()):
             self.tree.topLevelItem(i).setText(1, str(i + 1))
         self.order_changed.emit(self.order())
+
+    def menu_for(self, item) -> QtWidgets.QMenu:
+        menu = QtWidgets.QMenu(self)
+        layer_id = item.data(0, ID_ROLE)
+        action = menu.addAction(u"このレイヤーのアニメーションを転送…")
+        action.setEnabled(item.text(4) != u"―")                  # no AE layer linked
+        action.triggered.connect(lambda: self.motion_requested.emit(layer_id))
+        return menu
+
+    def _menu(self, pos):
+        item = self.tree.itemAt(pos)
+        if item is not None:
+            item.setSelected(True)
+            menu = self.menu_for(item)
+            run = getattr(menu, "exec", None) or menu.exec_          # PySide6 / PySide2
+            run(self.tree.viewport().mapToGlobal(pos))
 
     def _on_item_changed(self, item, column):
         if not self._filling and column == 0:

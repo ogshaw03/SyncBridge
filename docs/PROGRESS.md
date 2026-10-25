@@ -46,6 +46,9 @@
 
 ### 2026-10-25（Windows 11, Python 3.10.6）
 
+- 利用者の依頼でテスト用の町並みを作るツール `tools/pixel_mapping/make_test_town.py`（建物の箱・`SHOT_CAM`・AE 用の
+  5760×3240 の大判 BG）。mayapy: 大判 BG の中央の切り出しとショットのレンダーが一致（平均差 0.003 / 255）、AE で (+300, −100)
+  ずらして送ったあとも一致（平均 0.002、最大 2）。テスト版 zip（0.1.8、SHA-256 ff419cf8…、テスト 318 件 OK）。
 - **Pixel Mapping Phase 2.5: 相対モード（D-25、`docs/PIXEL_MAPPING.md` 8 章、未リリース）。** 3D の BG・カメラワーク対応。
   `core.pixel_mapping.solve_relative`、対応付けの `mode` / `reference`、Maya の基準の記録と差分の適用、パネルのモードの選択と
   「基準をやり直す」（一覧は折り返し表示に）。既定は相対・2D Pan/Zoom。

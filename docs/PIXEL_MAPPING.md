@@ -222,5 +222,7 @@ AE で見えるはずの位置と比較。位置は 5 通りで、整数・半�
 | `after_effects/jsx/pixel_mapping_reference.jsx` | AE: 参照フレームを作るスクリプト（利用者が AE で実行） |
 | `tools/pixel_mapping/make_testgrid.py` | テスト用 BG を書き出す |
 | `tools/pixel_mapping/maya_render_check.py` | mayapy で Maya 側を通しで確認する |
+| `tools/pixel_mapping/make_test_town.py` | 相対モードのテスト用の町並み（建物の箱）、`SHOT_CAM`、AE 用の大判 BG（3 倍の画角で書き出し）。Maya のスクリプトエディタか mayapy で実行 |
+| `tools/pixel_mapping/maya_relative_check.py` | mayapy で相対モードを確認する（3 つの深さ + カメラワーク） |
 | `tools/pixel_mapping/check_reference.py` | AE の参照フレーム（など）を予測と比べる |
 | `tests/unit/test_pixel_mapping.py`, `tests/unit/test_pixelcheck.py` | 自動テスト |

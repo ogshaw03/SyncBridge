@@ -70,10 +70,57 @@ class CameraModelTest(unittest.TestCase):
 
     def test_unsupported_camera_settings(self):
         self.assertEqual(pm.check_camera(camera(), RENDER), [])
-        self.assertEqual(len(pm.check_camera(camera(camera_scale=2.0, film_roll=5.0), RENDER)), 2)
+        self.assertEqual(len(pm.check_camera(camera(camera_scale=2.0, film_fit_offset=0.1), RENDER)), 2)
+        self.assertEqual(pm.check_camera(camera(film_roll=5.0, pre_scale=1.1, post_scale=0.9), RENDER), [])
         # 3:2 film with a 16:9 render: fill resolves to horizontal; vertical fit is not verified
         self.assertEqual(pm.check_camera(camera(vfa=0.945, film_fit=0), RENDER), [])
         self.assertEqual(len(pm.check_camera(camera(vfa=0.945, film_fit=2), RENDER)), 1)
+
+
+class FilmTransformTest(unittest.TestCase):
+    """Pre / Post Scale, Film Roll (pivot, order) and their order with zoom: what the renders showed
+    (mayapy 2024, Hardware 2.0, 2026-10-25; H-PM-8). Shifts are of the image center, in render px."""
+
+    def center_shift(self, **kw):
+        x, y = pm.project(camera(**kw), RENDER, (0.0, 0.0, -DIST))
+        return x - 960.0, y - 540.0
+
+    def size(self, **kw):
+        """(scale, angle in degrees, clockwise) of the picture: two points 100 px apart in the base view."""
+        a = pm.project(camera(**kw), RENDER, (0.0, 0.0, -DIST))
+        b = pm.project(camera(**kw), RENDER, (100.0, 0.0, -DIST))
+        return math.hypot(b[0] - a[0], b[1] - a[1]) / 100.0, math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))
+
+    def test_scales(self):
+        self.assertAlmostEqual(self.size(pre_scale=1.05)[0], 1.05)
+        self.assertAlmostEqual(self.size(post_scale=1.05)[0], 1.05)
+        # film translate is not scaled by Pre Scale, but by Post Scale (measured -47.94 / -50.33)
+        self.assertAlmostEqual(self.center_shift(pre_scale=1.05, ft_h=0.05)[0], -48.0)
+        self.assertAlmostEqual(self.center_shift(post_scale=1.05, ft_h=0.05)[0], -50.4)
+        # film offset / 2D pan come before Pre Scale (measured -71.20)
+        self.assertAlmostEqual(self.center_shift(pre_scale=1.05, hfo=0.05)[0], -0.05 * W / HFA * 1.05)
+
+    def test_roll(self):
+        self.assertAlmostEqual(self.size(film_roll=3.0)[1], 3.0)             # clockwise on screen
+        x, y = self.center_shift(film_roll=3.0, roll_pivot_h=0.1, roll_pivot_v=0.05)
+        self.assertAlmostEqual(x, -2.38, places=2)                             # measured -2.368, -5.096
+        self.assertAlmostEqual(y, -5.09, places=2)
+        x, y = self.center_shift(film_roll=3.0, ft_h=0.05, film_roll_order=0)  # Rotate-Translate
+        self.assertAlmostEqual((x, y), (-48.0, 0.0))
+        x, y = self.center_shift(film_roll=3.0, ft_h=0.05, film_roll_order=1)  # Translate-Rotate
+        self.assertAlmostEqual(x, -47.93, places=2)                            # measured -47.935, -2.516
+        self.assertAlmostEqual(y, -2.51, places=2)
+        x, y = self.center_shift(film_roll=3.0, hfo=0.05)                      # measured -67.662, -3.544
+        self.assertAlmostEqual(x, -67.66, places=2)
+        self.assertAlmostEqual(y, -3.55, places=2)
+
+    def test_zoom_comes_before_film_translate(self):
+        pz = {"pan_zoom_enabled": True, "render_pan_zoom": True}
+        self.assertAlmostEqual(self.center_shift(zoom=0.95, ft_h=0.05, **pz)[0], -48.0)   # measured -48.014
+        self.assertAlmostEqual(self.size(zoom=0.95, **pz)[0], 1 / 0.95)
+        x, y = self.center_shift(zoom=0.95, film_roll=3.0, roll_pivot_h=0.1, **pz)        # measured +0.132, -5.021
+        self.assertAlmostEqual(x, 0.13, places=2)
+        self.assertAlmostEqual(y, -5.02, places=2)
 
 
 class AeLayerTest(unittest.TestCase):
@@ -208,6 +255,25 @@ class RelativeModeTest(unittest.TestCase):
         self.check_picture_moved(camera(), r["values"], pm.multiply(cur, pm.invert(ref)))
         with self.assertRaises(ValueError):
             pm.solve_relative("film_offset", camera(), RENDER, COMP, ref, cur)
+
+    def test_film_roll_method_shows_rotation_and_scale(self):
+        # the user's cases (2026-10-25): 42 degrees and 170 %, refused by the other methods
+        ref, _ = self.matrices((960.0, 540.0), (960.0, 540.0))
+        for cam in (camera(), camera(roll_pivot_h=0.2, roll_pivot_v=-0.1, film_roll_order=1, post_scale=0.9,
+                                     pre_scale=1.1, film_roll=5.0, hfo=0.03)):
+            for pos, scale, rot in (((1100.0, 400.0), 100.0, 42.0), ((900.0, 600.0), 170.0, 0.0),
+                                    ((1000.0, 520.0), 170.0, 42.0), ((960.0, 540.0), 80.0, -15.5)):
+                _, cur = self.matrices((960.0, 540.0), pos, scale=scale, rotation=rot)
+                r = pm.solve_relative("film_roll", cam, RENDER, COMP, ref, cur)
+                self.assertLess(r["max_error_px"], 1e-6, (pos, scale, rot))
+                self.assertAlmostEqual(r["change"]["rotation"], rot)
+                self.assertAlmostEqual(r["values"]["film_roll"], cam.get("film_roll", 0.0) + rot)
+                self.assertAlmostEqual(r["values"]["post_scale"], cam.get("post_scale", 1.0) * scale / 100.0)
+                self.check_picture_moved(cam, r["values"], pm.multiply(cur, pm.invert(ref)))
+        _, cur = self.matrices((960.0, 540.0), (960.0, 540.0), rotation=42.0)
+        with self.assertRaises(ValueError) as ctx:
+            pm.solve_relative("pan_zoom", camera(), RENDER, COMP, ref, cur)
+        self.assertIn(u"Film Translate・Scale・Roll", str(ctx.exception))
 
     def test_rotation_and_orthographic(self):
         ref, cur = self.matrices((960.0, 540.0), (960.0, 540.0), rotation=2.0)

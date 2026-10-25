@@ -60,6 +60,17 @@ class LayerMappingTest(unittest.TestCase):
         del old["mode"]
         self.assertEqual(lm.mode_of(old), "absolute")        # records made before D-25
 
+    def test_change_method(self):
+        rel = lm.with_reference(lm.new_mapping(AE, MAYA, method="pan_zoom", mode="relative"),
+                                [[1, 0, 0], [0, 1, 0], [0, 0, 1]], {"hpan": 0.0}, 0.0)
+        changed = lm.with_method(rel, "film_roll")
+        self.assertEqual((changed["method"], changed["reference"]), ("film_roll", None))   # new reference next time
+        absolute = lm.with_method(lm.new_mapping(AE, MAYA), "film_translate")
+        self.assertEqual(absolute["method"], "film_translate")
+        self.assertIn(u"Film Translate・Scale・Roll", lm.describe(changed))
+        with self.assertRaises(ValueError):
+            lm.with_method(rel, "camera_move")
+
     def test_describe_and_export(self):
         self.assertEqual(lm.describe(lm.new_mapping(AE, MAYA, name="BG Slide")),
                          u"BG Slide: AE c010 / BG → BG_CAMShape（絶対・Film Offset）")

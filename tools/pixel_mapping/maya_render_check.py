@@ -102,7 +102,8 @@ for method in METHODS:
         layer = {"position": [ax_, ay_], "anchorPoint": [3000.0, 2000.0], "scale": [100.0, 100.0], "rotation": 0}
         m_ae, _ = pm.ae_layer_matrix(layer)
         for key in maya_pm.CAMERA_ATTRS:                                  # back to a clean camera
-            cmds.setAttr(shape + "." + maya_pm.CAMERA_ATTRS[key], 1.0 if key == "zoom" else 0)
+            cmds.setAttr(shape + "." + maya_pm.CAMERA_ATTRS[key],
+                         1.0 if key in ("zoom", "pre_scale", "post_scale") else 0)
         solved = pm.solve(method, maya_pm.camera_data(shape), render, bg, m_ae,
                           {"width": W, "height": H, "pixelAspect": 1.0})
         maya_pm.apply_values(shape, solved["values"])

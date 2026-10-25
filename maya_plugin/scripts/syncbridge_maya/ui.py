@@ -145,7 +145,7 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.pm_camera = QtWidgets.QComboBox()
         self.pm_bg = QtWidgets.QComboBox()
         self.pm_method = QtWidgets.QComboBox()
-        for key in ("film_offset", "film_translate", "pan_zoom"):
+        for key in ("pan_zoom", "film_roll", "film_translate", "film_offset"):
             self.pm_method.addItem(pixel_mapping.METHOD_LABELS[key], key)
         self.pm_refresh = QtWidgets.QPushButton(u"↻")
         self.pm_refresh.setToolTip(u"シーンのカメラと板ポリの一覧を読み直します")
@@ -154,6 +154,12 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.pm_list.setWordWrap(True)                 # the long descriptions were cut (mock, 2026-10-25)
         self.pm_list.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.pm_list.setMaximumHeight(110)
+        self.pm_method.setToolTip(u"2D Pan/Zoom: 平行移動と拡大縮小\n"
+                                  u"Film Translate・Scale・Roll: 平行移動・拡大縮小・回転（Film Translate / Post Scale / Film Roll）\n"
+                                  u"Film Translate / Film Offset: 平行移動だけ")
+        self.pm_change_method = QtWidgets.QPushButton(u"方式を変更")
+        self.pm_change_method.setToolTip(u"一覧で選んだ対応付けを、上の「方式」に変えます（相対モードは次の送信で基準を取り直します）")
+        self.pm_change_method.clicked.connect(self.change_mapping_method)
         self.pm_rebase = QtWidgets.QPushButton(u"基準をやり直す")
         self.pm_rebase.setToolTip(u"相対モード: 選んだ対応付けの基準を消し、次に AE から送ったときの見え方を新しい基準にします")
         self.pm_rebase.clicked.connect(self.reset_reference)
@@ -252,6 +258,7 @@ class SyncBridgePanel(QtWidgets.QDialog):
         pm_hint.setWordWrap(True)
         pm_remove_row = QtWidgets.QHBoxLayout()
         pm_remove_row.addStretch(1)
+        pm_remove_row.addWidget(self.pm_change_method)
         pm_remove_row.addWidget(self.pm_rebase)
         pm_remove_row.addWidget(self.pm_remove)
         pm_layout.addLayout(pm_form)
@@ -401,6 +408,7 @@ class SyncBridgePanel(QtWidgets.QDialog):
         if not mappings:
             self.pm_list.addItem(u"このシーンには対応付けがありません")
         self.pm_remove.setEnabled(bool(mappings))
+        self.pm_change_method.setEnabled(bool(mappings))
         self.pm_rebase.setEnabled(any(core_layer_mapping.mode_of(m) == "relative" for m in mappings))
 
     def save_pixel_mapping_defaults(self, *_args):
@@ -410,6 +418,24 @@ class SyncBridgePanel(QtWidgets.QDialog):
             self.pm_bg.setEnabled(self.pm_mode.currentData() == "absolute")
         except Exception as exc:
             self.write(u"選んだカメラか BG を使えません: %s" % exc)
+
+    def change_mapping_method(self):
+        item = self.pm_list.currentItem()
+        mapping_id = item.data(QtCore.Qt.UserRole) if item else None
+        if not mapping_id:
+            self.write(u"方式を変える対応付けを一覧で選んでください。")
+            return
+        method = self.pm_method.currentData()
+        try:
+            changed = layer_mapping.change_method(mapping_id, method)
+        except Exception as exc:
+            self.write(u"方式を変えられませんでした: %s" % exc)
+            return
+        note = u"次に AE から送ったときの見え方を新しい基準にします（カメラは変わりません）。" \
+            if core_layer_mapping.mode_of(changed) == "relative" else u""
+        self.write(u"方式を %s に変えました: %s。%s" % (pixel_mapping.METHOD_LABELS[method],
+                                                    core_layer_mapping.describe(changed), note))
+        self.refresh_pixel_mapping()
 
     def reset_reference(self):
         item = self.pm_list.currentItem()

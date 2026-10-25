@@ -71,6 +71,17 @@ def with_reference(mapping: dict, matrix, camera_values: dict, comp_time=None) -
                                     "comp_time": comp_time})
 
 
+def with_method(mapping: dict, method: str) -> dict:
+    """A copy using another method; a relative record takes a new reference at the next send (the old
+    reference holds the old method's camera values)."""
+    if method not in METHODS:
+        raise ValueError("method must be one of %s" % (METHODS,))
+    out = dict(mapping, method=method)
+    if mode_of(mapping) == "relative":
+        out["reference"] = None
+    return out
+
+
 def without_reference(mapping: dict) -> dict:
     """The next send records a new reference (and changes nothing)."""
     return dict(mapping, reference=None)
@@ -130,7 +141,8 @@ def dump(mappings: List[dict]) -> Dict[str, object]:
 
 def describe(mapping: dict) -> str:
     """'BG Slide: AE c010 / BG -> BG_CAMShape (Film Offset)'"""
-    labels = {"film_offset": "Film Offset", "film_translate": "Film Translate", "pan_zoom": "2D Pan/Zoom"}
+    labels = {"film_offset": "Film Offset", "film_translate": "Film Translate", "pan_zoom": "2D Pan/Zoom",
+              "film_roll": u"Film Translate・Scale・Roll"}
     cam = (mapping["maya"].get("camera") or "?").split("|")[-1]
     mode = mode_of(mapping)
     extra = ""

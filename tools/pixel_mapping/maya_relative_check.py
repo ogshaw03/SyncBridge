@@ -3,8 +3,8 @@ camera work; the AE BG layer slides / scales from the reference; every depth mus
 
     "C:\Program Files\Autodesk\Maya2024\bin\mayapy.exe" tools\pixel_mapping\maya_relative_check.py <out_dir> [method]
 
-method: pan_zoom (default, also scales), film_translate, film_offset (refused here: the camera work keys
-the film offset). Hardware 2.0 (ogsRender). Three planes at different depths (near / mid / far) stand in
+method: pan_zoom (default, also scales), film_roll (translate, scale and rotation), film_translate,
+film_offset (refused here: the camera work keys the film offset). Hardware 2.0 (ogsRender). Three planes at different depths (near / mid / far) stand in
 for a building / town model; each shows a part of the test grid at 1 texel = 1 render pixel, left /
 center / right in the frame. The camera has keys (translateX and film offset: camera work).
 The first send records the reference (frame 10); then the AE layer moves (and scales) and the camera is
@@ -86,10 +86,10 @@ cmds.setKeyframe(shape, attribute="horizontalFilmOffset", time=24, value=0.02)
 cmds.currentTime(10)
 
 
-def info(position, scale=100.0):
+def info(position, scale=100.0, rotation=0.0):
     return {"comp": {"id": 1, "name": "c010", "width": W, "height": H, "pixelAspect": 1, "time": 0},
             "layer": {"id": 7, "name": "BG", "position": list(position), "anchorPoint": [3000, 2000],
-                      "scale": [scale, scale], "rotation": 0, "threeD": False, "parent": None, "effects": [],
+                      "scale": [scale, scale], "rotation": rotation, "threeD": False, "parent": None, "effects": [],
                       "source": "bg", "source_width": SRC_W, "source_height": SRC_H}}
 
 
@@ -137,23 +137,26 @@ exp0 = expected_now(points)
 rep0 = measure.compare(img0, exp0, search=12, threshold=24)
 print("RESULT reference render vs camera model: %s | %s" % (measure.summary(rep0), per_depth(rep0)))
 
-CASES = [((1083.25, 492.5), 100.0), ((700.0, 610.75), 100.0)]
-if METHOD == "pan_zoom":
-    CASES.append(((1000.0, 520.0), 110.0))
+CASES = [((1083.25, 492.5), 100.0, 0.0), ((700.0, 610.75), 100.0, 0.0)]
+if METHOD in ("pan_zoom", "film_roll"):
+    CASES.append(((1000.0, 520.0), 110.0, 0.0))
+if METHOD == "film_roll":
+    # the user's cases (2026-10-25): 42 degrees and 170 %
+    CASES += [((960.0, 540.0), 100.0, 42.0), ((960.0, 540.0), 170.0, 0.0), ((1010.0, 500.0), 130.0, -12.5)]
 ref_m, _ = pm.ae_layer_matrix(info((960.0, 540.0))["layer"])
-for position, scale in CASES:
+for position, scale, rotation in CASES:
     try:
-        r = pixel_mapping.apply_from_ae(info(position, scale), confirm=False)
+        r = pixel_mapping.apply_from_ae(info(position, scale, rotation), confirm=False)
     except ValueError as exc:
-        print("RESULT %-14s AE %s scale %g%%: refused: %s" % (METHOD, position, scale, exc))
+        print("RESULT %-14s AE %s scale %g%% rot %g: refused: %s" % (METHOD, position, scale, rotation, exc))
         continue
-    cur_m, _ = pm.ae_layer_matrix(info(position, scale)["layer"])
+    cur_m, _ = pm.ae_layer_matrix(info(position, scale, rotation)["layer"])
     change = pm.multiply(cur_m, pm.invert(ref_m))
-    img = render("rel_%s_%g_%g_%g" % (METHOD, position[0], position[1], scale))
+    img = render("rel_%s_%g_%g_%g_%g" % (METHOD, position[0], position[1], scale, rotation))
     moved = []
     for e in exp0:
         x, y = pm.apply(change, e["x"], e["y"])
         moved.append(dict(e, x=x, y=y))
     rep = measure.compare(img, moved, search=12, threshold=24)
-    print("RESULT %-14s AE %s scale %g%%: %s | %s | camera work film offset untouched: %s" % (
-        METHOD, position, scale, measure.summary(rep), per_depth(rep), "hfo" not in r["values"]))
+    print("RESULT %-14s AE %s scale %g%% rot %g: %s | %s | camera work film offset untouched: %s" % (
+        METHOD, position, scale, rotation, measure.summary(rep), per_depth(rep), "hfo" not in r["values"]))

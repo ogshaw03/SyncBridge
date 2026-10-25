@@ -98,6 +98,21 @@ def reset_reference(mapping_id: str) -> None:
     save([core.without_reference(m) if m["id"] == mapping_id else m for m in stored()])
 
 
+def change_method(mapping_id: str, method: str) -> dict:
+    """Use another method for one record (undoable); relative records take a new reference next time."""
+    mappings = stored()
+    changed = None
+    out = []
+    for m in mappings:
+        if m["id"] == mapping_id:
+            m = changed = core.with_method(m, method)
+        out.append(m)
+    if changed is None:
+        raise ValueError(u"対応付けが見つかりません。")
+    save(out)
+    return changed
+
+
 def remove(mapping_id: str) -> int:
     """Delete one record (undoable). Returns how many records are left."""
     mappings = core.remove(stored(), mapping_id)

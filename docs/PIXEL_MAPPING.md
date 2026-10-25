@@ -43,13 +43,37 @@ x_px = W/2 + NDC.x × W/2,  y_px = H/2 − NDC.y × W/2
 panZoomEnabled かつ renderPanZoom: p = 中心 + (p − 中心) / zoom
 ```
 
+**フィルム面の 2D 変換の順序（H-PM-8、mayapy 2024 のレンダーで確認、2026-10-25）:**
+
+```
+Film Offset → 2D Pan →（NDC へ）→ ÷ Zoom → × Pre Scale
+  → Film Roll（Pivot、NDC・y 上）と Film Translate（Order: Rotate-Translate = 回転してから平行移動、Translate-Rotate = 逆）
+  → × Post Scale → px
+```
+
+- Pre / Post Scale: 値がそのまま倍率（> 1 で拡大）。中心は画像の中心。
+- Film Roll: 正の値で時計回り（AE の回転と同じ向き）。Pivot の単位は NDC（幅の半分 = 1、y 上）。
+- Film Offset と 2D Pan は Pre Scale・Roll・Post Scale の影響を受ける。Film Translate は Pre Scale と Zoom の影響を受けず、
+  Post Scale の影響は受ける。
+- 実測（Hardware 2.0、Maya Software は 0.3 px 以内で同じ）:
+
+| 値 | 結果 |
+|---|---|
+| Pre Scale / Post Scale 1.05 | 1.05 倍 |
+| Film Roll 3 | 3° 時計回り |
+| Pivot (0.1, 0.05) | 画像の中心が (−2.37, −5.10) px（式では −2.38, −5.09） |
+| Translate-Rotate | (−47.94, −2.52) px |
+| Zoom 0.95 + Film Translate 0.05 | −48.01 px（Zoom の影響なし） |
+
+- 最初のモデルは Zoom を最後にしていたので、Zoom と Film Translate を同時に使うときだけずれていた。
+
 有効フィルム幅は Film Fit で決まる（横合わせなら horizontalFilmAperture。Fill は、フィルムの縦横比がレンダーの縦横比以下なら
 横合わせになる）。板ポリがフィルム面と平行なら、元画像 → レンダーはアフィンになる。平行でなければ断る（遠近で形が変わり、
 オフセットでは合わせられない）。
 
 **ソルバー（`solve`）:** オフセットを 0 にしたときの Maya の対応（元画像 → レンダー）を求め、**AE がコンプの中心に映している
-元画像の点** のずれ (dx, dy) から値を求める。大きさ・向きの違いは、比率ではなく **画面の四隅に残るずれ** で判断する。
-1 px 以上なら断り（オフセットで合わせられるのは位置だけ）、0.1 px 以上なら警告する（2026-10-25: 利用者がカメラの距離を
+元画像の点** のずれ (dx, dy) から値を求める。大きさ・向きの違いは、比率ではなく **画面の四隅に残るずれ** で判断する。値はカメラのモデルを使って 2 つ同時に数値で解く
+（Pre / Post Scale・Roll・Zoom があっても正しく求まる）。1 px 以上なら断り（オフセットで合わせられるのは位置だけ）、0.1 px 以上なら警告する（2026-10-25: 利用者がカメラの距離を
 18.67092 ではなく 18.670 と入れた。大きさで 0.005 % の差、端で 0.05 px。最初の実装は相対差 1e-5 で断っていた）。
 
 | 方式 | 値 |
@@ -57,12 +81,13 @@ panZoomEnabled かつ renderPanZoom: p = 中心 + (p − 中心) / zoom
 | Film Offset | hfo = −dx × 有効フィルム幅 / W、vfo = dy × 有効フィルム幅 / W |
 | 2D Pan/Zoom | hpan / vpan = Film Offset と同じ × zoom（panZoomEnabled と renderPanZoom をオン） |
 | Film Translate | ftH = −dx × 2 / W、ftV = dy × 2 / W |
+| Film Translate・Scale・Roll | 絶対モードでは Film Translate と同じ（位置だけ）。相対モードでは拡大縮小と回転も（8 章） |
 
 求めた値で対応を計算し直して、AE との差（max_error_px）を返す（計算上は 1e-6 px 以下）。
 
 **断るもの:**
 - コンプとレンダーの解像度が違う、ピクセル縦横比が 1 でない。
-- Lens Squeeze、Camera Scale、Film Roll、Pre/Post Scale、Film Fit Offset、Overscan が既定値でない。
+- Lens Squeeze、Camera Scale、Film Fit Offset、Overscan が既定値でない。
 - 縦合わせになる Film Fit（未確認）。
 - 平行投影のカメラで Film Offset / 2D Pan を選んだ。
 
@@ -200,6 +225,24 @@ AE で見えるはずの位置と比較。位置は 5 通りで、整数・半�
 
 → どの深さも同じだけ動き（視差なし）、カメラワークの Film Offset には触らない。Film Offset と 2D Pan を同時に使ったときの
 順序（H-PM-5）も、この組み合わせで確認できた。
+
+**方式「Film Translate・Scale・Roll」（2026-10-25、利用者の要望）:**
+- 利用者が GUI で 170 % と 42° を送ったところ、2D Pan/Zoom 以外の方式で断られた。
+  → Film Translate（位置）・Post Scale（拡大縮小）・Film Roll（回転）で、AE の 2D の変化をすべて表す方式を足した。
+- 相対モードでは、Post Scale = 基準 × 倍率、Film Roll = 基準 + 回転とし、Film Translate を数値で解く
+  （Roll の Pivot や Order が既定値でなくても正しく求まる）。
+- 確認（`maya_relative_check.py film_roll`、3 つの深さとカメラワーク）:
+
+| AE の変化 | 最大誤差 |
+|---|---|
+| スライド | 0.007 px |
+| 110 % | 0.094 px |
+| **42°** | **0.036 px** |
+| **170 %** | **0.067 px** |
+| 130 % + −12.5° + スライド | 0.011 px |
+
+- パネルに「方式を変更」（選んだ対応付けの方式を変える。相対モードは次の送信で基準を取り直す）。
+- 方式の並びは、2D Pan/Zoom（既定）、Film Translate・Scale・Roll、Film Translate、Film Offset。
 
 **未確認:** GUI の Maya と AE での一連の流れ（基準の記録 → AE で BG を動かして送る → 見え方が合う）。
 

@@ -82,6 +82,26 @@ class MarkerTest(unittest.TestCase):
         self.assertAlmostEqual(found["y"], 14.5)
 
 
+class BlobAndFitTest(unittest.TestCase):
+    def test_blobs_and_affine_fit(self):
+        img = testgrid.make(1000, 600, step=200)
+        blobs = measure.find_blobs(img)
+        expected = testgrid.marker_positions(1000, 600, step=200)
+        self.assertEqual(len(blobs), len(expected))
+        got = sorted((round(b["x"], 6), round(b["y"], 6)) for b in blobs)
+        self.assertEqual(got, sorted((m["x"], m["y"]) for m in expected))
+        import math
+        a = math.radians(10.0)
+        src = [(m["x"], m["y"]) for m in expected]
+        dst = [(1.2 * (math.cos(a) * x - math.sin(a) * y) + 5.0, 1.2 * (math.sin(a) * x + math.cos(a) * y) - 7.0)
+               for x, y in src]
+        m = measure.fit_affine(src, dst)
+        self.assertAlmostEqual(m[0][0], 1.2 * math.cos(a))
+        self.assertAlmostEqual(m[1][0], 1.2 * math.sin(a))
+        self.assertAlmostEqual(m[0][2], 5.0)
+        self.assertAlmostEqual(m[1][2], -7.0)
+
+
 def _load_tool(name):
     import importlib.util
     path = os.path.join(os.path.dirname(__file__), "..", "..", "tools", "pixel_mapping", name + ".py")

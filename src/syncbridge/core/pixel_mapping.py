@@ -10,13 +10,20 @@ Pure functions, standard library only, double precision, no rounding. Coordinate
                          y uses the same unit (square pixels), up.
 
 Maya camera model, checked by rendering in mayapy 2024 (Hardware 2.0 and Maya Software), plane
-parallel to the film, horizontal film fit (H-PM-1..4):
+parallel to the film, horizontal film fit (H-PM-1..4, H-PM-8):
     perspective:  film = (X / -Z, Y / -Z) * focalLength / 25.4
     orthographic: film = (X, Y) * effective width / orthographicWidth
-    film offset (inches, perspective only) and 2D pan (inches, render pan/zoom on, perspective only)
-    are subtracted on the film; film translate (NDC) is subtracted in NDC; zoom divides around the
-    image center. Orthographic cameras ignore film offset and 2D pan in renders.
-    x_px = W/2 + xn * W/2,  y_px = H/2 - yn * W/2
+    film -= film offset            (inches, perspective only)
+    film -= 2D pan                 (inches, render pan/zoom on, perspective only)
+    n = film / (effective width / 2)                                   NDC, y up
+    n /= zoom                      (render pan/zoom on)
+    n *= preScale
+    Rotate-Translate (filmRollOrder 0): n = R(n - pivot) + pivot - filmTranslate
+    Translate-Rotate (filmRollOrder 1): n = R(n - filmTranslate - pivot) + pivot
+        R = rotation by -filmRollValue degrees in y-up NDC (clockwise on screen), pivot = roll pivot (NDC)
+    n *= postScale
+    x_px = W/2 + n.x * W/2,  y_px = H/2 - n.y * W/2
+Orthographic cameras ignore film offset and 2D pan in renders.
 """
 from __future__ import annotations
 
@@ -25,7 +32,9 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 Matrix = List[List[float]]          # 3 x 3, column vectors: [x', y', 1] = M [x, y, 1]
 
-METHODS = ("film_offset", "film_translate", "pan_zoom")
+METHODS = ("film_offset", "film_translate", "pan_zoom", "film_roll")
+# film_roll: Film Translate for the position, Post Scale for a scale, Film Roll for a rotation (relative
+# mode; in absolute mode only the translation, like film_translate)
 FIT_NAMES = {0: "fill", 1: "horizontal", 2: "vertical", 3: "overscan"}
 AFFINE_TOLERANCE = 1e-4      # px: deviation from an affine map (plane not parallel to the film)
 ERROR_LIMIT_PX = 1.0         # refuse when a size / angle difference leaves this error in the frame (spec 10)
@@ -138,9 +147,7 @@ def effective_width(camera: dict, render: dict) -> float:
 
 
 UNSUPPORTED = (("lens_squeeze", 1.0, u"Lens Squeeze Ratio"), ("camera_scale", 1.0, u"Camera Scale"),
-               ("film_roll", 0.0, u"Film Roll"), ("pre_scale", 1.0, u"Pre Scale"),
-               ("post_scale", 1.0, u"Post Scale"), ("film_fit_offset", 0.0, u"Film Fit Offset"),
-               ("overscan", 1.0, u"Overscan"))
+               ("film_fit_offset", 0.0, u"Film Fit Offset"), ("overscan", 1.0, u"Overscan"))
 
 
 def check_camera(camera: dict, render: dict) -> List[str]:
@@ -176,13 +183,25 @@ def project(camera: dict, render: dict, point: Sequence[float]) -> Tuple[float, 
     if pan_zoom and not camera.get("orthographic"):
         xf -= float(camera.get("hpan", 0.0))
         yf -= float(camera.get("vpan", 0.0))
-    xn = xf / (eff / 2.0) - float(camera.get("ft_h", 0.0))
-    yn = yf / (eff / 2.0) - float(camera.get("ft_v", 0.0))
-    px, py = w / 2.0 + xn * w / 2.0, h / 2.0 - yn * w / 2.0
+    xn, yn = xf / (eff / 2.0), yf / (eff / 2.0)
+    scale = float(camera.get("pre_scale", 1.0))
     if pan_zoom:
-        zoom = float(camera.get("zoom", 1.0))
-        px, py = w / 2.0 + (px - w / 2.0) / zoom, h / 2.0 + (py - h / 2.0) / zoom
-    return px, py
+        scale /= float(camera.get("zoom", 1.0))         # zoom acts before film translate / roll (H-PM-8)
+    xn, yn = xn * scale, yn * scale
+    a = math.radians(-float(camera.get("film_roll", 0.0)))
+    c, s = math.cos(a), math.sin(a)
+    pvx, pvy = float(camera.get("roll_pivot_h", 0.0)), float(camera.get("roll_pivot_v", 0.0))
+    ftx, fty = float(camera.get("ft_h", 0.0)), float(camera.get("ft_v", 0.0))
+    if int(camera.get("film_roll_order", 0)) == 1:      # Translate-Rotate
+        xn, yn = xn - ftx, yn - fty
+        dx, dy = xn - pvx, yn - pvy
+        xn, yn = pvx + c * dx - s * dy, pvy + s * dx + c * dy
+    else:                                                # Rotate-Translate (Maya's default)
+        dx, dy = xn - pvx, yn - pvy
+        xn, yn = pvx + c * dx - s * dy - ftx, pvy + s * dx + c * dy - fty
+    post = float(camera.get("post_scale", 1.0))
+    xn, yn = xn * post, yn * post
+    return w / 2.0 + xn * w / 2.0, h / 2.0 - yn * w / 2.0
 
 
 def to_camera_space(world_inverse: Sequence[float], point: Sequence[float]) -> Tuple[float, float, float]:
@@ -221,7 +240,34 @@ def maya_source_to_render(camera: dict, render: dict, bg: dict) -> Matrix:
 
 
 # -- solver -----------------------------------------------------------------------------------------
-METHOD_ATTRS = {"film_offset": ("hfo", "vfo"), "film_translate": ("ft_h", "ft_v"), "pan_zoom": ("hpan", "vpan")}
+def _solve_pair(camera: dict, render: dict, hx: str, hy: str, point, target) -> dict:
+    """camera with hx, hy set so that `point` (camera space) lands on `target` (render px).
+
+    The picture is affine in each offset (film offset, pan, film translate), so one step per value
+    gives the exact Jacobian; offsets of one kind do not mix x and y unless a film roll rotates them,
+    hence the 2 x 2 solve."""
+    solved = dict(camera)
+    solved[hx] = float(solved.get(hx, 0.0))
+    solved[hy] = float(solved.get(hy, 0.0))
+    p0 = project(solved, render, point)
+    cols = []
+    for key in (hx, hy):
+        step = dict(solved)
+        step[key] = solved[key] + 1e-3
+        p = project(step, render, point)
+        cols.append(((p[0] - p0[0]) / 1e-3, (p[1] - p0[1]) / 1e-3))
+    (a, c), (b, d) = cols                      # [[a, b], [c, d]] * [dv_x, dv_y] = target - p0
+    det = a * d - b * c
+    if abs(det) < 1e-12:
+        raise ValueError(u"この方式の値を変えても、このカメラでは画面が動きません。")
+    rx, ry = target[0] - p0[0], target[1] - p0[1]
+    solved[hx] += (d * rx - b * ry) / det
+    solved[hy] += (a * ry - c * rx) / det
+    return solved
+
+
+METHOD_ATTRS = {"film_offset": ("hfo", "vfo"), "film_translate": ("ft_h", "ft_v"), "pan_zoom": ("hpan", "vpan"),
+                "film_roll": ("ft_h", "ft_v")}
 
 
 def solve(method: str, camera: dict, render: dict, bg: dict, source_to_comp: Matrix,
@@ -241,7 +287,7 @@ def solve(method: str, camera: dict, render: dict, bg: dict, source_to_comp: Mat
                          % (comp["width"], comp["height"], render["width"], render["height"]))
     if abs(float(comp.get("pixelAspect", 1.0)) - float(render.get("pixel_aspect", 1.0))) > 1e-6:
         raise ValueError(u"AE と Maya のピクセル縦横比が違います。")
-    if camera.get("orthographic") and method != "film_translate":
+    if camera.get("orthographic") and method not in ("film_translate", "film_roll"):
         raise ValueError(u"平行投影のカメラでは、Film Offset と 2D Pan はレンダーに効きません（Film Translate を使ってください）。")
     zero = dict(camera)
     hx, hy = METHOD_ATTRS[method]
@@ -258,15 +304,10 @@ def solve(method: str, camera: dict, render: dict, bg: dict, source_to_comp: Mat
     ax, ay = apply(source_to_comp, cx, cy)
     mx, my = apply(base, cx, cy)
     dx, dy = ax - mx, ay - my
-    w = float(render["width"])
-    eff = effective_width(camera, render)
-    if method == "film_translate":
-        vx, vy = -dx * 2.0 / w, dy * 2.0 / w
-    else:
-        zoom = float(camera.get("zoom", 1.0)) if method == "pan_zoom" else 1.0
-        vx, vy = -dx * zoom * eff / w, dy * zoom * eff / w
-    solved = dict(zero)
-    solved[hx], solved[hy] = vx, vy
+    # the two values, solved through the camera model (zoom, pre / post scale and roll included)
+    point = to_camera_space(camera["world_inverse"], source_to_world(bg, cx, cy))
+    solved = _solve_pair(zero, render, hx, hy, point, (ax, ay))
+    vx, vy = solved[hx], solved[hy]
     result = maya_source_to_render(solved, render, bg)
     err = 0.0
     for corner in ((0.0, 0.0), (w_c, 0.0), (0.0, h_c), (w_c, h_c), (w_c / 2.0, h_c / 2.0)):
@@ -326,50 +367,48 @@ def solve_relative(method: str, camera: dict, render: dict, comp: dict, referenc
     if (int(comp["width"]), int(comp["height"])) != (int(render["width"]), int(render["height"])):
         raise ValueError(u"AE のコンプ（%dx%d）と Maya のレンダー解像度（%dx%d）が違います。"
                          % (comp["width"], comp["height"], render["width"], render["height"]))
-    if camera.get("orthographic") and method != "film_translate":
+    if camera.get("orthographic") and method not in ("film_translate", "film_roll"):
         raise ValueError(u"平行投影のカメラでは、Film Offset と 2D Pan はレンダーに効きません（Film Translate を使ってください）。")
     change = multiply(current, invert(reference))
     scale, angle = similarity(change)
-    if abs(angle) > 1e-6:
-        raise ValueError(u"AE の BG が基準から %.3f° 回転しています。回転はカメラのオフセットでは表せません。" % angle)
+    if abs(angle) > 1e-6 and method != "film_roll":
+        raise ValueError(u"AE の BG が基準から %.3f° 回転しています。回転を表せるのは方式「Film Translate・Scale・Roll」"
+                         u"だけです（Maya のパネルで方式を変えてください）。" % angle)
     hx, hy = METHOD_ATTRS[method]
     solved = dict(camera)
     if method == "pan_zoom":
         base_zoom = float(camera.get("zoom", 1.0)) if (camera.get("pan_zoom_enabled") and
                                                        camera.get("render_pan_zoom")) else 1.0
         solved.update(pan_zoom_enabled=True, render_pan_zoom=True, zoom=base_zoom / scale)
-    # other methods cannot scale: a scale shows as the error at the corners below
+    elif method == "film_roll":
+        # Post Scale scales about the image center after everything, Film Roll turns clockwise like
+        # AE's rotation (H-PM-8); a roll pivot off the center only adds a shift, which the translate takes
+        solved.update(post_scale=float(camera.get("post_scale", 1.0)) * scale,
+                      film_roll=float(camera.get("film_roll", 0.0)) + angle)
+    # film offset / film translate cannot scale: a scale shows as the error at the corners below
     points = _frame_points(camera, render)
     before = [project(camera, render, p) for p in points]
     target = [apply(change, *p) for p in before]
     w, h = float(render["width"]), float(render["height"])
-    # the values are linear in the two offsets: solve at the image center with unit steps
     center = 4                                                   # (0, 0) in _frame_points
-    p0 = project(solved, render, points[center])
-    step = dict(solved)
-    step[hx] = float(solved.get(hx, 0.0)) + 1e-3
-    px = project(step, render, points[center])
-    step = dict(solved)
-    step[hy] = float(solved.get(hy, 0.0)) + 1e-3
-    py = project(step, render, points[center])
-    jx, jy = (px[0] - p0[0]) / 1e-3, (py[1] - p0[1]) / 1e-3
-    solved[hx] = float(solved.get(hx, 0.0)) + (target[center][0] - p0[0]) / jx
-    solved[hy] = float(solved.get(hy, 0.0)) + (target[center][1] - p0[1]) / jy
+    solved = _solve_pair(solved, render, hx, hy, points[center], target[center])
     err = 0.0
     for p, t in zip(points, target):
         q = project(solved, render, p)
         err = max(err, math.hypot(q[0] - t[0], q[1] - t[1]))
     warnings = []
     if err >= ERROR_LIMIT_PX:
-        if abs(scale - 1.0) > 1e-9 and method != "pan_zoom":
-            raise ValueError(u"AE の BG が基準から %.4f 倍に拡大縮小されています。拡大縮小を表せるのは 2D Pan/Zoom だけです。"
-                             % scale)
+        if abs(scale - 1.0) > 1e-9 and method not in ("pan_zoom", "film_roll"):
+            raise ValueError(u"AE の BG が基準から %.4f 倍に拡大縮小されています。拡大縮小を表せるのは方式「2D Pan/Zoom」と"
+                             u"「Film Translate・Scale・Roll」だけです（Maya のパネルで方式を変えてください）。" % scale)
         raise ValueError(u"カメラのオフセットでは AE の見え方を再現できません（画面の端で %.2f px ずれます）。" % err)
     if err >= WARN_PX:
         warnings.append(u"画面の端で %.2f px ずれます（中心は合っています）。" % err)
     values = {hx: solved[hx], hy: solved[hy]}
     if method == "pan_zoom":
         values.update(zoom=solved["zoom"], pan_zoom_enabled=True, render_pan_zoom=True)
+    elif method == "film_roll":
+        values.update(post_scale=solved["post_scale"], film_roll=solved["film_roll"])
     dx, dy = apply(change, w / 2.0, h / 2.0)
     return {"values": values, "change": {"dx": dx - w / 2.0, "dy": dy - h / 2.0, "scale": scale, "rotation": angle},
             "max_error_px": err, "warnings": warnings}

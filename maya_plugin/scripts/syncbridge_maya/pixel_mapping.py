@@ -19,6 +19,8 @@ CAMERA_ATTRS = {
     "ft_h": "filmTranslateH", "ft_v": "filmTranslateV",
     "pan_zoom_enabled": "panZoomEnabled", "render_pan_zoom": "renderPanZoom",
     "hpan": "horizontalPan", "vpan": "verticalPan", "zoom": "zoom",
+    "pre_scale": "preScale", "post_scale": "postScale", "film_roll": "filmRollValue",
+    "roll_pivot_h": "horizontalRollPivot", "roll_pivot_v": "verticalRollPivot", "film_roll_order": "filmRollOrder",
 }
 
 
@@ -46,9 +48,6 @@ def camera_data(camera: str) -> dict:
         "ortho_width": get("orthographicWidth"),
         "lens_squeeze": get("lensSqueezeRatio"),
         "camera_scale": get("cameraScale"),
-        "film_roll": get("filmRollValue"),
-        "pre_scale": get("preScale"),
-        "post_scale": get("postScale"),
         "film_fit_offset": get("filmFitOffset"),
         "overscan": get("overscan"),
         "world_inverse": list(cmds.getAttr(shape + ".worldInverseMatrix[0]")),
@@ -125,7 +124,8 @@ def apply_values(camera: str, values: Dict[str, object], also=None) -> dict:
     return before
 
 
-METHOD_LABELS = {"film_offset": "Film Offset", "film_translate": "Film Translate", "pan_zoom": "2D Pan/Zoom"}
+METHOD_LABELS = {"film_offset": "Film Offset", "film_translate": "Film Translate", "pan_zoom": "2D Pan/Zoom",
+                 "film_roll": u"Film Translate・Scale・Roll"}
 
 
 def _ae_layer(info: dict) -> dict:
@@ -149,7 +149,8 @@ def _backup(mapping: dict, camera: str, before: dict) -> str:
 
 
 REFERENCE_KEYS = {"film_offset": ("hfo", "vfo"), "film_translate": ("ft_h", "ft_v"),
-                  "pan_zoom": ("hpan", "vpan", "zoom", "pan_zoom_enabled", "render_pan_zoom")}
+                  "pan_zoom": ("hpan", "vpan", "zoom", "pan_zoom_enabled", "render_pan_zoom"),
+                  "film_roll": ("ft_h", "ft_v", "post_scale", "film_roll")}
 
 
 def apply_from_ae(info: dict, options: dict = None, confirm: bool = True) -> dict:

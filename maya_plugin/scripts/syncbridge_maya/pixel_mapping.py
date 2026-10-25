@@ -148,6 +148,12 @@ def _backup(mapping: dict, camera: str, before: dict) -> str:
     return path
 
 
+def overscan_note(overscan: float) -> str:
+    return (u"このカメラは Overscan %g です（解像度ゲートの表示中）。ゲートの表示中のビューポートでは、BG の位置が"
+            u"レンダーとずれて見えます。AE と見比べるときは、解像度ゲートを隠して Overscan を 1.0 にしてください"
+            u"（設定した値は、レンダーと余白なしの Playblast に合わせてあります）。" % overscan)
+
+
 REFERENCE_KEYS = {"film_offset": ("hfo", "vfo"), "film_translate": ("ft_h", "ft_v"),
                   "pan_zoom": ("hpan", "vpan", "zoom", "pan_zoom_enabled", "render_pan_zoom"),
                   "film_roll": ("ft_h", "ft_v", "post_scale", "film_roll")}
@@ -210,6 +216,10 @@ def apply_from_ae(info: dict, options: dict = None, confirm: bool = True) -> dic
     cam = camera_data(camera)
     # overscan: the AE footage is a playblast (shows the overscan margin) or a render (does not), H-PM-9
     cam["view_overscan"] = layer_mapping.defaults()["view_overscan"]
+    if abs(float(cam.get("overscan", 1.0)) - 1.0) > 1e-6 and not cam["view_overscan"]:
+        # Maya sets overscan 1.3 while the resolution gate is shown, and the viewport then places the BG
+        # differently from renders (the user saw it, 2026-10-25): ask for overscan 1.0 when comparing
+        warnings.append(overscan_note(cam["overscan"]))
     method = mapping["method"]
 
     if created and confirm:

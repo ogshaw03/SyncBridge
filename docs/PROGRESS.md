@@ -46,6 +46,11 @@
 
 ### 2026-10-25（Windows 11, Python 3.10.6）
 
+- **Overscan の方針（D-27）:** 利用者が GUI で、解像度ゲートの表示で Overscan が 1.3 / 1.0 に自動で変わること、ゲートの表示中の
+  ビューポートではゲートの枠に対する BG の位置もずれることを確認（H-PM-10）。→ ツールで確認するときは Overscan 1.0 にして
+  もらう方針（利用者の決定）。Overscan が 1 でないときは両方のパネルのログで促し、パネルの説明にも一文。「AE の素材に
+  Overscan の余白が写っている」チェックは外した。作りかけのビューポート計測スクリプトは消した（未コミット）。
+
 - **Overscan に対応（H-PM-9、未リリース）:** 利用者のカメラの基準値は Overscan 1.3（Playblast を AE へ）。以前は 1 以外を断っていた。
   mayapy: レンダーには Overscan が効かない。Playblast では画像が 1 ÷ Overscan に縮むとして、モデルに `view_overscan` を足し、
   パネルに「AE の素材に Overscan の余白が写っている」（既定オフ: 利用者は余白なしで Playblast するため）。Maya でも AE の 100 px が Film Translate で 1.3 倍

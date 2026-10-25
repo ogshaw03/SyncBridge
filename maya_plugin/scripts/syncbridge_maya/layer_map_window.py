@@ -136,6 +136,8 @@ class LayerMapWindow(QtWidgets.QWidget):
             lambda: layer_mapping.remove_objects(layer_id, uuids), u"オブジェクトを外しました。"))
         e.motion_requested.connect(self.transfer_motion)
         e.motion_all_requested.connect(self.transfer_all_motion)
+        e.view_layer_requested.connect(self.view_layer)
+        e.view_all_requested.connect(self.view_all)
         e.select_objects_requested.connect(self.select_layer)
         e.remove_layer_requested.connect(self.remove_layer)
 
@@ -285,6 +287,36 @@ class LayerMapWindow(QtWidgets.QWidget):
             text += u"\n打たなかったもの: " + u" / ".join(skipped)
         self.say(_with_warnings(text, warnings), error=bool(bad))
         service.announce("layer_map")
+
+    # -- D-31: show one layer in the view ------------------------------------------------------------------
+    def view_layer(self, layer_id: str):
+        from . import layer_view
+        layer = core_lm.maya_layer(layer_mapping.store(), layer_id)
+        if layer is None:
+            return
+        try:
+            shown = layer_view.show_layer(layer)
+        except Exception as exc:
+            self.say(u"表示を切り替えられませんでした: %s" % exc, error=True)
+            return
+        self.editor.viewing = layer_id
+        self.refresh()
+        text = u"ビュー %s を %s にして、「%s」のオブジェクト %d 個だけを表示しました（「表示を戻す」で元に戻ります）。" % (
+            shown["panel"], _camera_label(shown["camera"]), layer["name"], len(shown["shown"]))
+        if shown["missing"]:
+            text += u"\nシーンにないもの: %s" % u"、".join(shown["missing"])
+        self.say(text, error=bool(shown["missing"]))
+
+    def view_all(self):
+        from . import layer_view
+        try:
+            panel = layer_view.show_all()
+        except Exception as exc:
+            self.say(u"表示を戻せませんでした: %s" % exc, error=True)
+            return
+        self.editor.viewing = None
+        self.refresh()
+        self.say(u"ビュー %s の表示を戻しました（カメラはそのままです）。" % panel)
 
     def select_layer(self, layer_id: str):
         try:

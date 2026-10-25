@@ -68,6 +68,19 @@ class LayerMapViewTest(unittest.TestCase):
         self.assertEqual(view.dragMode(), QtWidgets.QGraphicsView.DragMode.NoDrag)      # no rubber band
         self.assertEqual((got[0][0], got[0][1]), (lm.ae_from_layers_info(COMP, AE["layers"][0]), self.layer["id"]))
 
+    def test_double_click_shows_the_layer(self):
+        # D-31: a double click on a Maya layer node asks to show it in the view; it is then marked
+        got = []
+        self.editor.view_layer_requested.connect(got.append)
+        node = self.nodes("maya")[0]
+        pos = self.editor.view.mapFromScene(node.mapToScene(QtCore.QPointF(100, 30)))
+        QtTest.QTest.mouseDClick(self.editor.view.viewport(), QtCore.Qt.MouseButton.LeftButton,
+                                 QtCore.Qt.KeyboardModifier.NoModifier, pos)
+        self.assertEqual(got, [self.layer["id"]])
+        self.editor.viewing = self.layer["id"]
+        self.editor.rebuild()
+        self.assertIn(u"表示中", self.nodes("maya")[0].title)
+
     def test_wires_and_delete(self):
         link = lm.connect(self.store, lm.ae_from_layers_info(COMP, AE["layers"][0]), self.layer["id"])
         lm.connect(self.store, {"comp_id": 99, "comp": "c009", "layer_id": 1, "layer": "OLD"}, self.layer["id"],

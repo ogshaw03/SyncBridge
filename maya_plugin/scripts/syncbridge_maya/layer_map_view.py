@@ -40,6 +40,7 @@ C_NODE = QtGui.QColor("#3c3c3c")
 C_TEXT = QtGui.QColor("#dddddd")
 C_DIM = QtGui.QColor("#9a9a9a")
 C_MAYA = QtGui.QColor("#4f8a4a")
+C_MAYA_VIEW = QtGui.QColor("#6aa860")       # the layer shown in the view
 C_MISSING = QtGui.QColor("#5a5a5a")
 C_WIRE = QtGui.QColor("#d8b04a")
 C_WARN = QtGui.QColor("#e08a40")
@@ -186,10 +187,19 @@ class Wire(QtWidgets.QGraphicsPathItem):
 
 class LayerMapScene(QtWidgets.QGraphicsScene):
     link_requested = QtCore.Signal(object, str)        # (AE node key, Maya layer id)
+    layer_double_clicked = QtCore.Signal(str)          # Maya layer id
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._drag: Optional[Wire] = None
+
+    def mouseDoubleClickEvent(self, event):
+        node = self._node_at(event.scenePos(), "maya")
+        if node is not None:
+            self.layer_double_clicked.emit(node.key)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
     def drawBackground(self, painter, rect):
         painter.fillRect(rect, C_VIEW)
@@ -274,6 +284,8 @@ class LayerMapEditor(QtWidgets.QWidget):
     reset_reference_requested = QtCore.Signal(str)        # mapping id
     motion_requested = QtCore.Signal(str)                 # mapping id: transfer the AE layer's motion (Phase 3)
     motion_all_requested = QtCore.Signal()                # every link at once
+    view_layer_requested = QtCore.Signal(str)             # Maya layer id: show it in the view (D-31)
+    view_all_requested = QtCore.Signal()                  # Isolate Select off
     rename_layer_requested = QtCore.Signal(str, str)      # layer id, name
     camera_requested = QtCore.Signal(str)                 # layer id: use the selected camera
     add_objects_requested = QtCore.Signal(str)            # layer id: add the selected objects
@@ -285,6 +297,7 @@ class LayerMapEditor(QtWidgets.QWidget):
         super().__init__(parent)
         self.ae_info: Optional[dict] = None
         self.store = core_lm.empty_store()
+        self.viewing: Optional[str] = None               # the Maya layer shown in the view (D-31)
         self._ae_layers: Dict[object, dict] = {}
         self._positions: Dict[object, QtCore.QPointF] = {}
 
@@ -317,12 +330,17 @@ class LayerMapEditor(QtWidgets.QWidget):
         bar2.addWidget(QtWidgets.QLabel(u"新しい接続の方式"))
         bar2.addWidget(self.new_method)
         bar2.addStretch(1)
+        self.view_all_btn = QtWidgets.QPushButton(u"表示を戻す")
+        self.view_all_btn.setToolTip(u"「このレイヤーで見る」をやめ、ビューにすべてを表示します（カメラはそのまま）")
+        self.view_all_btn.clicked.connect(self.view_all_requested.emit)
+        bar2.addWidget(self.view_all_btn)
         bar2.addWidget(self.add_btn)
         bar2.addSpacing(12)
         bar2.addWidget(self.motion_all_btn)
 
         self.scene = LayerMapScene(self)
         self.scene.link_requested.connect(self._on_link)
+        self.scene.layer_double_clicked.connect(self.view_layer_requested.emit)
         self.scene.selectionChanged.connect(self._on_selection)
         self.view = LayerMapView(self.scene)
         action_cls = getattr(QtGui, "QAction", None) or QtWidgets.QAction      # PySide6 / PySide2
@@ -342,7 +360,8 @@ class LayerMapEditor(QtWidgets.QWidget):
         split.addWidget(self.inspector)
         split.setStretchFactor(0, 1)
         self.hint = QtWidgets.QLabel(u"AE のレイヤーの右の ● から Maya レイヤーへドラッグしてつなぎます。"
-                                     u"線を選んで Delete で外します。ホイールで拡大縮小。")
+                                     u"線を選んで Delete で外します。Maya レイヤーのダブルクリックで、そのレイヤーだけをビューに表示。"
+                                     u"ホイールで拡大縮小。")
         self.hint.setStyleSheet("color: #9a9a9a;")
         self.hint.setWordWrap(True)
         lay = QtWidgets.QVBoxLayout(self)
@@ -391,8 +410,13 @@ class LayerMapEditor(QtWidgets.QWidget):
             obj_btns.addWidget(b)
         self.remove_layer_btn = QtWidgets.QPushButton(u"このレイヤーを削除")
         self.remove_layer_btn.clicked.connect(lambda: self.remove_layer_requested.emit(self._selected_layer_id()))
+        self.view_btn = QtWidgets.QPushButton(u"このレイヤーで見る")
+        self.view_btn.setToolTip(u"今のビューを、このレイヤーのカメラ（専用カメラ）にして、表示するオブジェクトだけを見せます"
+                                 u"（Isolate Select。シーンは変えません。ノードのダブルクリックでも同じ）")
+        self.view_btn.clicked.connect(lambda: self.view_layer_requested.emit(self._selected_layer_id()))
         v = QtWidgets.QVBoxLayout(maya)
         v.addLayout(form)
+        v.addWidget(self.view_btn)
         v.addWidget(QtWidgets.QLabel(u"表示するオブジェクト"))
         v.addWidget(self.objects, 1)
         v.addLayout(obj_btns)
@@ -592,7 +616,8 @@ class LayerMapEditor(QtWidgets.QWidget):
                                                               if names else ""))
             if len(core_lm.links_of(self.store, layer["id"])) > 1:
                 lines.append(u"⚠ 複数の AE レイヤーがつながっています")
-            node = Node("maya", layer["id"], layer["name"], lines, C_MAYA, "left")
+            title = layer["name"] + (u"　［表示中］" if layer["id"] == self.viewing else u"")
+            node = Node("maya", layer["id"], title, lines, C_MAYA_VIEW if layer["id"] == self.viewing else C_MAYA, "left")
             y = self._place(node, nodes, MAYA_X, y)
         conflicts = set()
         for m in self.store["mappings"]:

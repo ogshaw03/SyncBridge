@@ -256,6 +256,23 @@ class RelativeModeTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             pm.solve_relative("film_offset", camera(), RENDER, COMP, ref, cur)
 
+    def test_overscan_of_a_playblast(self):
+        # 2026-10-25: the user's cameras have overscan 1.3 and the AE footage is a playblast with it.
+        # Renders ignore overscan (measured); in the playblast the picture is 1 / 1.3 the size, so the
+        # same AE slide needs 1.3 times the offset.
+        ref, cur = self.matrices((960.0, 540.0), (1060.0, 540.0))
+        plain = pm.solve_relative("film_roll", camera(overscan=1.3), RENDER, COMP, ref, cur)   # render image
+        play = pm.solve_relative("film_roll", camera(overscan=1.3, view_overscan=True), RENDER, COMP, ref, cur)
+        self.assertAlmostEqual(play["values"]["ft_h"], plain["values"]["ft_h"] * 1.3)
+        self.check_picture_moved(camera(overscan=1.3, view_overscan=True), play["values"],
+                                 pm.multiply(cur, pm.invert(ref)))
+        self.assertEqual(pm.check_camera(camera(overscan=1.3), RENDER), [])
+        # rotation and scale are the same in both
+        _, cur = self.matrices((960.0, 540.0), (960.0, 540.0), scale=150.0, rotation=20.0)
+        play = pm.solve_relative("film_roll", camera(overscan=1.3, view_overscan=True), RENDER, COMP, ref, cur)
+        self.assertAlmostEqual(play["values"]["film_roll"], 20.0)
+        self.assertAlmostEqual(play["values"]["post_scale"], 1.5)
+
     def test_film_roll_method_shows_rotation_and_scale(self):
         # the user's cases (2026-10-25): 42 degrees and 170 %, refused by the other methods
         ref, _ = self.matrices((960.0, 540.0), (960.0, 540.0))

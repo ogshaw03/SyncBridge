@@ -67,6 +67,17 @@ Film Offset → 2D Pan →（NDC へ）→ ÷ Zoom → × Pre Scale
 
 - 最初のモデルは Zoom を最後にしていたので、Zoom と Film Translate を同時に使うときだけずれていた。
 
+**Overscan（H-PM-9、2026-10-25）:** 利用者のカメラの基準値は Overscan 1.3 で、AE の素材はその Playblast。
+- レンダー（Hardware 2.0 の ogsRender、Maya Software）では Overscan はまったく効かない（mayapy で測定。Film Translate・Roll・
+  Post Scale・Film Offset・2D Pan と組み合わせても 1 と同じ）。
+- Playblast とビューポートでは、Overscan の余白まで写り、画像全体が 1 ÷ Overscan に縮む（とされる。mayapy では Playblast を
+  撮れないので、GUI で確認する）。
+- モデル: `view_overscan` がオンなら最後に ÷ Overscan。拡大縮小と回転は同じで、平行移動の量が Overscan 倍違う
+  （Overscan 1.3 では、AE の 100 px にはレンダーの 130 px）。
+- パネルの「AE の素材に Overscan の余白が写っている」（PC ごと）。**既定はオフ**: 利用者は Playblast を余白なし（解像度ゲートの
+  内側だけ）で書き出すので、AE の素材はレンダーと同じ枠（2026-10-25）。余白込みで書き出すときだけオン。Overscan が 1 なら同じ。
+- 以前は Overscan が 1 でないカメラを断っていたので、利用者の基準値 1.3 では使えなかった。
+
 有効フィルム幅は Film Fit で決まる（横合わせなら horizontalFilmAperture。Fill は、フィルムの縦横比がレンダーの縦横比以下なら
 横合わせになる）。板ポリがフィルム面と平行なら、元画像 → レンダーはアフィンになる。平行でなければ断る（遠近で形が変わり、
 オフセットでは合わせられない）。
@@ -87,7 +98,7 @@ Film Offset → 2D Pan →（NDC へ）→ ÷ Zoom → × Pre Scale
 
 **断るもの:**
 - コンプとレンダーの解像度が違う、ピクセル縦横比が 1 でない。
-- Lens Squeeze、Camera Scale、Film Fit Offset、Overscan が既定値でない。
+- Lens Squeeze、Camera Scale、Film Fit Offset が既定値でない（Overscan は対応済み、上の H-PM-9）。
 - 縦合わせになる Film Fit（未確認）。
 - 平行投影のカメラで Film Offset / 2D Pan を選んだ。
 

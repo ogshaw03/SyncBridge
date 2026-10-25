@@ -22,6 +22,7 @@ VAR_CAMERA = "syncBridgePixelMapCamera"      # optionVar: camera shape UUID
 VAR_BG = "syncBridgePixelMapBG"              # optionVar: BG mesh UUID
 VAR_METHOD = "syncBridgePixelMapMethod"
 VAR_MODE = "syncBridgePixelMapMode"          # relative (default, D-25) | absolute
+VAR_VIEW_OVERSCAN = "syncBridgePixelMapViewOverscan"   # 1: AE footage shows the overscan margin (default 0)
 
 
 def stored() -> List[dict]:
@@ -77,12 +78,15 @@ def defaults() -> dict:
     First time: relative mode with 2D Pan/Zoom (works with 3D BGs and camera work, D-25)."""
     def var(name):
         return cmds.optionVar(q=name) if cmds.optionVar(exists=name) else None
+    view_overscan = var(VAR_VIEW_OVERSCAN)
     return {"camera": node_by_uuid(var(VAR_CAMERA)), "bg": node_by_uuid(var(VAR_BG)),
-            "method": var(VAR_METHOD) or "pan_zoom", "mode": var(VAR_MODE) or "relative"}
+            "method": var(VAR_METHOD) or "pan_zoom", "mode": var(VAR_MODE) or "relative",
+            # the user playblasts without the overscan margin (2026-10-25): footage framed like a render
+            "view_overscan": False if view_overscan is None else bool(view_overscan)}
 
 
 def set_defaults(camera: Optional[str] = None, bg: Optional[str] = None, method: Optional[str] = None,
-                 mode: Optional[str] = None) -> None:
+                 mode: Optional[str] = None, view_overscan: Optional[bool] = None) -> None:
     if camera:
         cmds.optionVar(stringValue=(VAR_CAMERA, uuid_of(camera)))
     if bg:
@@ -91,6 +95,8 @@ def set_defaults(camera: Optional[str] = None, bg: Optional[str] = None, method:
         cmds.optionVar(stringValue=(VAR_METHOD, method))
     if mode:
         cmds.optionVar(stringValue=(VAR_MODE, mode))
+    if view_overscan is not None:
+        cmds.optionVar(intValue=(VAR_VIEW_OVERSCAN, int(bool(view_overscan))))
 
 
 def reset_reference(mapping_id: str) -> None:

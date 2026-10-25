@@ -157,6 +157,11 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.pm_method.setToolTip(u"2D Pan/Zoom: 平行移動と拡大縮小\n"
                                   u"Film Translate・Scale・Roll: 平行移動・拡大縮小・回転（Film Translate / Post Scale / Film Roll）\n"
                                   u"Film Translate / Film Offset: 平行移動だけ")
+        self.pm_overscan = QtWidgets.QCheckBox(u"AE の素材に Overscan の余白が写っている")
+        self.pm_overscan.setToolTip(u"オフ（ふつう）: AE の素材はレンダーや、余白なしの Playblast（解像度ゲートの内側だけ）。\n"
+                                    u"オン: AE の素材は Overscan の余白まで写った Playblast（Overscan 1.3 なら、AE の 1 px は"
+                                    u"レンダーの 1.3 px）。Overscan が 1 ならどちらでも同じです。")
+        self.pm_overscan.toggled.connect(lambda on: layer_mapping.set_defaults(view_overscan=on))
         self.pm_change_method = QtWidgets.QPushButton(u"方式を変更")
         self.pm_change_method.setToolTip(u"一覧で選んだ対応付けを、上の「方式」に変えます（相対モードは次の送信で基準を取り直します）")
         self.pm_change_method.clicked.connect(self.change_mapping_method)
@@ -252,6 +257,7 @@ class SyncBridgePanel(QtWidgets.QDialog):
         pm_form.addRow(u"カメラ", camera_row)
         pm_form.addRow(u"BG の板ポリ", self.pm_bg)
         pm_form.addRow(u"方式", self.pm_method)
+        pm_form.addRow(u"", self.pm_overscan)
         pm_hint = QtWidgets.QLabel(u"AE のパネルで BG のレイヤーを選んで「BG の位置を Maya のカメラへ」を押します。"
                                    u"相対モードでは、最初の 1 回は今の見え方を基準として記録し（カメラは変えません）、"
                                    u"次から AE の BG の動きをカメラに足します。")
@@ -395,6 +401,9 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.pm_method.setCurrentIndex(max(self.pm_method.findData(chosen["method"]), 0))
         self.pm_mode.setCurrentIndex(max(self.pm_mode.findData(chosen["mode"]), 0))
         self.pm_bg.setEnabled(chosen["mode"] == "absolute")
+        self.pm_overscan.blockSignals(True)
+        self.pm_overscan.setChecked(chosen["view_overscan"])
+        self.pm_overscan.blockSignals(False)
         self.pm_list.clear()
         try:
             mappings = layer_mapping.stored()

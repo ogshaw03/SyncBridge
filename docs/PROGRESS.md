@@ -46,12 +46,17 @@
 
 ### 2026-10-25（Windows 11, Python 3.10.6）
 
+- **Overscan に対応（H-PM-9、未リリース）:** 利用者のカメラの基準値は Overscan 1.3（Playblast を AE へ）。以前は 1 以外を断っていた。
+  mayapy: レンダーには Overscan が効かない。Playblast では画像が 1 ÷ Overscan に縮むとして、モデルに `view_overscan` を足し、
+  パネルに「AE の素材に Overscan の余白が写っている」（既定オフ: 利用者は余白なしで Playblast するため）。Maya でも AE の 100 px が Film Translate で 1.3 倍
+  になることを確認。テスト 325 件 OK。**Playblast が本当に Overscan を含むかは GUI で確認する。**
+
 - **フィルム面の 2D 変換のすべてと、回転・拡大縮小の送信（D-26、未リリース）:** 利用者が GUI で 170 % と 42° を送って
   断られた → Pre / Post Scale・Film Roll の効き方を mayapy で測り（H-PM-8）、core のモデルに入れた（Zoom の位置の誤りも修正）。
   ソルバーを数値で解く方式に揃えた。新しい方式「Film Translate・Scale・Roll」、パネルの「方式を変更」。
   `pixelcheck.measure` に画面全体からの目印の検出とアフィンの当てはめ。
   mayapy: 3 つの深さ + カメラワークで 42° 0.036 px、170 % 0.067 px。絶対モードも 4 方式とも 0.010 px 以下のまま。
-  テスト 324 件 OK。
+  テスト 324 件 OK。テスト版 zip（0.1.8、SHA-256 68a6cab7…）を作って利用者が GUI で確認する。
 
 - 利用者の依頼でテスト用の町並みを作るツール `tools/pixel_mapping/make_test_town.py`（建物の箱・`SHOT_CAM`・AE 用の
   5760×3240 の大判 BG）。mayapy: 大判 BG の中央の切り出しとショットのレンダーが一致（平均差 0.003 / 255）、AE で (+300, −100)

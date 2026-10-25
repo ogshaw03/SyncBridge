@@ -22,6 +22,7 @@ parallel to the film, horizontal film fit (H-PM-1..4, H-PM-8):
     Translate-Rotate (filmRollOrder 1): n = R(n - filmTranslate - pivot) + pivot
         R = rotation by -filmRollValue degrees in y-up NDC (clockwise on screen), pivot = roll pivot (NDC)
     n *= postScale
+    n /= overscan                  (only for playblast / viewport images: `view_overscan`; renders ignore it)
     x_px = W/2 + n.x * W/2,  y_px = H/2 - n.y * W/2
 Orthographic cameras ignore film offset and 2D pan in renders.
 """
@@ -147,7 +148,7 @@ def effective_width(camera: dict, render: dict) -> float:
 
 
 UNSUPPORTED = (("lens_squeeze", 1.0, u"Lens Squeeze Ratio"), ("camera_scale", 1.0, u"Camera Scale"),
-               ("film_fit_offset", 0.0, u"Film Fit Offset"), ("overscan", 1.0, u"Overscan"))
+               ("film_fit_offset", 0.0, u"Film Fit Offset"))
 
 
 def check_camera(camera: dict, render: dict) -> List[str]:
@@ -201,6 +202,11 @@ def project(camera: dict, render: dict, point: Sequence[float]) -> Tuple[float, 
         xn, yn = pvx + c * dx - s * dy - ftx, pvy + s * dx + c * dy - fty
     post = float(camera.get("post_scale", 1.0))
     xn, yn = xn * post, yn * post
+    if camera.get("view_overscan"):
+        # The AE footage is a playblast / viewport image, which shows the overscan margin: the whole
+        # picture shrinks by 1 / overscan around the center. Renders ignore overscan (H-PM-9).
+        o = float(camera.get("overscan", 1.0))
+        xn, yn = xn / o, yn / o
     return w / 2.0 + xn * w / 2.0, h / 2.0 - yn * w / 2.0
 
 

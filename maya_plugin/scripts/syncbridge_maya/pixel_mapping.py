@@ -208,6 +208,8 @@ def apply_from_ae(info: dict, options: dict = None, confirm: bool = True) -> dic
     comp = {"width": info["comp"]["width"], "height": info["comp"]["height"],
             "pixelAspect": info["comp"].get("pixelAspect", 1.0)}
     cam = camera_data(camera)
+    # overscan: the AE footage is a playblast (shows the overscan margin) or a render (does not), H-PM-9
+    cam["view_overscan"] = layer_mapping.defaults()["view_overscan"]
     method = mapping["method"]
 
     if created and confirm:

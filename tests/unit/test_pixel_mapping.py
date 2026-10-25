@@ -158,5 +158,69 @@ class SolverTest(unittest.TestCase):
         self.assertLess(r["max_error_px"], 1e-6)
 
 
+class RelativeModeTest(unittest.TestCase):
+    """Phase 2.5 (D-25): no BG geometry, the AE BG's 2D change from the reference on top of the camera."""
+
+    def matrices(self, ref, cur, scale=100.0, rotation=0.0):
+        r, _ = pm.ae_layer_matrix(ae_layer(*ref))
+        c, _ = pm.ae_layer_matrix(dict(ae_layer(*cur), scale=[scale, scale], rotation=rotation))
+        return r, c
+
+    def check_picture_moved(self, cam, values, change):
+        """Every frame point moved exactly by the AE change (whatever its depth)."""
+        moved = dict(cam, **values)
+        for p in pm._frame_points(cam, RENDER) + [(5.0, -3.0, -40.0), (-200.0, 90.0, -900.0)]:
+            before = pm.project(cam, RENDER, p)
+            after = pm.project(moved, RENDER, p)
+            want = pm.apply(change, *before)
+            self.assertAlmostEqual(after[0], want[0], places=6)
+            self.assertAlmostEqual(after[1], want[1], places=6)
+
+    def test_slide_with_each_method(self):
+        ref, cur = self.matrices((960.0, 540.0), (1060.25, 500.0))
+        change = pm.multiply(cur, pm.invert(ref))
+        for method in pm.METHODS:
+            r = pm.solve_relative(method, camera(), RENDER, COMP, ref, cur)
+            self.assertLess(r["max_error_px"], 1e-6, method)
+            self.assertAlmostEqual(r["change"]["dx"], 100.25)
+            self.assertAlmostEqual(r["change"]["dy"], -40.0)
+            self.check_picture_moved(camera(), r["values"], change)
+        r = pm.solve_relative("film_offset", camera(), RENDER, COMP, ref, cur)
+        self.assertAlmostEqual(r["values"]["hfo"], -100.25 * HFA / W)
+        self.assertAlmostEqual(r["values"]["vfo"], -40.0 * HFA / W)
+
+    def test_added_to_the_camera_work(self):
+        # the camera has its own film offset (camera work) and an earlier 2D pan: only the pan changes
+        cam = camera(hfo=0.2, vfo=-0.1, pan_zoom_enabled=True, render_pan_zoom=True, hpan=0.05, vpan=0.01)
+        ref, cur = self.matrices((960.0, 540.0), (900.0, 600.0))
+        r = pm.solve_relative("pan_zoom", cam, RENDER, COMP, ref, cur)
+        self.assertNotIn("hfo", r["values"])
+        self.assertAlmostEqual(r["values"]["hpan"], 0.05 + 60.0 * HFA / W)
+        self.assertAlmostEqual(r["values"]["vpan"], 0.01 + 60.0 * HFA / W)
+        self.check_picture_moved(cam, r["values"], pm.multiply(cur, pm.invert(ref)))
+
+    def test_scale_needs_pan_zoom(self):
+        ref, cur = self.matrices((960.0, 540.0), (1000.0, 520.0), scale=110.0)
+        r = pm.solve_relative("pan_zoom", camera(), RENDER, COMP, ref, cur)
+        self.assertLess(r["max_error_px"], 1e-6)
+        self.assertAlmostEqual(r["values"]["zoom"], 1.0 / 1.1)
+        self.assertAlmostEqual(r["change"]["scale"], 1.1)
+        self.check_picture_moved(camera(), r["values"], pm.multiply(cur, pm.invert(ref)))
+        with self.assertRaises(ValueError):
+            pm.solve_relative("film_offset", camera(), RENDER, COMP, ref, cur)
+
+    def test_rotation_and_orthographic(self):
+        ref, cur = self.matrices((960.0, 540.0), (960.0, 540.0), rotation=2.0)
+        with self.assertRaises(ValueError):
+            pm.solve_relative("pan_zoom", camera(), RENDER, COMP, ref, cur)
+        inv = [1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, -1000.0, 1.0]
+        ortho = camera(orthographic=True, world_inverse=inv)
+        ref, cur = self.matrices((960.0, 540.0), (1000.0, 540.0))
+        r = pm.solve_relative("film_translate", ortho, RENDER, COMP, ref, cur)
+        self.assertLess(r["max_error_px"], 1e-6)
+        with self.assertRaises(ValueError):
+            pm.solve_relative("pan_zoom", ortho, RENDER, COMP, ref, cur)
+
+
 if __name__ == "__main__":
     unittest.main()

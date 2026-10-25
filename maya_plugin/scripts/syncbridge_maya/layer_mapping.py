@@ -21,6 +21,7 @@ DATA_ATTR = "mappings"
 VAR_CAMERA = "syncBridgePixelMapCamera"      # optionVar: camera shape UUID
 VAR_BG = "syncBridgePixelMapBG"              # optionVar: BG mesh UUID
 VAR_METHOD = "syncBridgePixelMapMethod"
+VAR_MODE = "syncBridgePixelMapMode"          # relative (default, D-25) | absolute
 
 
 def stored() -> List[dict]:
@@ -72,20 +73,29 @@ def meshes() -> List[str]:
 
 
 def defaults() -> dict:
-    """{camera, bg, method} chosen in the panel (paths; None when not chosen or gone)."""
+    """{camera, bg, method, mode} chosen in the panel (paths; None when not chosen or gone).
+    First time: relative mode with 2D Pan/Zoom (works with 3D BGs and camera work, D-25)."""
     def var(name):
         return cmds.optionVar(q=name) if cmds.optionVar(exists=name) else None
-    method = var(VAR_METHOD) or "film_offset"
-    return {"camera": node_by_uuid(var(VAR_CAMERA)), "bg": node_by_uuid(var(VAR_BG)), "method": method}
+    return {"camera": node_by_uuid(var(VAR_CAMERA)), "bg": node_by_uuid(var(VAR_BG)),
+            "method": var(VAR_METHOD) or "pan_zoom", "mode": var(VAR_MODE) or "relative"}
 
 
-def set_defaults(camera: Optional[str] = None, bg: Optional[str] = None, method: Optional[str] = None) -> None:
+def set_defaults(camera: Optional[str] = None, bg: Optional[str] = None, method: Optional[str] = None,
+                 mode: Optional[str] = None) -> None:
     if camera:
         cmds.optionVar(stringValue=(VAR_CAMERA, uuid_of(camera)))
     if bg:
         cmds.optionVar(stringValue=(VAR_BG, uuid_of(bg)))
     if method:
         cmds.optionVar(stringValue=(VAR_METHOD, method))
+    if mode:
+        cmds.optionVar(stringValue=(VAR_MODE, mode))
+
+
+def reset_reference(mapping_id: str) -> None:
+    """Relative mode: the next send records a new reference (undoable)."""
+    save([core.without_reference(m) if m["id"] == mapping_id else m for m in stored()])
 
 
 def remove(mapping_id: str) -> int:

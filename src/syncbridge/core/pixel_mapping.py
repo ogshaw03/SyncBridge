@@ -285,3 +285,91 @@ def solve(method: str, camera: dict, render: dict, bg: dict, source_to_comp: Mat
     if method == "pan_zoom":
         values.update(pan_zoom_enabled=True, render_pan_zoom=True)
     return {"values": values, "shift_px": [dx, dy], "max_error_px": err, "base": base, "warnings": warnings}
+
+
+# -- relative mode (Phase 2.5, D-25) -------------------------------------------------------------------
+# No BG geometry: at the reference, the Maya view (camera values `base`) and the AE comp look the same.
+# Later the AE BG layer has moved / scaled by S = current * reference^-1 (comp pixels). Film offset,
+# 2D pan, film translate and zoom move the whole picture in 2D (the lens center stays), so every depth
+# moves by the same pixels: the Maya view is S applied to the reference view.
+
+def _frame_points(camera: dict, render: dict) -> List[Tuple[float, float, float]]:
+    """Camera-space points that cover the frame (any points do: the offsets act in 2D)."""
+    w, h = float(render["width"]), float(render["height"])
+    eff = effective_width(camera, render)
+    if camera.get("orthographic"):
+        k, z = float(camera["ortho_width"]) / 2.0, -10.0
+    else:
+        k, z = (eff / 2.0) / (float(camera["focal_length"]) / 25.4), -1.0
+    return [(sx * k, sy * k * h / w, z) for sx in (-1.0, 0.0, 1.0) for sy in (-1.0, 0.0, 1.0)]
+
+
+def similarity(m: Matrix) -> Tuple[float, float]:
+    """(uniform scale, rotation in degrees) of the linear part of a 2D matrix."""
+    sx = math.hypot(m[0][0], m[1][0])
+    sy = math.hypot(m[0][1], m[1][1])
+    return (sx + sy) / 2.0, math.degrees(math.atan2(m[1][0], m[0][0]))
+
+
+def solve_relative(method: str, camera: dict, render: dict, comp: dict, reference: Matrix,
+                   current: Matrix) -> Dict[str, object]:
+    """Camera values that move the reference view as the AE BG layer moved from `reference` to `current`
+    (both Source -> Comp matrices). `camera` holds the values of the reference (its base).
+
+    Returns {values, change: {dx, dy, scale, rotation}, max_error_px, warnings}. ValueError (Japanese)
+    for what offsets cannot show: rotation, a scale with a method without zoom, unsupported cameras."""
+    if method not in METHODS:
+        raise ValueError("method must be one of %s" % (METHODS,))
+    problems = check_camera(camera, render)
+    if problems:
+        raise ValueError(" ".join(problems))
+    if (int(comp["width"]), int(comp["height"])) != (int(render["width"]), int(render["height"])):
+        raise ValueError(u"AE のコンプ（%dx%d）と Maya のレンダー解像度（%dx%d）が違います。"
+                         % (comp["width"], comp["height"], render["width"], render["height"]))
+    if camera.get("orthographic") and method != "film_translate":
+        raise ValueError(u"平行投影のカメラでは、Film Offset と 2D Pan はレンダーに効きません（Film Translate を使ってください）。")
+    change = multiply(current, invert(reference))
+    scale, angle = similarity(change)
+    if abs(angle) > 1e-6:
+        raise ValueError(u"AE の BG が基準から %.3f° 回転しています。回転はカメラのオフセットでは表せません。" % angle)
+    hx, hy = METHOD_ATTRS[method]
+    solved = dict(camera)
+    if method == "pan_zoom":
+        base_zoom = float(camera.get("zoom", 1.0)) if (camera.get("pan_zoom_enabled") and
+                                                       camera.get("render_pan_zoom")) else 1.0
+        solved.update(pan_zoom_enabled=True, render_pan_zoom=True, zoom=base_zoom / scale)
+    # other methods cannot scale: a scale shows as the error at the corners below
+    points = _frame_points(camera, render)
+    before = [project(camera, render, p) for p in points]
+    target = [apply(change, *p) for p in before]
+    w, h = float(render["width"]), float(render["height"])
+    # the values are linear in the two offsets: solve at the image center with unit steps
+    center = 4                                                   # (0, 0) in _frame_points
+    p0 = project(solved, render, points[center])
+    step = dict(solved)
+    step[hx] = float(solved.get(hx, 0.0)) + 1e-3
+    px = project(step, render, points[center])
+    step = dict(solved)
+    step[hy] = float(solved.get(hy, 0.0)) + 1e-3
+    py = project(step, render, points[center])
+    jx, jy = (px[0] - p0[0]) / 1e-3, (py[1] - p0[1]) / 1e-3
+    solved[hx] = float(solved.get(hx, 0.0)) + (target[center][0] - p0[0]) / jx
+    solved[hy] = float(solved.get(hy, 0.0)) + (target[center][1] - p0[1]) / jy
+    err = 0.0
+    for p, t in zip(points, target):
+        q = project(solved, render, p)
+        err = max(err, math.hypot(q[0] - t[0], q[1] - t[1]))
+    warnings = []
+    if err >= ERROR_LIMIT_PX:
+        if abs(scale - 1.0) > 1e-9 and method != "pan_zoom":
+            raise ValueError(u"AE の BG が基準から %.4f 倍に拡大縮小されています。拡大縮小を表せるのは 2D Pan/Zoom だけです。"
+                             % scale)
+        raise ValueError(u"カメラのオフセットでは AE の見え方を再現できません（画面の端で %.2f px ずれます）。" % err)
+    if err >= WARN_PX:
+        warnings.append(u"画面の端で %.2f px ずれます（中心は合っています）。" % err)
+    values = {hx: solved[hx], hy: solved[hy]}
+    if method == "pan_zoom":
+        values.update(zoom=solved["zoom"], pan_zoom_enabled=True, render_pan_zoom=True)
+    dx, dy = apply(change, w / 2.0, h / 2.0)
+    return {"values": values, "change": {"dx": dx - w / 2.0, "dy": dy - h / 2.0, "scale": scale, "rotation": angle},
+            "max_error_px": err, "warnings": warnings}

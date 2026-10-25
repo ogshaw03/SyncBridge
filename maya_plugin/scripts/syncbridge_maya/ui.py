@@ -137,6 +137,11 @@ class SyncBridgePanel(QtWidgets.QDialog):
         service.set_time_origin(self.origin.value())
 
         # Pixel Mapping (D-24): the camera / BG / method used when an AE layer is sent the first time
+        self.pm_mode = QtWidgets.QComboBox()
+        self.pm_mode.addItem(u"相対（3D の BG・カメラワーク）", "relative")
+        self.pm_mode.addItem(u"絶対（BG の板ポリに合わせる）", "absolute")
+        self.pm_mode.setToolTip(u"相対: 最初に送ったときの見え方を基準に、AE の BG の 2D の動きをカメラに足します（BG のモデルは何でも可）。\n"
+                                u"絶対: BG の画像を貼った板ポリに、画素単位で合わせます。")
         self.pm_camera = QtWidgets.QComboBox()
         self.pm_bg = QtWidgets.QComboBox()
         self.pm_method = QtWidgets.QComboBox()
@@ -146,12 +151,17 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.pm_refresh.setToolTip(u"シーンのカメラと板ポリの一覧を読み直します")
         self.pm_refresh.setFixedWidth(28)
         self.pm_list = QtWidgets.QListWidget()
-        self.pm_list.setMaximumHeight(64)
+        self.pm_list.setWordWrap(True)                 # the long descriptions were cut (mock, 2026-10-25)
+        self.pm_list.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.pm_list.setMaximumHeight(110)
+        self.pm_rebase = QtWidgets.QPushButton(u"基準をやり直す")
+        self.pm_rebase.setToolTip(u"相対モード: 選んだ対応付けの基準を消し、次に AE から送ったときの見え方を新しい基準にします")
+        self.pm_rebase.clicked.connect(self.reset_reference)
         self.pm_remove = QtWidgets.QPushButton(u"対応付けを削除")
         self.pm_remove.setToolTip(u"選んだ対応付けをこのシーンから消します（カメラの値はそのまま。Ctrl+Z で戻せます）")
         self.pm_refresh.clicked.connect(self.refresh_pixel_mapping)
         self.pm_remove.clicked.connect(self.remove_mapping)
-        for combo in (self.pm_camera, self.pm_bg, self.pm_method):
+        for combo in (self.pm_mode, self.pm_camera, self.pm_bg, self.pm_method):
             combo.activated.connect(self.save_pixel_mapping_defaults)
 
         self.markers_label = QtWidgets.QLabel()
@@ -232,14 +242,17 @@ class SyncBridgePanel(QtWidgets.QDialog):
         camera_row = QtWidgets.QHBoxLayout()
         camera_row.addWidget(self.pm_camera, 1)
         camera_row.addWidget(self.pm_refresh)
+        pm_form.addRow(u"モード", self.pm_mode)
         pm_form.addRow(u"カメラ", camera_row)
         pm_form.addRow(u"BG の板ポリ", self.pm_bg)
         pm_form.addRow(u"方式", self.pm_method)
-        pm_hint = QtWidgets.QLabel(u"AE のパネルで BG のレイヤーを選んで「BG の位置を Maya のカメラへ」を押すと、"
-                                   u"上のカメラと BG に対応付けて、AE と同じ見え方になるようにカメラを設定します。")
+        pm_hint = QtWidgets.QLabel(u"AE のパネルで BG のレイヤーを選んで「BG の位置を Maya のカメラへ」を押します。"
+                                   u"相対モードでは、最初の 1 回は今の見え方を基準として記録し（カメラは変えません）、"
+                                   u"次から AE の BG の動きをカメラに足します。")
         pm_hint.setWordWrap(True)
         pm_remove_row = QtWidgets.QHBoxLayout()
         pm_remove_row.addStretch(1)
+        pm_remove_row.addWidget(self.pm_rebase)
         pm_remove_row.addWidget(self.pm_remove)
         pm_layout.addLayout(pm_form)
         pm_layout.addWidget(pm_hint)
@@ -373,6 +386,8 @@ class SyncBridgePanel(QtWidgets.QDialog):
             combo.setCurrentIndex(max(index, 0))
             combo.blockSignals(False)
         self.pm_method.setCurrentIndex(max(self.pm_method.findData(chosen["method"]), 0))
+        self.pm_mode.setCurrentIndex(max(self.pm_mode.findData(chosen["mode"]), 0))
+        self.pm_bg.setEnabled(chosen["mode"] == "absolute")
         self.pm_list.clear()
         try:
             mappings = layer_mapping.stored()
@@ -386,13 +401,29 @@ class SyncBridgePanel(QtWidgets.QDialog):
         if not mappings:
             self.pm_list.addItem(u"このシーンには対応付けがありません")
         self.pm_remove.setEnabled(bool(mappings))
+        self.pm_rebase.setEnabled(any(core_layer_mapping.mode_of(m) == "relative" for m in mappings))
 
     def save_pixel_mapping_defaults(self, *_args):
         try:
             layer_mapping.set_defaults(self.pm_camera.currentData(), self.pm_bg.currentData(),
-                                       self.pm_method.currentData())
+                                       self.pm_method.currentData(), self.pm_mode.currentData())
+            self.pm_bg.setEnabled(self.pm_mode.currentData() == "absolute")
         except Exception as exc:
             self.write(u"選んだカメラか BG を使えません: %s" % exc)
+
+    def reset_reference(self):
+        item = self.pm_list.currentItem()
+        mapping_id = item.data(QtCore.Qt.UserRole) if item else None
+        if not mapping_id:
+            self.write(u"基準をやり直す対応付けを一覧で選んでください。")
+            return
+        try:
+            layer_mapping.reset_reference(mapping_id)
+        except Exception as exc:
+            self.write(u"基準を消せませんでした: %s" % exc)
+            return
+        self.write(u"基準を消しました。Maya と AE の見え方を合わせてから、AE で送ると新しい基準になります（カメラは変わりません）。")
+        self.refresh_pixel_mapping()
 
     def remove_mapping(self):
         item = self.pm_list.currentItem()
@@ -583,7 +614,12 @@ class SyncBridgePanel(QtWidgets.QDialog):
             else:
                 self.write(u"AE の設定を適用できませんでした: %s" % payload.get("message"))
         elif event == "pixelmap":
-            if payload.get("status") == "applied":
+            if payload.get("reference_recorded"):
+                self.write(u"%s今の見え方を基準として記録しました（カメラは変えていません）: %s。次から AE の BG の動きを足します。"
+                           % (u"［新しい対応付け］" if payload.get("created") else u"", payload["mapping"]["text"]))
+                for w in payload.get("warnings") or []:
+                    self.write(u"注意: %s" % w)
+            elif payload.get("status") == "applied":
                 values = u"、".join(u"%s %.6g" % (k, v) for k, v in payload["values"].items()
                                    if not isinstance(v, bool))
                 self.write(u"%sAE の BG の位置をカメラに設定しました: %s（%s、ずれ %.3f, %.3f px、計算上の誤差 %.1e px）。"

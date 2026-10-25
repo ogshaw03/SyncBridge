@@ -14,6 +14,9 @@ own record, separate from Maya's display / render layers. The records are kept i
       "direction": "ae2maya",             only direction so far
       "properties": ["pan"],              what is synced
       "method": "film_offset"             film_offset | film_translate | pan_zoom (core.pixel_mapping)
+      "mode": "relative",                 relative (D-25, no BG geometry) | absolute (BG plane, D-24)
+      "reference": {"matrix": [[...]], "camera": {attr: value}, "comp_time": 0.5}   relative mode only;
+                                          None until the first send records it
     }
 
 AE layers are found by comp id + layer id (H-AE-26: Layer.id is persistent, AE 22+); when the id is
@@ -29,13 +32,18 @@ from .pixel_mapping import METHODS
 
 DIRECTIONS = ("ae2maya",)
 PROPERTIES = ("pan",)
+MODES = ("relative", "absolute")
+MODE_LABELS = {"relative": u"相対", "absolute": u"絶対"}
 SCHEMA_VERSION = 1
 
 
-def new_mapping(ae: dict, maya: dict, method: str = "film_offset", name: Optional[str] = None) -> dict:
+def new_mapping(ae: dict, maya: dict, method: str = "film_offset", name: Optional[str] = None,
+                mode: str = "absolute") -> dict:
     if method not in METHODS:
         raise ValueError("method must be one of %s" % (METHODS,))
-    for key in ("camera_uuid", "bg_uuid"):
+    if mode not in MODES:
+        raise ValueError("mode must be one of %s" % (MODES,))
+    for key in ("camera_uuid", "bg_uuid") if mode == "absolute" else ("camera_uuid",):
         if not maya.get(key):
             raise ValueError("maya.%s is required" % key)
     return {
@@ -48,7 +56,24 @@ def new_mapping(ae: dict, maya: dict, method: str = "film_offset", name: Optiona
         "direction": "ae2maya",
         "properties": ["pan"],
         "method": method,
+        "mode": mode,
+        "reference": None,
     }
+
+
+def mode_of(mapping: dict) -> str:
+    return mapping.get("mode") or "absolute"          # records made before D-25 are absolute
+
+
+def with_reference(mapping: dict, matrix, camera_values: dict, comp_time=None) -> dict:
+    """A copy of a relative record whose reference is the AE layer's matrix and the camera values now."""
+    return dict(mapping, reference={"matrix": [list(row) for row in matrix], "camera": dict(camera_values),
+                                    "comp_time": comp_time})
+
+
+def without_reference(mapping: dict) -> dict:
+    """The next send records a new reference (and changes nothing)."""
+    return dict(mapping, reference=None)
 
 
 def matches(mapping: dict, ae_layer: dict) -> bool:
@@ -107,9 +132,14 @@ def describe(mapping: dict) -> str:
     """'BG Slide: AE c010 / BG -> BG_CAMShape (Film Offset)'"""
     labels = {"film_offset": "Film Offset", "film_translate": "Film Translate", "pan_zoom": "2D Pan/Zoom"}
     cam = (mapping["maya"].get("camera") or "?").split("|")[-1]
-    return u"%s: AE %s / %s → %s（%s）%s" % (
+    mode = mode_of(mapping)
+    extra = ""
+    if mode == "relative" and not mapping.get("reference"):
+        extra = u"［基準なし: 次の送信で基準を記録］"
+    return u"%s: AE %s / %s → %s（%s・%s）%s%s" % (
         mapping.get("name", ""), mapping["ae"].get("comp") or "?", mapping["ae"].get("layer") or "?", cam,
-        labels.get(mapping["method"], mapping["method"]), "" if mapping.get("enabled", True) else u"［無効］")
+        MODE_LABELS[mode], labels.get(mapping["method"], mapping["method"]), extra,
+        "" if mapping.get("enabled", True) else u"［無効］")
 
 
 def ae_layer_from_export(data: dict):

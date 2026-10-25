@@ -45,9 +45,24 @@ class LayerMappingTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             lm.new_mapping(AE, dict(MAYA, camera_uuid=""))
 
+    def test_relative_mode_and_reference(self):
+        m = lm.new_mapping(AE, dict(MAYA, bg_uuid=None), method="pan_zoom", mode="relative")   # no BG needed
+        self.assertEqual((lm.mode_of(m), m["reference"]), ("relative", None))
+        self.assertIn(u"基準なし", lm.describe(m))
+        r = lm.with_reference(m, [[1, 0, -2040], [0, 1, -1460], [0, 0, 1]], {"hpan": 0.0, "vpan": 0.0}, 0.5)
+        self.assertEqual(r["reference"]["camera"], {"hpan": 0.0, "vpan": 0.0})
+        self.assertNotIn(u"基準なし", lm.describe(r))
+        self.assertIsNone(lm.without_reference(r)["reference"])
+        self.assertEqual(lm.load(lm.dump([r]))[0]["reference"]["matrix"][0], [1, 0, -2040])
+        with self.assertRaises(ValueError):                 # absolute mode needs the BG
+            lm.new_mapping(AE, dict(MAYA, bg_uuid=None), mode="absolute")
+        old = dict(m)
+        del old["mode"]
+        self.assertEqual(lm.mode_of(old), "absolute")        # records made before D-25
+
     def test_describe_and_export(self):
         self.assertEqual(lm.describe(lm.new_mapping(AE, MAYA, name="BG Slide")),
-                         u"BG Slide: AE c010 / BG → BG_CAMShape（Film Offset）")
+                         u"BG Slide: AE c010 / BG → BG_CAMShape（絶対・Film Offset）")
         transform, warnings = lm.ae_layer_from_export({"layer": {"position": [1, 2], "anchorPoint": [3, 4],
                                                                  "effects": ["Curves"]}})
         self.assertEqual(transform["position"], [1, 2])

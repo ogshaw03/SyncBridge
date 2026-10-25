@@ -46,6 +46,13 @@
 
 ### 2026-10-25（Windows 11, Python 3.10.6）
 
+- **Pixel Mapping Phase 2.5: 相対モード（D-25、`docs/PIXEL_MAPPING.md` 8 章、未リリース）。** 3D の BG・カメラワーク対応。
+  `core.pixel_mapping.solve_relative`、対応付けの `mode` / `reference`、Maya の基準の記録と差分の適用、パネルのモードの選択と
+  「基準をやり直す」（一覧は折り返し表示に）。既定は相対・2D Pan/Zoom。
+  mayapy（3 つの深さ + カメラワーク）: スライド 0.007 px 以下、拡大 110 % で 0.094 px 以下、カメラワークの Film Offset は
+  触らない（Film Offset 方式は断る）。テスト 318 件 OK。テストで作った `pixelmap_*.json` は消した。
+  シェル経由の編集で `\n` が本物の改行になった（CLAUDE.md の注意どおり）→ Edit ツールで直した。
+
 - **Pixel Mapping Phase 2 を利用者が GUI で確認: 動作 OK。** カメラの距離 18.670（正確には 18.67092）で断られる問題を、
   画面の端のずれ（1 px で拒否、0.1 px で警告）で判断するように直した（mayapy で 0.041 px）。テスト 313 件 OK。
   要望: BG は建物・町並みのモデルのこともあり、カメラワークもある → **相対モード（Phase 2.5）の案**を `docs/PIXEL_MAPPING.md` 8 章に。
@@ -389,7 +396,7 @@
 
 ## 次にやること
 
-0. **Pixel Mapping Phase 2.5: 相対モード**（3D の BG・カメラワーク対応、`docs/PIXEL_MAPPING.md` 8 章）→ Phase 3（アニメーション、
+0. **[利用者] Pixel Mapping の相対モードを GUI で確認する**（`docs/PIXEL_MAPPING.md` 8 章）→ Phase 3（アニメーション、
    Linear / Hold / Bezier のサンプリング、全フレームの精度確認）。Phase 2 は 2026-10-25 に GUI で確認済み。
 0. **[実機・利用者] シーン設定の転送とタイムスライダーの同期（D-21 / D-22）を GUI で確認する:** 両方向の設定の転送と取り消し、
    開始フレームを変えたあとでもタイムワープの転送とマーカーが同じ位置か（H-AE-22）、スクラブ・コマ送り・再生と停止での追従、

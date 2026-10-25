@@ -89,6 +89,11 @@ def _notify(event: str, payload) -> None:
             print("SyncBridge: listener error: %s" % exc)
 
 
+def announce(event: str, payload=None) -> None:
+    """Tell the listeners about something done in Maya's own windows (e.g. "layer_map")."""
+    _notify(event, payload)
+
+
 def _on_event(event: str, payload) -> None:
     if event == "connected":
         print("SyncBridge: connected as %s" % payload.get("client_id"))
@@ -289,6 +294,14 @@ def send_settings(direction: str, items: List[str], origin: float, callback=None
 
     return _client.request("settings.request", {"direction": direction, "items": list(items),
                                                 "options": {"origin": origin}}, done)
+
+
+def request_ae_layers(callback) -> str:
+    """The active AE comp's layers for the layer map (D-28): callback(reply) gets layers.result
+    {comp, layers} or an error, on Maya's main thread."""
+    if not is_connected():
+        raise ConnectError("not connected to the SyncBridge server")
+    return _client.request("layers.request", {}, callback)
 
 
 def time_sync_state() -> dict:

@@ -62,6 +62,10 @@ const host = {
                                         scale: [100, 100], rotation: 0, threeD: false, parent: null, effects: [],
                                         source: 'bg.png', source_width: 6000, source_height: 4000 } });
                 }
+            } else if (name === 'layersInfo') {
+                callback({ comp: { id: 12, name: 'Comp 1', width: 1920, height: 1080, frameRate: 24, duration: 4, time: 0 },
+                           layers: [{ id: 345, index: 1, name: 'BG', kind: 'still', source: 'bg.png' },
+                                    { id: 346, index: 2, name: 'CHAR_A', kind: 'sequence', source: 'char_a_[0001-0096].png' }] });
             } else if (name === 'sceneSettings') {
                 callback(Object.assign({}, COMP));
             } else if (name === 'applySceneSettings') {

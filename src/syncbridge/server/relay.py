@@ -24,6 +24,10 @@ class RelayToMaya:
     """Base: validate a request from AE, ask Maya, answer the requester (never raises)."""
     DATA_TYPE = ""
     MAYA_KIND = ""
+    TARGET_APP = "maya"
+    DIRECTION = "ae2maya"
+    NO_TARGET = NO_MAYA
+    RECORD = True            # in the transfer history
 
     def __init__(self, manager: ConnectionManager, timeout: float = RELAY_TIMEOUT, history=None):
         self.manager = manager
@@ -39,8 +43,8 @@ class RelayToMaya:
 
     async def handle(self, requester: Client, request: dict) -> None:
         item = None
-        if self.history is not None:
-            item = self.history.start(requester.client_id, {"data": {"direction": "ae2maya",
+        if self.history is not None and self.RECORD:
+            item = self.history.start(requester.client_id, {"data": {"direction": self.DIRECTION,
                                                                      "data_type": self.DATA_TYPE}})
         try:
             result = await self._run(requester, request)
@@ -58,9 +62,9 @@ class RelayToMaya:
         data = request["data"]
         payload = self.payload(data)
         try:
-            target = self.manager.pick("maya", data.get("target"))
+            target = self.manager.pick(self.TARGET_APP, data.get("target"))
         except RequestFailed as exc:
-            raise RequestFailed(exc.code, NO_MAYA)
+            raise RequestFailed(exc.code, self.NO_TARGET)
         reply = await self.manager.request(target, self.MAYA_KIND, payload, self.timeout)
         result = dict(reply["data"])
         result.update(source=requester.summary(), target=target.summary())
@@ -117,6 +121,26 @@ class MarkerFlow(RelayToMaya):
         if not isinstance(options, dict):
             raise RequestFailed(protocol.E_BAD_MESSAGE, "options must be an object")
         return {"export": export, "options": options}
+
+
+NO_AE = u"After Effects が接続されていません。After Effects の SyncBridge パネルで Connect を押してください。"
+
+
+class LayersFlow(RelayToMaya):
+    """layers.request {} from Maya (the layer map, D-28): AE answers the active comp's layers.
+
+        maya --layers.request--> hub --layers.export.request--> AE --layers.export.result--> hub
+        hub --layers.result {comp, layers, source, target}--> maya
+    Not recorded in the transfer history (it only reads)."""
+    DATA_TYPE = "ae_layers"
+    MAYA_KIND = "layers.export.request"
+    TARGET_APP = "ae"
+    DIRECTION = "maya2ae"
+    NO_TARGET = NO_AE
+    RECORD = False
+
+    def payload(self, data: dict) -> dict:
+        return {}
 
 
 class PixelMapFlow(RelayToMaya):

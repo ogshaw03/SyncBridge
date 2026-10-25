@@ -52,6 +52,11 @@ KINDS = (
     "pixelmap.result",
     "pixelmap.apply.request",
     "pixelmap.apply.result",
+    # AE layers for the layer map (D-28)
+    "layers.request",
+    "layers.result",
+    "layers.export.request",
+    "layers.export.result",
     # time slider sync (D-22)
     "time.sync",
     "time.sync.state",

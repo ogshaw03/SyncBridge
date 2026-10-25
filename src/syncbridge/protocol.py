@@ -32,6 +32,9 @@ Pixel Mapping (D-23 / D-24), the AE BG layer's position on the mapped Maya camer
     client -> server  pixelmap.request {info: SBCep.pixelMapInfo(), options: {method?}}
     server -> maya    pixelmap.apply.request {info, options}   maya -> server pixelmap.apply.result {status, ...}
     server -> client  pixelmap.result {status, mapping, values, max_error_px, warnings, source, target}
+AE layers for Maya's layer map (D-28):
+    maya -> server    layers.request {}     server -> ae  layers.export.request {}
+    ae -> server      layers.export.result {comp, layers}     server -> maya  layers.result {comp, layers, ...}
 Time slider sync (D-22), no replies:
     client -> server  time.sync {enabled, follow_playback}   server -> all  time.sync.state {...}
     client -> server  time.update {t}    server -> the other app  time.set {t, source}
@@ -81,6 +84,8 @@ REPLIES = {
     "settings.apply.request": "settings.apply.result",
     "pixelmap.request": "pixelmap.result",
     "pixelmap.apply.request": "pixelmap.apply.result",
+    "layers.request": "layers.result",
+    "layers.export.request": "layers.export.result",
 }
 
 # required data fields per kind (minimal structural validation)
@@ -112,6 +117,10 @@ REQUIRED = {
     "pixelmap.result": ("status",),
     "pixelmap.apply.request": ("info",),
     "pixelmap.apply.result": ("status",),
+    "layers.request": (),
+    "layers.result": ("layers",),
+    "layers.export.request": (),
+    "layers.export.result": ("layers",),
     "time.sync": ("enabled",),
     "time.sync.state": ("enabled",),
     "time.update": ("t",),

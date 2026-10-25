@@ -170,6 +170,7 @@ source_time = (maya_out_frame - maya_output_origin_frame) / maya_fps * source_ti
 | H-AE-24 | AE は 2D レイヤーの元画像の座標を `Position + (source − Anchor Point)` のコンプの座標に描く（画素の中心の扱いも同じ。半端な位置は補間）。Pixel Mapping（D-23） | `after_effects/jsx/pixel_mapping_reference.jsx` → `tools/pixel_mapping/check_reference.py` | ✅ AE 26.5（利用者の PC、2026-10-25）: 8 フレームで最大 0.042 px（整数の位置は 0.000）。Maya のレンダーと直接比べて最大 0.045 px。Position のみ（Scale・Rotation は未確認） |
 | H-AE-26 | `Layer.id`（AE 22 以降）と `CompItem.id` は、プロジェクトを開き直しても変わらない ID（Pixel Mapping の対応付け、D-24） | AE で同じレイヤーを 2 回送り、Maya の対応付けが 1 つのままか（レイヤー名を変えても） | ❓ 📘（無ければ名前で探す） |
 | H-AE-27 | Position の次元を分割したレイヤーでは、`ADBE Position_0` / `ADBE Position_1` の値が X / Y になる | 次元を分割した BG で送る | ❓ |
+| H-AE-28 | レイヤーの種類は `instanceof CameraLayer / LightLayer / TextLayer / ShapeLayer`、`nullLayer`、ソースの `CompItem` / `mainSource` の `SolidSource` / `FileSource.isStill` で見分けられる（連番と動画はファイルの拡張子で区別） | `SBCep.layersInfo()` を静止画・連番・動画・プリコンプ・平面・ヌル・カメラのあるコンプで実行 | ❓ |
 | H-AE-25 | `CompItem.saveFrameToPng(time, file)` でコンプの 1 フレームを PNG に保存できる | 同じスクリプト | ✅ AE 26.5（2026-10-25） |
 | H-AE-10 | Time Remap を有効にした直後は、レイヤーのイン点とアウト点に LINEAR のキーが 2 つでき、最後のキーの値はソースの長さ | Export の `keys` | ✅ AE 26.5（1 コンプで確認）: 0 秒 → 0、11.011 秒 → 11.011（ソース長）。「ソース長 − 1 フレーム」ではなかった |
 

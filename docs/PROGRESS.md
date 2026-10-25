@@ -46,6 +46,19 @@
 
 ### 2026-10-25（Windows 11, Python 3.10.6）
 
+- **レイヤーマップ（ノードエディター、D-28、作業中・未コミット）:** 対応付けの保存形式を schema 2 に
+  （`maya_layers` = SyncBridge の Maya レイヤー: カメラと表示するオブジェクト。schema 1 は読み込み時にカメラごとの
+  レイヤーへ移す）。ハブに `layers.request`（Maya → AE、`LayersFlow`）、AE に `SBCep.layersInfo()`（H-AE-28 ❓）、
+  Maya に `service.request_ae_layers`。画面は `syncbridge_maya/layer_map_view.py`（Qt だけ、Maya を import しない）、
+  Maya とつなぐのは `layer_map_window.py`（パネルの Pixel Mapping 欄の「レイヤーマップ…」で開く）。モックを利用者に見せて了承。
+  操作（レイヤーの追加・カメラ・オブジェクト・名前・接続・モード・方式・基準・削除）はそれぞれ 1 回の undo。
+  **mayapy 2023 / 2024 で確認:** 選択からのレイヤー作成、カメラなしの接続の拒否、板ポリなしの絶対モードの拒否、
+  接続を外す → undo で戻り画面も戻る、方式とモードの undo。ドラッグでの接続と Delete は `.venv` の Qt で疑似マウス操作のテスト。
+  テスト 335 件 OK（`.venv`、`py -3` は 89 件スキップ。`test_maya_drag_install` の偽 PySide2 に QtGui がなく、
+  PySide6 のない環境で失敗していたのも直した）。
+  **未確認（GUI）:** Maya の GUI でのウィンドウ（暗い配色、マウスでの接続、undo の scriptJob）、AE の `layersInfo`（H-AE-28）。
+  アニメーションの転送（Phase 3）は未着手。
+
 - **Overscan の方針（D-27）:** 利用者が GUI で、解像度ゲートの表示で Overscan が 1.3 / 1.0 に自動で変わること、ゲートの表示中の
   ビューポートではゲートの枠に対する BG の位置もずれることを確認（H-PM-10）。→ ツールで確認するときは Overscan 1.0 にして
   もらう方針（利用者の決定）。Overscan が 1 でないときは両方のパネルのログで促し、パネルの説明にも一文。「AE の素材に

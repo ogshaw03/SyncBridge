@@ -60,5 +60,40 @@ class PixelMapFlowTest(ServerFixture):
         self.assertEqual(reply["data"]["code"], protocol.E_NO_PEER)
 
 
+LAYERS = {"comp": {"id": 12, "name": "c010", "width": 1920, "height": 1080, "frameRate": 24, "duration": 5},
+          "layers": [{"id": 345, "index": 1, "name": "BG", "kind": "still", "width": 6000, "height": 4000},
+                     {"id": 346, "index": 2, "name": "CHAR_A", "kind": "sequence", "width": 1920, "height": 1080}]}
+
+
+@unittest.skipUnless(HAVE_SERVER, "server packages not installed (requirements-server.txt)")
+class LayersFlowTest(ServerFixture):
+    """layers.request from Maya (D-28): the hub asks AE and answers Maya; not in the history."""
+
+    def connect(self, app, handlers=None):
+        c = SyncClient(app, handlers or {})
+        c.connect(port=self.port, token=TOKEN)
+        self.addCleanup(c.disconnect)
+        return c
+
+    def test_maya_gets_the_ae_layers(self):
+        ae = self.connect("ae", {"layers.export.request": lambda msg: dict(LAYERS)})
+        maya = self.connect("maya")
+        q = queue.Queue()
+        maya.request("layers.request", {}, q.put)
+        reply = q.get(timeout=10)
+        self.assertEqual(reply["kind"], "layers.result", reply)
+        self.assertEqual([layer["name"] for layer in reply["data"]["layers"]], ["BG", "CHAR_A"])
+        self.assertEqual(reply["data"]["target"]["client_id"], ae.client_id)
+        self.assertEqual(self.app.state.hub.history.recent(5), [])
+
+    def test_without_ae(self):
+        maya = self.connect("maya")
+        q = queue.Queue()
+        maya.request("layers.request", {}, q.put)
+        reply = q.get(timeout=10)
+        self.assertEqual(reply["data"]["code"], protocol.E_NO_PEER)
+        self.assertIn(u"After Effects が接続されていません", reply["data"]["message"])
+
+
 if __name__ == "__main__":
     unittest.main()

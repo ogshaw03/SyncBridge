@@ -21,7 +21,7 @@ from . import hubstate
 from .admin import create_admin_router
 from .connections import ConnectionManager
 from .flow import TransferFlow
-from .relay import GuideFlow, MarkerFlow, PixelMapFlow
+from .relay import GuideFlow, LayersFlow, MarkerFlow, PixelMapFlow
 from .settings_flow import SettingsFlow
 from .timesync import TimeSync
 
@@ -61,7 +61,8 @@ def create_app(token: str, idle_timeout: Optional[float] = None,
     relays = {"guide.request": GuideFlow(manager, history=history, **relay_args),
               "markers.request": MarkerFlow(manager, history=history, **relay_args),
               "settings.request": SettingsFlow(manager, history=history, **flow_args),
-              "pixelmap.request": PixelMapFlow(manager, history=history, **relay_args)}
+              "pixelmap.request": PixelMapFlow(manager, history=history, **relay_args),
+              "layers.request": LayersFlow(manager, history=history, **relay_args)}
     timesync = TimeSync(manager)
     state = types.SimpleNamespace(manager=manager, flow=flow, history=history, logbuf=logbuf, bus=bus,
                                   started=time.monotonic(), started_iso=hubstate.now_iso(),

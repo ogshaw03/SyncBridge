@@ -174,20 +174,22 @@ def apply_from_ae(info: dict, options: dict = None, confirm: bool = True) -> dic
     from . import layer_mapping
     options = options or {}
     ae = _ae_layer(info)
-    mappings = layer_mapping.stored()
+    data = layer_mapping.store()
+    mappings = data["mappings"]
     mapping = core_lm.find(mappings, ae)
     created = mapping is None
     if created:
+        # not wired in the layer map yet: wire it to the Maya layer of the camera chosen in the panel
         chosen = layer_mapping.defaults()
         mode = options.get("mode") or chosen["mode"]
         if not chosen["camera"] or (mode == "absolute" and not chosen["bg"]):
             raise ValueError(u"AE のレイヤー「%s」はまだ Maya のカメラに対応付けられていません。Maya の SyncBridge パネルの"
                              u"「Pixel Mapping」欄で、カメラ%sを選んでから、もう一度送ってください。"
                              % (ae["layer"], u"と BG" if mode == "absolute" else u""))
-        maya = {"camera_uuid": layer_mapping.uuid_of(chosen["camera"]), "camera": chosen["camera"]}
-        if mode == "absolute":
-            maya.update(bg_uuid=layer_mapping.uuid_of(chosen["bg"]), bg=chosen["bg"])
-        mapping = core_lm.new_mapping(ae, maya, options.get("method") or chosen["method"], mode=mode)
+        layer = core_lm.layer_for_camera(data, layer_mapping.uuid_of(chosen["camera"]), chosen["camera"])
+        bg = {"uuid": layer_mapping.uuid_of(chosen["bg"]), "name": chosen["bg"]} if mode == "absolute" else None
+        mapping = core_lm.connect(data, ae, layer["id"], options.get("method") or chosen["method"], mode, bg)
+        mappings = [m for m in data["mappings"] if m["id"] != mapping["id"]]
     else:
         mapping = dict(mapping, ae=dict(mapping["ae"], **{k: v for k, v in ae.items() if v is not None}),
                        maya=dict(mapping["maya"]))
@@ -238,10 +240,10 @@ def apply_from_ae(info: dict, options: dict = None, confirm: bool = True) -> dic
     if mode == "relative" and not mapping.get("reference"):
         values_now = {k: cam[k] for k in REFERENCE_KEYS[method]}
         mapping = core_lm.with_reference(mapping, matrix, values_now, info["comp"].get("time"))
-        updated = core_lm.upsert(mappings, mapping)
+        data["mappings"] = core_lm.upsert(mappings, mapping)
         cmds.undoInfo(openChunk=True, chunkName="SyncBridge pixel mapping reference")
         try:
-            layer_mapping.save(updated)
+            layer_mapping.save_store(data)
         finally:
             cmds.undoInfo(closeChunk=True)
         return dict(base, status="unchanged", reference_recorded=True, values={}, before={}, shift_px=[0.0, 0.0],
@@ -257,8 +259,8 @@ def apply_from_ae(info: dict, options: dict = None, confirm: bool = True) -> dic
                                bg_plane_data(bg_node, ae["source_width"], ae["source_height"]), matrix, comp)
         shift = solved["shift_px"]
     warnings += solved.get("warnings") or []
-    updated = core_lm.upsert(mappings, mapping)
-    before = apply_values(camera, solved["values"], also=lambda: layer_mapping.save(updated))
+    data["mappings"] = core_lm.upsert(mappings, mapping)
+    before = apply_values(camera, solved["values"], also=lambda: layer_mapping.save_store(data))
     backup = _backup(mapping, camera, before)
     return dict(base, mapping={"id": mapping["id"], "name": mapping["name"], "text": core_lm.describe(mapping)},
                 values=solved["values"], before=before, shift_px=shift, max_error_px=solved["max_error_px"],

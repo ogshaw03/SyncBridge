@@ -1,8 +1,19 @@
-"""Virtual Layer Mapping (Pixel Mapping Phase 2, docs/PIXEL_MAPPING.md, D-24).
+"""Virtual Layer Mapping (Pixel Mapping Phase 2, docs/PIXEL_MAPPING.md, D-24, D-28).
 
-A virtual layer ties one AE layer to one Maya camera (and the BG mesh it looks at). It is SyncBridge's
-own record, separate from Maya's display / render layers. The records are kept in the Maya scene
-(syncbridge_maya.layer_mapping), so they travel with the scene to another PC.
+The store kept in the Maya scene (syncbridge_maya.layer_mapping), so it travels with the scene:
+
+    {"schema_version": 2,
+     "maya_layers": [ Maya layer, ... ],      SyncBridge's own layers (not Maya display / render layers)
+     "mappings":    [ link, ... ]}            an AE layer connected to a Maya layer (the node editor's wire)
+
+A Maya layer (D-28) holds the camera it uses and the objects it shows (recorded and selectable; showing
+only them is a later phase):
+
+    {"id": "ml-1a2b...", "name": "BG", "camera_uuid": "...", "camera": "|BG_CAM|BG_CAMShape",
+     "objects": [{"uuid": "...", "name": "|town|building01"}, ...]}
+
+A link (the former "virtual layer" record of D-24; `maya_layer` added in schema 2, its camera fields are
+kept in step with the Maya layer):
 
     {
       "id": "vl-3f2a...",                 unique, never reused
@@ -17,7 +28,10 @@ own record, separate from Maya's display / render layers. The records are kept i
       "mode": "relative",                 relative (D-25, no BG geometry) | absolute (BG plane, D-24)
       "reference": {"matrix": [[...]], "camera": {attr: value}, "comp_time": 0.5}   relative mode only;
                                           None until the first send records it
+      "maya_layer": "ml-1a2b..."          the Maya layer it is connected to (schema 2)
     }
+
+A store of schema 1 (links only) is moved to schema 2 on load: one Maya layer per camera.
 
 AE layers are found by comp id + layer id (H-AE-26: Layer.id is persistent, AE 22+); when the id is
 unknown, by comp name + layer name. Maya nodes are found by UUID (survives renaming and namespace
@@ -34,9 +48,116 @@ DIRECTIONS = ("ae2maya",)
 PROPERTIES = ("pan",)
 MODES = ("relative", "absolute")
 MODE_LABELS = {"relative": u"相対", "absolute": u"絶対"}
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
+# -- Maya layers (D-28) -------------------------------------------------------------------------------
+def short_name(path: Optional[str]) -> str:
+    return (path or "?").split("|")[-1]
+
+
+def new_maya_layer(name: str, camera_uuid: Optional[str] = None, camera: Optional[str] = None,
+                   objects: Optional[List[dict]] = None) -> dict:
+    return {"id": "ml-" + uuid.uuid4().hex[:12], "name": name or "Layer", "camera_uuid": camera_uuid,
+            "camera": camera, "objects": list(objects or [])}
+
+
+def empty_store() -> dict:
+    return {"maya_layers": [], "mappings": []}
+
+
+def maya_layer(store: dict, layer_id: Optional[str]) -> Optional[dict]:
+    for layer in store["maya_layers"]:
+        if layer["id"] == layer_id:
+            return layer
+    return None
+
+
+def layer_for_camera(store: dict, camera_uuid: str, camera: Optional[str] = None) -> dict:
+    """The Maya layer using this camera; a new one (added to the store) when there is none."""
+    for layer in store["maya_layers"]:
+        if layer.get("camera_uuid") == camera_uuid:
+            return layer
+    layer = new_maya_layer(short_name(camera).replace("Shape", "") or "Layer", camera_uuid, camera)
+    store["maya_layers"].append(layer)
+    return layer
+
+
+def set_layer_camera(store: dict, layer_id: str, camera_uuid: Optional[str], camera: Optional[str]) -> dict:
+    """Change a Maya layer's camera; its links follow (their references are dropped: they held the
+    old camera's values)."""
+    layer = maya_layer(store, layer_id)
+    if layer is None:
+        raise ValueError("no Maya layer %r" % layer_id)
+    changed = layer.get("camera_uuid") != camera_uuid
+    layer.update(camera_uuid=camera_uuid, camera=camera)
+    for m in links_of(store, layer_id):
+        m["maya"] = dict(m.get("maya") or {}, camera_uuid=camera_uuid, camera=camera)
+        if changed:
+            m["reference"] = None
+    return layer
+
+
+def links_of(store: dict, layer_id: str) -> List[dict]:
+    return [m for m in store["mappings"] if m.get("maya_layer") == layer_id]
+
+
+def remove_maya_layer(store: dict, layer_id: str) -> int:
+    """Remove a Maya layer and its links. Returns how many links went with it."""
+    gone = links_of(store, layer_id)
+    store["maya_layers"] = [layer for layer in store["maya_layers"] if layer["id"] != layer_id]
+    store["mappings"] = [m for m in store["mappings"] if m.get("maya_layer") != layer_id]
+    return len(gone)
+
+
+def connect(store: dict, ae: dict, layer_id: str, method: str = "pan_zoom", mode: str = "relative",
+            bg: Optional[dict] = None, name: Optional[str] = None) -> dict:
+    """Link an AE layer to a Maya layer (the node editor's wire). An AE layer has one link: an existing
+    link of the same AE layer is moved to this Maya layer (its reference is dropped)."""
+    layer = maya_layer(store, layer_id)
+    if layer is None:
+        raise ValueError("no Maya layer %r" % layer_id)
+    if not layer.get("camera_uuid"):
+        raise ValueError(u"Maya レイヤー「%s」にカメラがありません。先にカメラを選んでください。" % layer["name"])
+    maya = {"camera_uuid": layer["camera_uuid"], "camera": layer.get("camera")}
+    if bg:
+        maya.update(bg_uuid=bg.get("uuid"), bg=bg.get("name"))
+    old = find(store["mappings"], ae)
+    if old is not None:
+        old.update(maya_layer=layer_id, maya=dict(old.get("maya") or {}, **maya), reference=None)
+        return old
+    link = new_mapping(ae, maya, method, name, mode)
+    link["maya_layer"] = layer_id
+    store["mappings"].append(link)
+    return link
+
+
+def disconnect(store: dict, mapping_id: str) -> None:
+    store["mappings"] = [m for m in store["mappings"] if m["id"] != mapping_id]
+
+
+def load_store(data) -> dict:
+    """The store from the stored JSON value; schema 1 (links only) gets one Maya layer per camera."""
+    if not data:
+        return empty_store()
+    if data.get("schema_version", 1) > SCHEMA_VERSION:
+        raise ValueError(u"新しい SyncBridge で保存された対応付けです（schema_version %s）。SyncBridge を更新してください。"
+                         % data.get("schema_version"))
+    store = {"maya_layers": [dict(layer) for layer in data.get("maya_layers") or []],
+             "mappings": [dict(m) for m in data.get("mappings") or []]}
+    for m in store["mappings"]:
+        if not m.get("maya_layer") or maya_layer(store, m["maya_layer"]) is None:
+            cam = (m.get("maya") or {})
+            m["maya_layer"] = layer_for_camera(store, cam.get("camera_uuid"), cam.get("camera"))["id"]
+    return store
+
+
+def dump_store(store: dict) -> Dict[str, object]:
+    return {"schema_version": SCHEMA_VERSION, "maya_layers": list(store["maya_layers"]),
+            "mappings": list(store["mappings"])}
+
+
+# -- links --------------------------------------------------------------------------------------------
 def new_mapping(ae: dict, maya: dict, method: str = "film_offset", name: Optional[str] = None,
                 mode: str = "absolute") -> dict:
     if method not in METHODS:
@@ -80,6 +201,19 @@ def with_method(mapping: dict, method: str) -> dict:
     if mode_of(mapping) == "relative":
         out["reference"] = None
     return out
+
+
+def with_mode(mapping: dict, mode: str, bg: Optional[dict] = None) -> dict:
+    """A copy in another mode; absolute needs a BG mesh ({uuid, name}, or the one recorded before).
+    The reference is dropped either way."""
+    if mode not in MODES:
+        raise ValueError("mode must be one of %s" % (MODES,))
+    maya = dict(mapping.get("maya") or {})
+    if bg:
+        maya.update(bg_uuid=bg.get("uuid"), bg=bg.get("name"))
+    if mode == "absolute" and not maya.get("bg_uuid"):
+        raise ValueError(u"絶対モードには BG の板ポリが要ります。Maya で板ポリを選んでから切り替えてください。")
+    return dict(mapping, mode=mode, maya=maya, reference=None)
 
 
 def without_reference(mapping: dict) -> dict:
@@ -126,17 +260,17 @@ def remove(mappings: List[dict], mapping_id: str) -> List[dict]:
 
 
 def load(data) -> List[dict]:
-    """Records from the stored JSON value ({"schema_version", "mappings"}); [] for nothing stored."""
-    if not data:
-        return []
-    if data.get("schema_version", SCHEMA_VERSION) > SCHEMA_VERSION:
-        raise ValueError(u"新しい SyncBridge で保存された対応付けです（schema_version %s）。SyncBridge を更新してください。"
-                         % data.get("schema_version"))
-    return list(data.get("mappings") or [])
+    """The links of the stored JSON value (see load_store)."""
+    return load_store(data)["mappings"]
 
 
-def dump(mappings: List[dict]) -> Dict[str, object]:
-    return {"schema_version": SCHEMA_VERSION, "mappings": list(mappings)}
+def dump(mappings: List[dict], maya_layers: Optional[List[dict]] = None) -> Dict[str, object]:
+    store = {"maya_layers": list(maya_layers or []), "mappings": list(mappings)}
+    for m in store["mappings"]:                      # links without a Maya layer get one per camera
+        if not m.get("maya_layer") or maya_layer(store, m["maya_layer"]) is None:
+            cam = m.get("maya") or {}
+            m["maya_layer"] = layer_for_camera(store, cam.get("camera_uuid"), cam.get("camera"))["id"]
+    return dump_store(store)
 
 
 def describe(mapping: dict) -> str:
@@ -152,6 +286,13 @@ def describe(mapping: dict) -> str:
         mapping.get("name", ""), mapping["ae"].get("comp") or "?", mapping["ae"].get("layer") or "?", cam,
         MODE_LABELS[mode], labels.get(mapping["method"], mapping["method"]), extra,
         "" if mapping.get("enabled", True) else u"［無効］")
+
+
+def ae_from_layers_info(comp: dict, layer: dict) -> dict:
+    """The `ae` of a link from SBCep.layersInfo() (its comp and one of its layers)."""
+    return {"comp_id": comp.get("id"), "comp": comp.get("name"), "layer_id": layer.get("id"),
+            "layer": layer.get("name"), "source": layer.get("source"), "source_width": layer.get("width"),
+            "source_height": layer.get("height")}
 
 
 def ae_layer_from_export(data: dict):

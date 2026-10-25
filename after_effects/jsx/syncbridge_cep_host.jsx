@@ -215,9 +215,63 @@ var SBCep = (function () {
         } catch (e) { return fail(e); }
     }
 
+    // ---- layer map (D-28): the active comp's layers for Maya's node editor ---------------------------
+    //   H-AE-28: FootageItem.mainSource is a FileSource (isStill: still or sequence / movie), a
+    //            SolidSource or a PlaceholderSource; CompItem sources are precomps.
+    var SEQ_EXT = /\.(png|jpe?g|tiff?|exr|dpx|tga|psd|bmp|cin|hdr|sgi|iff|webp)$/i;
+
+    function layerKind(layer) {
+        var src = layer.source;
+        if (layer instanceof CameraLayer) { return 'camera'; }
+        if (layer instanceof LightLayer) { return 'light'; }
+        if (layer instanceof TextLayer) { return 'text'; }
+        if (layer instanceof ShapeLayer) { return 'shape'; }
+        if (layer.nullLayer) { return 'null'; }
+        if (!src) { return 'other'; }
+        if (src instanceof CompItem) { return 'comp'; }
+        if (src.mainSource instanceof SolidSource) { return 'solid'; }
+        if (src.mainSource instanceof FileSource) {
+            if (src.mainSource.isStill) { return 'still'; }
+            return (src.file && SEQ_EXT.test(src.file.name)) ? 'sequence' : 'movie';
+        }
+        return 'other';
+    }
+
+    function keyed(group, name) {
+        var p = group.property(name);
+        return !!(p && p.numKeys > 0);
+    }
+
+    function layersInfo() {
+        try {
+            var comp = activeComp(), out = [], i, layer, tr, src;
+            for (i = 1; i <= comp.numLayers; i++) {
+                layer = comp.layer(i);
+                src = layer.source;
+                tr = layer.property('ADBE Transform Group');
+                out.push({
+                    id: (layer.id !== undefined) ? layer.id : null, index: i, name: layer.name,
+                    kind: layerKind(layer), enabled: layer.enabled,
+                    source: src ? src.name : null, source_id: src ? src.id : null,
+                    width: (src && src.width) ? src.width : null, height: (src && src.height) ? src.height : null,
+                    inPoint: layer.inPoint, outPoint: layer.outPoint, threeD: !!layer.threeDLayer,
+                    parent: layer.parent ? layer.parent.name : null,
+                    keyed: {position: keyed(tr, 'ADBE Position'), scale: keyed(tr, 'ADBE Scale'),
+                            rotation: keyed(tr, 'ADBE Rotate Z')}
+                });
+            }
+            return ok({
+                comp: { id: comp.id, name: comp.name, width: comp.width, height: comp.height,
+                        frameRate: comp.frameRate, duration: comp.duration, time: comp.time },
+                layers: out
+            });
+        } catch (e) { return fail(e); }
+    }
+
     return {
         readSession: readSession,
         pixelMapInfo: pixelMapInfo,
+        layersInfo: layersInfo,
         info: info,
         exportSelected: exportSelected,
         applyEnvelope: applyEnvelope,

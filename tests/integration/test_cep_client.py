@@ -203,6 +203,18 @@ class CepClientTest(ServerFixture):
         self.assertAlmostEqual(applied["apply"]["displayStartTime"], 1 / 24.0)
         self.assertIn(u"アニメーション範囲: 0〜95 → 1〜120", applied["message"])   # Japanese survives jsxCall
 
+    def test_panel_answers_the_layer_list(self):
+        # D-28: Maya's node editor asks for the active comp's layers.
+        p, events = self.driver("serve")
+        self.assertTrue(self.wait(lambda: any(x["app"] == "ae" for x in self.maya.peers)))
+        results = []
+        self.maya.request("layers.request", {}, results.append)
+        self.assertTrue(self.wait(lambda: results))
+        self.assertEqual(results[0]["kind"], "layers.result", results[0])
+        self.assertEqual([(x["name"], x["kind"]) for x in results[0]["data"]["layers"]],
+                         [("BG", "still"), ("CHAR_A", "sequence")])
+        self.assertEqual(results[0]["data"]["comp"]["name"], "Comp 1")
+
     def test_panel_requests_scene_settings_to_maya(self):
         p, events = self.driver("settings", "ae2maya")
         self.assertEqual(p.wait(30), 0, events)

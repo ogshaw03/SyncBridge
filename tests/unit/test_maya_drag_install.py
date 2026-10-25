@@ -38,6 +38,7 @@ class FakeMaya:
         qt = types.ModuleType("PySide2")
         qt.QtCore = types.SimpleNamespace(Qt=types.SimpleNamespace(Tool=0, WaitCursor=0))
         qt.QtWidgets = types.SimpleNamespace(QDialog=object)
+        qt.QtGui = types.SimpleNamespace()
         shiboken = types.ModuleType("shiboken2")
         shiboken.wrapInstance = lambda ptr, cls: None
         sys.modules.update({"maya": maya, "maya.cmds": cmds, "maya.mel": mel, "maya.utils": maya.utils,

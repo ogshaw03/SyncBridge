@@ -258,6 +258,11 @@ class SyncBridgePanel(QtWidgets.QDialog):
                                    u"隠して（Overscan 1.0）見てください。")
         pm_hint.setWordWrap(True)
         pm_remove_row = QtWidgets.QHBoxLayout()
+        self.pm_layer_map = QtWidgets.QPushButton(u"レイヤーマップ…")
+        self.pm_layer_map.setToolTip(u"AE のレイヤーと SyncBridge の Maya レイヤー（カメラと表示するオブジェクト）を、"
+                                     u"ノードをつなぐ形で対応付けます")
+        self.pm_layer_map.clicked.connect(self.open_layer_map)
+        pm_remove_row.addWidget(self.pm_layer_map)
         pm_remove_row.addStretch(1)
         pm_remove_row.addWidget(self.pm_change_method)
         pm_remove_row.addWidget(self.pm_rebase)
@@ -419,6 +424,10 @@ class SyncBridgePanel(QtWidgets.QDialog):
             self.pm_bg.setEnabled(self.pm_mode.currentData() == "absolute")
         except Exception as exc:
             self.write(u"選んだカメラか BG を使えません: %s" % exc)
+
+    def open_layer_map(self):
+        from . import layer_map_window
+        layer_map_window.show()
 
     def change_mapping_method(self):
         item = self.pm_list.currentItem()
@@ -659,6 +668,8 @@ class SyncBridgePanel(QtWidgets.QDialog):
                 self.write(u"Pixel Mapping はキャンセルしました（カメラは変えていません）。")
             else:
                 self.write(u"AE の BG の位置を設定できませんでした: %s" % payload.get("message"))
+            self.refresh_pixel_mapping()
+        elif event == "layer_map":                       # changed in the layer map window
             self.refresh_pixel_mapping()
         elif event == "time_sync_stats":
             self.write(u"同期の計測（Maya が受け取った分）: %s" % payload)

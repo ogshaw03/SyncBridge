@@ -1,0 +1,89 @@
+"""The layer map's node editor (D-28) with offscreen Qt: nodes, wires, drag to connect, Delete to
+disconnect. Skipped without PySide6 (requirements-monitor.txt)."""
+import os
+import sys
+import unittest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "maya_plugin", "scripts"))
+
+try:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtCore, QtTest, QtWidgets
+    HAVE_QT = True
+except ImportError:
+    HAVE_QT = False
+
+from syncbridge.core import layer_mapping as lm
+
+COMP = {"id": 12, "name": "c010", "width": 1920, "height": 1080, "frameRate": 24}
+AE = {"comp": COMP, "layers": [
+    {"id": 5, "index": 1, "name": "BG", "kind": "still", "width": 6000, "height": 4000},
+    {"id": 6, "index": 2, "name": "CAM", "kind": "camera"},
+    {"id": 7, "index": 3, "name": "CHAR", "kind": "sequence", "width": 1920, "height": 1080}]}
+
+
+@unittest.skipUnless(HAVE_QT, "needs PySide6 (requirements-monitor.txt)")
+class LayerMapViewTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def setUp(self):
+        from syncbridge_maya.layer_map_view import LayerMapEditor
+        self.store = lm.empty_store()
+        self.layer = lm.new_maya_layer("BG", "cam", "|BG_CAM|BG_CAMShape")
+        self.store["maya_layers"].append(self.layer)
+        self.editor = LayerMapEditor()
+        self.addCleanup(self.editor.deleteLater)
+        self.editor.resize(1000, 600)
+        self.editor.set_data(AE, self.store)
+        self.editor.show()
+        self.app.processEvents()
+
+    def nodes(self, kind):
+        from syncbridge_maya.layer_map_view import Node
+        return [n for n in self.editor.scene.items() if isinstance(n, Node) and n.kind == kind]
+
+    def wires(self):
+        return [i for i in self.editor.scene.items() if getattr(i, "mapping", None)]
+
+    def test_footage_layers_only_unless_asked(self):
+        self.assertEqual(sorted(n.title for n in self.nodes("ae")), ["1  BG", "3  CHAR"])
+        self.editor.all_check.setChecked(True)
+        self.assertEqual(len(self.nodes("ae")), 3)
+
+    def test_drag_from_the_port_connects(self):
+        got = []
+        self.editor.link_requested.connect(lambda ae, layer_id: got.append((ae, layer_id)))
+        src = [n for n in self.nodes("ae") if n.title.endswith("BG")][0]
+        view, vp = self.editor.view, self.editor.view.viewport()
+        start = view.mapFromScene(src.port_pos())
+        end = view.mapFromScene(self.nodes("maya")[0].mapToScene(QtCore.QPointF(100, 30)))
+        QtTest.QTest.mousePress(vp, QtCore.Qt.MouseButton.LeftButton, QtCore.Qt.KeyboardModifier.NoModifier, start)
+        for i in range(1, 6):
+            p = start + (end - start) * i / 5
+            QtTest.QTest.mouseMove(vp, QtCore.QPoint(int(p.x()), int(p.y())))
+        QtTest.QTest.mouseRelease(vp, QtCore.Qt.MouseButton.LeftButton, QtCore.Qt.KeyboardModifier.NoModifier, end)
+        self.assertEqual(len(got), 1)
+        self.assertEqual((got[0][0], got[0][1]), (lm.ae_from_layers_info(COMP, AE["layers"][0]), self.layer["id"]))
+
+    def test_wires_and_delete(self):
+        link = lm.connect(self.store, lm.ae_from_layers_info(COMP, AE["layers"][0]), self.layer["id"])
+        lm.connect(self.store, {"comp_id": 99, "comp": "c009", "layer_id": 1, "layer": "OLD"}, self.layer["id"],
+                   method="film_offset")
+        self.editor.set_data(None, self.store)          # None: keep the AE layers read before
+        self.assertEqual(len(self.wires()), 2)
+        missing = [n for n in self.nodes("ae") if n.dim]
+        self.assertEqual([n.title for n in missing], ["OLD"])       # not in the comp read from AE
+        self.assertIn(u"基準なし", [w for w in self.wires() if w.mapping is link][0].label)
+        gone = []
+        self.editor.unlink_requested.connect(gone.append)
+        [w for w in self.wires() if w.mapping is link][0].setSelected(True)
+        self.assertEqual(self.editor.inspector.currentIndex(), 3)
+        self.editor.view.setFocus()
+        QtTest.QTest.keyClick(self.editor.view, QtCore.Qt.Key.Key_Delete)
+        self.assertEqual(gone, [link["id"]])
+
+
+if __name__ == "__main__":
+    unittest.main()

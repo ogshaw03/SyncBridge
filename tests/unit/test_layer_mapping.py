@@ -71,6 +71,61 @@ class LayerMappingTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             lm.with_method(rel, "camera_move")
 
+    def test_schema1_store_gets_one_maya_layer_per_camera(self):
+        a = lm.new_mapping(AE, MAYA)
+        b = lm.new_mapping(dict(AE, layer_id=2, layer="BOOK"), MAYA)
+        c = lm.new_mapping(dict(AE, layer_id=3, layer="CHAR"), dict(MAYA, camera_uuid="CAM2", camera="|C|CAM2Shape"))
+        store = lm.load_store({"schema_version": 1, "mappings": [a, b, c]})
+        self.assertEqual(len(store["maya_layers"]), 2)
+        names = sorted(layer["name"] for layer in store["maya_layers"])
+        self.assertEqual(names, ["BG_CAM", "CAM2"])
+        self.assertEqual(store["mappings"][0]["maya_layer"], store["mappings"][1]["maya_layer"])
+        back = lm.load_store(lm.dump_store(store))
+        self.assertEqual(back["maya_layers"], store["maya_layers"])
+        self.assertEqual(lm.dump_store(store)["schema_version"], 2)
+
+    def test_maya_layers_and_wires(self):
+        store = lm.empty_store()
+        bg = lm.new_maya_layer("BG", "CAM-UUID", "|BG_CAM|BG_CAMShape")
+        book = lm.new_maya_layer("BOOK")                       # no camera yet
+        store["maya_layers"] += [bg, book]
+        link = lm.connect(store, AE, bg["id"], method="film_roll", mode="relative")
+        self.assertEqual((link["maya_layer"], link["maya"]["camera_uuid"]), (bg["id"], "CAM-UUID"))
+        with self.assertRaises(ValueError):                     # a Maya layer without a camera
+            lm.connect(store, dict(AE, layer_id=2), book["id"])
+        lm.set_layer_camera(store, book["id"], "CAM-B", "|BOOK_CAM|BOOK_CAMShape")
+        link["reference"] = {"matrix": [], "camera": {}}
+        moved = lm.connect(store, AE, book["id"])                # the same AE layer: the wire moves
+        self.assertIs(moved, link)
+        self.assertEqual((len(store["mappings"]), link["maya_layer"], link["reference"]), (1, book["id"], None))
+        link["reference"] = {"matrix": [], "camera": {}}
+        lm.set_layer_camera(store, book["id"], "CAM-C", "|C|CShape")      # camera changed: reference dropped
+        self.assertEqual((link["maya"]["camera_uuid"], link["reference"]), ("CAM-C", None))
+        self.assertEqual(lm.links_of(store, book["id"]), [link])
+        self.assertEqual(lm.remove_maya_layer(store, book["id"]), 1)
+        self.assertEqual((store["mappings"], [layer["id"] for layer in store["maya_layers"]]), ([], [bg["id"]]))
+
+    def test_layer_for_camera(self):
+        store = lm.empty_store()
+        first = lm.layer_for_camera(store, "CAM-UUID", "|BG_CAM|BG_CAMShape")
+        self.assertIs(lm.layer_for_camera(store, "CAM-UUID"), first)
+        self.assertEqual((first["name"], len(store["maya_layers"])), ("BG_CAM", 1))
+
+    def test_layers_info_and_mode(self):
+        comp = {"id": 12, "name": "c010"}
+        layer = {"id": 345, "name": "BG", "source": "bg.png", "width": 6000, "height": 4000, "kind": "still"}
+        self.assertEqual(lm.ae_from_layers_info(comp, layer), AE)
+        rel = lm.with_reference(lm.new_mapping(AE, dict(MAYA, bg_uuid=None, bg=None), mode="relative"),
+                                [[1, 0, 0], [0, 1, 0], [0, 0, 1]], {}, 0.0)
+        with self.assertRaises(ValueError):                 # absolute needs a BG
+            lm.with_mode(rel, "absolute")
+        absolute = lm.with_mode(rel, "absolute", {"uuid": "BG-2", "name": "|plane2"})
+        self.assertEqual((absolute["mode"], absolute["maya"]["bg_uuid"], absolute["reference"]),
+                         ("absolute", "BG-2", None))
+        self.assertEqual(lm.with_mode(absolute, "relative")["maya"]["bg_uuid"], "BG-2")   # the BG is kept
+        with self.assertRaises(ValueError):
+            lm.with_mode(rel, "sideways")
+
     def test_describe_and_export(self):
         self.assertEqual(lm.describe(lm.new_mapping(AE, MAYA, name="BG Slide")),
                          u"BG Slide: AE c010 / BG → BG_CAMShape（絶対・Film Offset）")

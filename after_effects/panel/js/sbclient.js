@@ -352,6 +352,15 @@
         });
     };
 
+    // layer map (D-28): Maya asks for the active comp's layers
+    SBPanelClient.prototype._layersExport = function (request) {
+        var self = this;
+        this.host.call('layersInfo', [], function (result) {
+            if (result.error) { self._hostError(request, result); return; }
+            self._send(message('layers.export.result', { comp: result.comp, layers: result.layers }, request.event_id));
+        });
+    };
+
     SBPanelClient.prototype._settingsExport = function (request) {
         var self = this;
         this.host.call('sceneSettings', [], function (result) {
@@ -408,6 +417,9 @@
             break;
         case 'settings.export.request':
             this._settingsExport(msg);
+            break;
+        case 'layers.export.request':
+            this._layersExport(msg);
             break;
         case 'settings.apply.request':
             this._settingsApply(msg);

@@ -124,6 +124,8 @@ mapping: --mode editable|precision --tol 0.1 --origin F --maya-in-origin F --may
 | `settings.export.request` / `settings.export.result` | サーバー ⇔ アプリ | `{}` / `{settings}`（Maya: `scene_settings.read()`、AE: `SBCep.sceneSettings()`） |
 | `settings.apply.request` / `settings.apply.result` | サーバー ⇔ 転送先 | `{plan: core.scene_sync の計画, message: 確認の文（日本語）}` / `{status, after?, backup?}` |
 | `settings.result` | サーバー → 要求元 | `status`（applied / unchanged / cancelled）, `direction`, `changes: [{item, label, before, after}]`, `warnings`, `readback: {passed, problems}`, `source`, `target`, `message` |
+| `layers.request` / `layers.result` | Maya → サーバー → Maya | `{}` / `{comp, layers, source, target}`。AE のアクティブなコンプのレイヤー一覧（レイヤーマップ、D-28）。履歴に残さない |
+| `layers.export.request` / `layers.export.result` | サーバー ⇔ AE | `{}` / `SBCep.layersInfo()`: `comp: {id, name, width, height, frameRate, duration, time}`, `layers: [{id, index, name, kind（still / sequence / movie / comp / solid / null / camera / light / text / shape / other）, enabled, source, source_id, width, height, inPoint, outPoint, threeD, parent, keyed: {position, scale, rotation}}]` |
 | `time.sync` | クライアント → サーバー（応答なし） | `enabled`, `follow_playback`。全員で共有する 1 つのスイッチ。D-22 |
 | `time.sync.state` | サーバー → 全員 | `enabled`, `follow_playback`, `by`（切り替えた client_id）。接続した直後にも送る |
 | `time.update` / `time.set` | アプリ → サーバー / サーバー → もう片方のアプリ（応答なし） | `t`（AE のコンプ時間、秒）/ `t`, `source`（maya / ae）。同期がオフなら中継しない |

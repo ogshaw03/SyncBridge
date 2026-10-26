@@ -125,6 +125,18 @@ class LayerMappingTest(unittest.TestCase):
         legacy = lm.new_maya_layer("OLD", "CAM-UUID", "|BG_CAM|BG_CAMShape")
         self.assertEqual(lm.driven_camera(legacy), {"camera_uuid": "CAM-UUID", "camera": "|BG_CAM|BG_CAMShape"})
 
+    def test_view_camera_does_not_follow_visibility(self):
+        # the viewer's camera (and its comp frame) stays when the top layer is hidden (the user, 2026-10-26)
+        store = lm.empty_store()
+        none = lm.new_maya_layer("FX")
+        char = lm.new_maya_layer("CHAR", "SHOT", "|SHOT", [{"uuid": "c1", "name": "|char"}], "SB-CHAR", "|SB_CHAR")
+        bg = lm.new_maya_layer("BG", "PLATE", "|PLATE", [{"uuid": "t1", "name": "|town"}], "SB-BG", "|SB_BG")
+        store["maya_layers"] += [none, char, bg]
+        self.assertEqual(lm.view_camera_uuid(store), "SHOT")
+        char["visible"] = False
+        self.assertEqual(lm.view_camera_uuid(store), "SHOT")
+        self.assertIsNone(lm.view_camera_uuid(lm.empty_store()))
+
     def test_stack_order(self):
         # D-32: the first layer in the layer map is on top (drawn last); no camera / no objects -> left out
         store = lm.empty_store()
@@ -180,6 +192,82 @@ class LayerMappingTest(unittest.TestCase):
                                                                  "effects": ["Curves"]}})
         self.assertEqual(transform["position"], [1, 2])
         self.assertEqual(len(warnings), 1)
+
+
+class AeOnTheMapTest(unittest.TestCase):
+    """D-40: the layer map shows the AE layers put on it (from the selection in AE) and the linked ones."""
+
+    MAIN = {"id": 12, "name": "c010"}
+    PRE = [{"comp_id": 12, "comp": "c010", "layer_id": 9, "layer": "SC_PRE"}]
+
+    def info(self):
+        # layersInfo() of the main comp while the precomp SC_PRE (used twice) is open with BG selected
+        bg = {"id": 345, "name": "BG", "comp_id": 40, "comp": "SC", "kind": "still", "selected": True}
+        return {"comp": dict(self.MAIN), "active": {"id": 40, "name": "SC"}, "layers": [
+            {"id": 9, "name": "SC_PRE", "comp_id": 12, "comp": "c010", "kind": "comp", "via": [], "selected": False},
+            dict(bg, via=self.PRE),
+            {"id": 10, "name": "SC_PRE2", "comp_id": 12, "comp": "c010", "kind": "comp", "via": [], "selected": False},
+            dict(bg, via=[dict(self.PRE[0], layer_id=10, layer="SC_PRE2")]),
+            {"id": 7, "name": "CHAR", "comp_id": 12, "comp": "c010", "kind": "sequence", "via": [], "selected": False}]}
+
+    def test_the_selection_keeps_its_path_from_the_main_comp(self):
+        aes = lm.selected_in_ae(self.info())
+        self.assertEqual([(a["layer"], [v["layer"] for v in a["via"]]) for a in aes],
+                         [("BG", ["SC_PRE"]), ("BG", ["SC_PRE2"])])      # one per path
+        store = lm.empty_store()
+        self.assertEqual(lm.show_ae(store, aes), 2)
+        self.assertEqual(lm.show_ae(store, aes), 0)                      # already on the map
+        self.assertEqual(lm.main_comp(store), self.MAIN)                 # the top comp, not the precomp
+
+    def test_take_off_and_linked_ones(self):
+        store = lm.empty_store()
+        layer = lm.new_maya_layer("BG", "CAM", "|CAM|CAMShape")
+        store["maya_layers"].append(layer)
+        bg, char = lm.selected_in_ae(self.info())[0], dict(AE, layer_id=7, layer="CHAR")
+        lm.show_ae(store, [char])
+        lm.connect(store, bg, layer["id"])                               # a link puts it on the map too
+        self.assertEqual(lm.shown_keys(store), {lm.ae_key(bg), lm.ae_key(char)})
+        with self.assertRaises(ValueError):
+            lm.hide_ae(store, lm.ae_key(bg))                             # disconnect first
+        lm.hide_ae(store, lm.ae_key(char))
+        lm.disconnect(store, store["mappings"][0]["id"])
+        self.assertEqual(lm.shown_keys(store), {lm.ae_key(bg)})          # stays after disconnecting
+        back = lm.load_store(lm.dump_store(store))
+        self.assertEqual(lm.shown_keys(back), {lm.ae_key(bg)})
+        self.assertEqual(lm.load_store({"schema_version": 2, "maya_layers": [], "mappings": []})["ae_shown"], [])
+
+    def test_no_main_comp_yet(self):
+        self.assertIsNone(lm.main_comp(lm.empty_store()))
+
+    def test_links_recorded_in_a_precomp_get_their_path(self):
+        # the user, 2026-10-26: CHA and BG linked while "コンポ 1" (a precomp moved for the camera PAN in
+        # the outer comp) was open -> the PAN was missing. The outer comp is made the main comp.
+        store = lm.empty_store()
+        layer = lm.new_maya_layer("BG", "CAM", "|CAM|CAMShape")
+        store["maya_layers"].append(layer)
+        inner = {"id": 1, "name": u"コンポ 1"}
+        bg = lm.ae_from_layers_info(inner, {"id": 5, "name": "BG"})
+        cha = lm.ae_from_layers_info(inner, {"id": 6, "name": "CHA"})
+        lm.connect(store, bg, layer["id"], mode="source")
+        lm.connect(store, cha, layer["id"], mode="relative")["reference"] = {"matrix": [], "comp_time": 0}
+        self.assertEqual(lm.main_comp(store), inner)                    # guessed from the links
+        outer = {"id": 30, "name": "MAIN"}
+        lm.set_main_comp(store, outer)
+        self.assertTrue(lm.outside_main(store, bg))
+        via = [{"comp_id": 30, "comp": "MAIN", "layer_id": 2, "layer": u"コンポ 1"}]
+        info = {"comp": dict(outer), "layers": [
+            {"id": 2, "name": u"コンポ 1", "comp_id": 30, "comp": "MAIN", "kind": "comp", "via": []},
+            {"id": 5, "name": "BG", "comp_id": 1, "comp": u"コンポ 1", "kind": "still", "via": via},
+            {"id": 6, "name": "CHA", "comp_id": 1, "comp": u"コンポ 1", "kind": "sequence", "via": via}]}
+        found = lm.reroutes(store, info)
+        self.assertEqual(([f[1]["layer"] for f in found["fix"]], found["many"], found["missing"]), (["BG", "CHA"], [], []))
+        self.assertEqual(lm.reroute(store, found["fix"]), 2)
+        self.assertEqual([[v["layer"] for v in m["ae"]["via"]] for m in store["mappings"]], [[u"コンポ 1"]] * 2)
+        self.assertFalse(any(lm.outside_main(store, m["ae"]) for m in store["mappings"]))
+        self.assertIsNone(store["mappings"][1]["reference"])             # relative: record it again
+        self.assertEqual(lm.shown_keys(store), set(lm.ae_key(m["ae"]) for m in store["mappings"]))
+        self.assertEqual(lm.reroutes(store, info)["fix"], [])
+        self.assertEqual(lm.load_store(lm.dump_store(store))["main_comp"], outer)
 
 
 if __name__ == "__main__":

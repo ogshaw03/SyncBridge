@@ -86,6 +86,18 @@ class LayersFlowTest(ServerFixture):
         self.assertEqual(reply["data"]["target"]["client_id"], ae.client_id)
         self.assertEqual(self.app.state.hub.history.recent(5), [])
 
+    def test_the_main_comp_reaches_ae(self):
+        # D-40: the layer map's main comp is listed even while a precomp inside it is open in AE
+        asked = []
+        self.connect("ae", {"layers.export.request": lambda msg: (asked.append(msg["data"]), dict(LAYERS))[1]})
+        maya = self.connect("maya")
+        q = queue.Queue()
+        maya.request("layers.request", {"main_comp_id": 12, "main_comp": "c010"}, q.put)
+        self.assertEqual(q.get(timeout=10)["kind"], "layers.result")
+        maya.request("layers.request", {}, q.put)
+        self.assertEqual(q.get(timeout=10)["kind"], "layers.result")
+        self.assertEqual(asked, [{"main_comp_id": 12, "main_comp": "c010"}, {}])
+
     def test_without_ae(self):
         maya = self.connect("maya")
         q = queue.Queue()

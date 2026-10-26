@@ -337,12 +337,14 @@ def send_settings(direction: str, items: List[str], origin: float, callback=None
                                                 "options": {"origin": origin}}, done)
 
 
-def request_ae_layers(callback) -> str:
-    """The active AE comp's layers for the layer map (D-28): callback(reply) gets layers.result
-    {comp, layers} or an error, on Maya's main thread."""
+def request_ae_layers(callback, main: Optional[dict] = None) -> str:
+    """AE layers for the layer map (D-28): the active comp's, or with main = {id, name} that comp's
+    (D-40: a precomp inside it may be open in AE). callback(reply) gets layers.result {comp, active,
+    layers} or an error, on Maya's main thread."""
     if not is_connected():
         raise ConnectError("not connected to the SyncBridge server")
-    return _client.request("layers.request", {}, callback)
+    data = {"main_comp_id": main.get("id"), "main_comp": main.get("name")} if main else {}
+    return _client.request("layers.request", data, callback)
 
 
 def request_ae_motion(query: dict, callback) -> str:

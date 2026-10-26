@@ -4,7 +4,9 @@ The store kept in the Maya scene (syncbridge_maya.layer_mapping), so it travels 
 
     {"schema_version": 2,
      "maya_layers": [ Maya layer, ... ],      SyncBridge's own layers (not Maya display / render layers)
-     "mappings":    [ link, ... ]}            an AE layer connected to a Maya layer (the node editor's wire)
+     "mappings":    [ link, ... ],            an AE layer connected to a Maya layer (the node editor's wire)
+     "ae_shown":    [ ae, ... ],              AE layers put on the map (D-40; `ae` of a link without the source size)
+     "main_comp":   {"id": 12, "name": "c010"} or None}   the comp the map is built on (D-40)
 
 A Maya layer (D-28) holds the camera it uses and the objects it shows (recorded and selectable; showing
 only them is a later phase):
@@ -79,7 +81,7 @@ def driven_camera(layer: dict) -> dict:
 
 
 def empty_store() -> dict:
-    return {"maya_layers": [], "mappings": []}
+    return {"maya_layers": [], "mappings": [], "ae_shown": [], "main_comp": None}
 
 
 def maya_layer(store: dict, layer_id: Optional[str]) -> Optional[dict]:
@@ -134,6 +136,17 @@ def stack(store: dict) -> List[dict]:
     return out
 
 
+def view_camera_uuid(store: dict) -> Optional[str]:
+    """The camera the viewer looks through (its comp frame, D-33): the original camera of the top layer
+    that has one, shown or hidden, so hiding a layer does not switch the view's camera (the frame was
+    lost when the top layer was hidden, the user, 2026-10-26)."""
+    for layer in store["maya_layers"]:
+        uuid = layer.get("camera_uuid") or driven_camera(layer)["camera_uuid"]
+        if uuid:
+            return uuid
+    return None
+
+
 def reorder_layers(store: dict, layer_ids: List[str]) -> None:
     """Put the Maya layers in this order (top / front first, the stacking order, D-33); layers not named
     keep their place after the named ones."""
@@ -182,6 +195,7 @@ def connect(store: dict, ae: dict, layer_id: str, method: str = "pan_zoom", mode
     link = new_mapping(ae, maya, method, name, mode)
     link["maya_layer"] = layer_id
     store["mappings"].append(link)
+    show_ae(store, [ae])                  # stays on the map when it is disconnected (D-40)
     return link
 
 
@@ -197,7 +211,9 @@ def load_store(data) -> dict:
         raise ValueError(u"新しい SyncBridge で保存された対応付けです（schema_version %s）。SyncBridge を更新してください。"
                          % data.get("schema_version"))
     store = {"maya_layers": [dict(layer) for layer in data.get("maya_layers") or []],
-             "mappings": [dict(m) for m in data.get("mappings") or []]}
+             "mappings": [dict(m) for m in data.get("mappings") or []],
+             "ae_shown": [dict(a) for a in data.get("ae_shown") or []],
+             "main_comp": dict(data["main_comp"]) if data.get("main_comp") else None}
     for m in store["mappings"]:
         if not m.get("maya_layer") or maya_layer(store, m["maya_layer"]) is None:
             cam = (m.get("maya") or {})
@@ -207,7 +223,8 @@ def load_store(data) -> dict:
 
 def dump_store(store: dict) -> Dict[str, object]:
     return {"schema_version": SCHEMA_VERSION, "maya_layers": list(store["maya_layers"]),
-            "mappings": list(store["mappings"])}
+            "mappings": list(store["mappings"]), "ae_shown": list(store.get("ae_shown") or []),
+            "main_comp": store.get("main_comp")}
 
 
 # -- links --------------------------------------------------------------------------------------------
@@ -348,6 +365,127 @@ def describe(mapping: dict) -> str:
         mapping.get("name", ""), mapping["ae"].get("comp") or "?", mapping["ae"].get("layer") or "?", cam,
         MODE_LABELS[mode], labels.get(mapping["method"], mapping["method"]), extra,
         "" if mapping.get("enabled", True) else u"［無効］")
+
+
+# -- the AE layers on the layer map (D-40) --------------------------------------------------------------
+# A comp has many layers unrelated to the BG / character slides: the map shows only the AE layers the
+# user put on it ("ae_shown", from the selection in AE) and the linked ones.
+def ae_key(ae: dict) -> tuple:
+    """What identifies an AE layer (like `matches`): ids when known, else names, and the precomp layers
+    above it (D-37)."""
+    if ae.get("layer_id") is not None:
+        return ("id", ae.get("comp_id"), ae.get("layer_id"), via_key(ae))
+    return ("name", ae.get("comp"), ae.get("layer"), via_key(ae))
+
+
+def shown_keys(store: dict) -> set:
+    """The AE layers on the map: the ones put on it and the linked ones."""
+    return set(ae_key(a) for a in store.get("ae_shown") or []) | set(ae_key(m["ae"]) for m in store["mappings"])
+
+
+def show_ae(store: dict, aes: List[dict]) -> int:
+    """Put AE layers (`ae` dicts, ae_from_layers_info) on the map; returns how many were not on it."""
+    shown = store.setdefault("ae_shown", [])
+    have = set(ae_key(a) for a in shown)
+    added = 0
+    for ae in aes:
+        key = ae_key(ae)
+        if key not in have:
+            shown.append({k: ae.get(k) for k in ("comp_id", "comp", "layer_id", "layer", "source", "via")})
+            have.add(key)
+            added += 1
+    return added
+
+
+def hide_ae(store: dict, key: tuple) -> None:
+    """Take an AE layer off the map; a linked one stays (disconnect it first)."""
+    for m in store["mappings"]:
+        if ae_key(m["ae"]) == key:
+            raise ValueError(u"つながっている AE のレイヤーはマップから外せません。先に接続を外してください。")
+    store["ae_shown"] = [a for a in store.get("ae_shown") or [] if ae_key(a) != key]
+
+
+def top_comp(ae: dict) -> dict:
+    """{id, name} of the outermost comp of an AE layer's path."""
+    top = (ae.get("via") or [ae])[0]
+    return {"id": top.get("comp_id"), "name": top.get("comp")}
+
+
+def same_comp(a: Optional[dict], b: Optional[dict]) -> bool:
+    if not a or not b:
+        return False
+    if a.get("id") is not None and b.get("id") is not None:
+        return a["id"] == b["id"]
+    return a.get("name") == b.get("name")
+
+
+def main_comp(store: dict) -> Optional[dict]:
+    """{id, name} of the comp the map is built on: the one the user made the main comp ("AE のレイヤーを
+    読み込む" with it open in AE), else the top comp of its AE layers (maps made before it was recorded)."""
+    if store.get("main_comp"):
+        return dict(store["main_comp"])
+    for ae in [m["ae"] for m in store["mappings"]] + list(store.get("ae_shown") or []):
+        top = top_comp(ae)
+        if top["id"] is not None or top["name"]:
+            return top
+    return None
+
+
+def set_main_comp(store: dict, comp: dict) -> None:
+    store["main_comp"] = {"id": comp.get("id"), "name": comp.get("name")}
+
+
+def outside_main(store: dict, ae: dict) -> bool:
+    """Is this AE layer recorded from another comp than the main one? Then the main comp's motion above it
+    (a precomp moved for the camera work) is not in its transfers (the user, 2026-10-26)."""
+    main = main_comp(store)
+    return main is not None and not same_comp(top_comp(ae), main)
+
+
+def reroutes(store: dict, info: dict) -> dict:
+    """The AE layers recorded outside the main comp that the main comp's layersInfo() finds inside it:
+    {"fix": [(old key, new ae)], "many": [ae with several paths], "missing": [ae not found]}."""
+    comp = info.get("comp") or {}
+    paths: Dict[tuple, List[dict]] = {}
+    for layer in info.get("layers") or []:
+        ae = ae_from_layers_info(comp, layer)
+        paths.setdefault((ae.get("comp_id"), ae.get("layer_id")), []).append(ae)
+    out = {"fix": [], "many": [], "missing": []}
+    seen = set()
+    for ae in [m["ae"] for m in store["mappings"]] + list(store.get("ae_shown") or []):
+        key = ae_key(ae)
+        if key in seen or not outside_main(store, ae):
+            continue
+        seen.add(key)
+        found = paths.get((ae.get("comp_id"), ae.get("layer_id")), [])
+        if len(found) == 1:
+            out["fix"].append((key, found[0]))
+        else:
+            out["many" if found else "missing"].append(ae)
+    return out
+
+
+def reroute(store: dict, fixes: List[tuple]) -> int:
+    """Give these AE layers their path from the main comp (reroutes()["fix"]). A relative link's reference
+    was taken without the comps above: it is dropped (record it again). Returns how many links changed."""
+    changed = 0
+    for old, new in fixes:
+        for m in store["mappings"]:
+            if ae_key(m["ae"]) == old:
+                m["ae"] = dict(m["ae"], comp_id=new.get("comp_id"), comp=new.get("comp"), via=list(new["via"]))
+                if mode_of(m) == "relative":
+                    m["reference"] = None
+                changed += 1
+        store["ae_shown"] = [dict(a, comp_id=new.get("comp_id"), comp=new.get("comp"), via=list(new["via"]))
+                             if ae_key(a) == old else a for a in store.get("ae_shown") or []]
+    return changed
+
+
+def selected_in_ae(info: dict) -> List[dict]:
+    """The `ae` of each layer selected in the comp open in AE, from layersInfo() of the main comp (D-40):
+    a layer inside a precomp comes with its path from the main comp (one per path)."""
+    comp = info.get("comp") or {}
+    return [ae_from_layers_info(comp, layer) for layer in info.get("layers") or [] if layer.get("selected")]
 
 
 def ae_from_layers_info(comp: dict, layer: dict) -> dict:

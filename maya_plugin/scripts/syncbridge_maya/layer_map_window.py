@@ -22,7 +22,7 @@ except ImportError:
 
 from syncbridge.core import layer_mapping as core_lm
 
-from . import layer_mapping, motion_transfer, service
+from . import layer_map_view, layer_mapping, motion_transfer, service
 from .layer_map_view import LayerMapEditor
 
 WINDOW_NAME = "SyncBridgeLayerMap"
@@ -60,6 +60,9 @@ class LayerMapWindow(QtWidgets.QWidget):
         e.set_new_mode(layer_mapping.defaults()["mode"])
         e.new_mode_changed.connect(lambda mode: layer_mapping.set_defaults(mode=mode))
         e.reload_requested.connect(self.load_ae_layers)
+        e.add_selection_requested.connect(self.add_ae_selection)
+        e.hide_ae_requested.connect(lambda key: self._do(
+            lambda: layer_mapping.hide_ae_layer(key), u"AE のレイヤーをマップから外しました（Ctrl+Z で戻せます）。"))
         e.add_layer_requested.connect(lambda: self._do(
             lambda: layer_mapping.add_layer(),
             lambda result: _with_warnings(u"Maya レイヤー「%s」を追加しました%s。" % (
@@ -146,25 +149,153 @@ class LayerMapWindow(QtWidgets.QWidget):
         except Exception as exc:  # the view is a convenience: never break the window
             print("SyncBridge: layer stack: %s" % exc)
 
-    def load_ae_layers(self):
+    def _main_comp(self) -> Optional[dict]:
+        """The comp the map is built on (D-40): the scene's main comp, else the comp read last; None = the
+        comp open in AE."""
+        main = core_lm.main_comp(layer_mapping.store())
+        if main is None and _last_ae is not None:
+            main = {"id": _last_ae["comp"].get("id"), "name": _last_ae["comp"].get("name")}
+        return main
+
+    def _read_ae(self, done, main=True):
+        """Ask AE for the main comp's layers (main=False: the comp open in AE; a {id, name}: that comp);
+        done(info) with {comp, active, layers} (kept as _last_ae)."""
         if not service.is_connected():
             self.say(u"SyncBridge のサーバーに接続していません。SyncBridge のパネルで Connect を押してください。", error=True)
             return
-        self.say(u"AE のレイヤーを読み込んでいます…")
 
-        def done(reply):
+        asked = main if isinstance(main, dict) else self._main_comp() if main else None
+
+        def reply_to(reply):
             global _last_ae
             if reply["kind"] == "error":
                 self.say(reply["data"].get("message") or u"AE のレイヤーを読み込めませんでした。", error=True)
                 return
-            _last_ae = {"comp": reply["data"]["comp"], "layers": reply["data"]["layers"]}
-            self.say(u"AE のコンプ「%s」のレイヤーを %d 個読み込みました。" % (
-                _last_ae["comp"].get("name"), len(_last_ae["layers"])))
-            self.refresh()
+            data = reply["data"]
+            if asked is not None and not core_lm.same_comp(asked, data.get("comp")):
+                # an old hub or AE panel drops the main comp and answers the comp open in AE (the user,
+                # 2026-10-26: the main comp turned into the precomp opened to select the BG)
+                self.say(u"AE からメインのコンポ「%s」ではなく「%s」が返りました。ハブか AE のパネルが古い版です。"
+                         u"モニターでハブを止め、AE を再起動してから Connect し直してください（何も変えていません）。"
+                         % (asked.get("name"), (data.get("comp") or {}).get("name")), error=True)
+                return
+            _last_ae = {"comp": data["comp"], "layers": data["layers"]}
+            done(dict(data))
         try:
-            service.request_ae_layers(done)
+            service.request_ae_layers(reply_to, asked)
         except Exception as exc:
             self.say(u"AE のレイヤーを読み込めませんでした: %s" % exc, error=True)
+
+    def load_ae_layers(self):
+        """The comp open in AE becomes the main comp (D-40): open the outermost comp, the one with the camera
+        work, and press this. Links recorded from a comp inside it are offered their path from it."""
+        self.say(u"AE のレイヤーを読み込んでいます…")
+
+        def done(info):
+            comp = info["comp"]
+            outer = self._ask_outer(comp)
+            if outer is not None:                      # read the outer comp instead (and ask again above it)
+                self.say(u"AE のコンプ「%s」を読み込んでいます…" % outer.get("name"))
+                self._read_ae(done, main=outer)
+                return
+            text = u"AE のコンプ「%s」をメインのコンポにして、レイヤーを %d 個読み込みました。" % (
+                comp.get("name"), len(info["layers"]))
+            try:
+                current = layer_mapping.store().get("main_comp")
+                if not core_lm.same_comp(current, comp):
+                    layer_mapping.set_main_comp(comp)
+                text += self._offer_reroute(info)
+            except Exception as exc:
+                self.say(u"メインのコンポを記録できませんでした: %s" % exc, error=True)
+                self.refresh()
+                return
+            self.say(text)
+            service.announce("layer_map")
+            self.refresh()
+        self._read_ae(done, main=False)
+
+    def _ask_outer(self, comp: dict) -> Optional[dict]:
+        """The comp read as the main comp is a precomp of other comps (H-AE-33): offer them. AE may take
+        another comp than the one the user meant as the open one (the user, 2026-10-26: the precomp was read
+        while "camera" was chosen, and the camera PAN was lost). None = keep this comp."""
+        outers = comp.get("usedIn") or []
+        if not outers:
+            return None
+        keep = u"「%s」のまま（メインにする）" % comp.get("name")
+        items = [u"「%s」" % o.get("name") for o in outers] + [keep]
+        text = (u"読み込んだコンポ「%s」は、ほかのコンポの中でプリコンポとして使われています。\n"
+                u"カメラワーク（PAN）は外側のコンポに付いていることが多いので、いちばん外のコンポをメインにしてください。\n"
+                u"どれをメインのコンポにしますか？" % comp.get("name"))
+        name, ok = QtWidgets.QInputDialog.getItem(self, "SyncBridge", text, items, 0, False)
+        if not ok or name == keep:
+            return None
+        return outers[items.index(name)]
+
+    def _offer_reroute(self, info) -> str:
+        """Ask to give the links recorded from a comp inside the main comp their path from it."""
+        found = core_lm.reroutes(layer_mapping.store(), info)
+        text = u""
+        if found["fix"]:
+            names = u"、".join(layer_map_view.ae_title(new) for _, new in found["fix"])
+            answer = QtWidgets.QMessageBox.question(
+                self, "SyncBridge",
+                u"%d 個の AE のレイヤーが、メインのコンポ「%s」の中のコンポを基準に記録されています。\n"
+                u"このままだと、メインのコンポでの動き（プリコンポを動かしたカメラワークなど）が転送に入りません。\n\n"
+                u"メインのコンポからの経路に直しますか？\n%s\n\n"
+                u"（相対モードの接続は基準を記録し直す必要があります。Ctrl+Z で戻せます）"
+                % (len(found["fix"]), info["comp"].get("name"), names))
+            if answer == QtWidgets.QMessageBox.StandardButton.Yes:
+                n = layer_mapping.reroute_ae_layers(found["fix"])
+                text += u"\n%d 個をメインのコンポからの経路に直しました（接続 %d 本）: %s" % (len(found["fix"]), n, names)
+        rest = found["many"] + found["missing"]
+        if rest:
+            text += (u"\n⚠ メインのコンポの外で記録されたままのものがあります（%s）。外側の動きは転送に入りません。"
+                     u"つなぎ直してください。" % u"、".join(layer_map_view.ae_title(a) for a in rest))
+        return text
+
+    def add_ae_selection(self):
+        """Put the layers selected in AE on the map (D-40), with their path from the main comp."""
+        self.say(u"AE で選んでいるレイヤーを読み込んでいます…")
+
+        def done(info):
+            main, active = info["comp"], info.get("active")
+            aes = core_lm.selected_in_ae(info)
+            if not aes:
+                inside = active is not None and any(layer.get("comp_id") == active.get("id")
+                                                    for layer in info["layers"])
+                if active is None:
+                    text = u"AE でコンポを開き、レイヤーを選んでから押してください。"
+                elif active.get("id") != main.get("id") and not inside:
+                    text = (u"AE で開いているコンポ「%s」は、このマップのメインのコンポ「%s」の中にありません"
+                            u"（4 段以上深いプリコンポも探しません）。メインのコンポの中のプリコンポを開いて選んでください。"
+                            % (active.get("name"), main.get("name")))
+                else:
+                    text = u"AE のコンポ「%s」でレイヤーが選ばれていません。BG やキャラのレイヤーを選んでから押してください。" \
+                        % active.get("name")
+                self.say(text, error=True)
+                self.refresh()
+                return
+            try:
+                added = layer_mapping.show_ae_layers(aes)
+            except Exception as exc:
+                self.say(u"マップに追加できませんでした: %s" % exc, error=True)
+                return
+            names = [layer_map_view.ae_title(a) for a in aes]
+            text = u"%d 個をマップに追加しました（メインのコンポ「%s」）: %s" % (added, main.get("name"), u"、".join(names))
+            if added < len(aes):
+                text += u"（%d 個はすでにマップにあります）" % (len(aes) - added)
+            same = len(set((a.get("comp_id"), a.get("layer_id")) for a in aes))
+            if same < len(aes):
+                text += (u"\n同じプリコンポがメインのコンポの中で複数の場所に使われているので、経路ごとに追加しました。"
+                         u"不要なものは選んで「マップから外す」で外してください。")
+            if main.get("usedIn"):
+                text += (u"\n⚠ メインのコンポ「%s」は「%s」の中のプリコンポです。外側のコンポでの動き（PAN）は転送に入りません。"
+                         u"外側のコンポを開いて「AE のレイヤーを読み込む」を押すと、メインを変えて経路を直せます。"
+                         % (main.get("name"), u"」「".join(o.get("name") for o in main["usedIn"])))
+            self.say(text + u"（Ctrl+Z で戻せます）", error=bool(main.get("usedIn")))
+            service.announce("layer_map")
+            self.refresh()
+        self._read_ae(done)
 
     def record_reference(self, mapping_id: str):
         """The reference from AE at Maya's current frame (D-37): any relative link, and the way for a layer

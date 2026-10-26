@@ -367,12 +367,13 @@
         });
     };
 
-    // layer map (D-28): Maya asks for the active comp's layers
+    // layer map (D-28): Maya asks for the layers of the active comp, or of its main comp (D-40)
     SBPanelClient.prototype._layersExport = function (request) {
         var self = this;
-        this.host.call('layersInfo', [], function (result) {
+        this.host.call('layersInfo', [JSON.stringify(request.data || {})], function (result) {
             if (result.error) { self._hostError(request, result); return; }
-            self._send(message('layers.export.result', { comp: result.comp, layers: result.layers }, request.event_id));
+            self._send(message('layers.export.result',
+                { comp: result.comp, active: result.active, layers: result.layers }, request.event_id));
         });
     };
 

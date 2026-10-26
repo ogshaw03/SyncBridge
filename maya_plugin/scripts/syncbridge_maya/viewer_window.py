@@ -136,14 +136,8 @@ class ViewerWindow(QtWidgets.QWidget):
                          grid=False)
 
     def _look_through(self, store: dict) -> Optional[str]:
-        """The original camera of the top drawn layer (the gate and the HUD follow it)."""
-        stack = core_lm.stack(store)
-        for item in reversed(stack):
-            layer = core_lm.maya_layer(store, item["id"])
-            camera = layer_mapping.node_by_uuid(layer.get("camera_uuid")) if layer else None
-            if camera:
-                return camera
-        return None
+        """The original camera of the top layer, shown or hidden (the frame and the HUD follow it)."""
+        return layer_stack.view_camera(store)
 
     # -- data ----------------------------------------------------------------------------------------------
     def refresh(self, *_args):

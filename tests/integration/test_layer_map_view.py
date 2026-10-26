@@ -33,6 +33,9 @@ class LayerMapViewTest(unittest.TestCase):
         self.store = lm.empty_store()
         self.layer = lm.new_maya_layer("BG", "cam", "|BG_CAM|BG_CAMShape")
         self.store["maya_layers"].append(self.layer)
+        # D-40: only the AE layers put on the map are shown (BG and CHAR here, not CAM)
+        lm.show_ae(self.store, [lm.ae_from_layers_info(COMP, AE["layers"][0]),
+                                lm.ae_from_layers_info(COMP, AE["layers"][2])])
         self.editor = LayerMapEditor()
         self.addCleanup(self.editor.deleteLater)
         self.editor.resize(1000, 600)
@@ -47,10 +50,40 @@ class LayerMapViewTest(unittest.TestCase):
     def wires(self):
         return [i for i in self.editor.scene.items() if getattr(i, "mapping", None)]
 
-    def test_footage_layers_only_unless_asked(self):
+    def test_layers_on_the_map_only_unless_asked(self):
         self.assertEqual(sorted(n.title for n in self.nodes("ae")), ["1  BG", "3  CHAR"])
         self.editor.all_check.setChecked(True)
-        self.assertEqual(len(self.nodes("ae")), 3)
+        self.assertEqual([(n.title, n.dim) for n in sorted(self.nodes("ae"), key=lambda n: n.title)],
+                         [("1  BG", False), ("2  CAM", True), ("3  CHAR", False)])
+
+    def test_empty_map_says_what_to_do(self):
+        self.editor.set_data(AE, lm.empty_store())
+        self.assertEqual(self.nodes("ae"), [])
+        texts = [i.toPlainText() for i in self.editor.scene.items() if isinstance(i, QtWidgets.QGraphicsTextItem)]
+        self.assertTrue(any(u"AE の選択を追加" in t for t in texts))
+
+    def test_take_off_the_map(self):
+        got = []
+        self.editor.hide_ae_requested.connect(got.append)
+        bg = [n for n in self.nodes("ae") if n.title.endswith("BG")][0]
+        bg.setSelected(True)
+        self.assertTrue(self.editor.hide_ae_btn.isEnabled())
+        self.editor._on_delete_key()                                     # the Delete key
+        self.assertEqual(got, [bg.key])
+        lm.connect(self.store, lm.ae_from_layers_info(COMP, AE["layers"][0]), self.layer["id"])
+        self.editor.set_data(AE, self.store)
+        bg = [n for n in self.nodes("ae") if n.title.endswith("BG")][0]
+        bg.setSelected(True)
+        self.assertFalse(self.editor.hide_ae_btn.isEnabled())           # linked: disconnect first
+
+    def test_on_the_map_before_ae_is_read(self):
+        from syncbridge_maya.layer_map_view import LayerMapEditor
+        editor = LayerMapEditor()
+        self.addCleanup(editor.deleteLater)
+        editor.set_data(None, self.store)
+        nodes = [n for n in editor.scene.items() if getattr(n, "kind", None) == "ae"]
+        self.assertEqual(sorted(n.title for n in nodes), ["BG", "CHAR"])
+        self.assertFalse(any(n.dim for n in nodes))
 
     def test_drag_from_the_port_connects(self):
         got = []

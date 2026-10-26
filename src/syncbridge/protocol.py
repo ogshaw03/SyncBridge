@@ -33,8 +33,9 @@ Pixel Mapping (D-23 / D-24), the AE BG layer's position on the mapped Maya camer
     server -> maya    pixelmap.apply.request {info, options}   maya -> server pixelmap.apply.result {status, ...}
     server -> client  pixelmap.result {status, mapping, values, max_error_px, warnings, source, target}
 AE layers for Maya's layer map (D-28):
-    maya -> server    layers.request {}     server -> ae  layers.export.request {}
-    ae -> server      layers.export.result {comp, layers}     server -> maya  layers.result {comp, layers, ...}
+    maya -> server    layers.request {[main_comp_id, main_comp]}   server -> ae  layers.export.request {same}
+    ae -> server      layers.export.result {comp, active, layers}   server -> maya  layers.result {comp, active, layers, ...}
+                      (D-40: each layer has `selected`, its selection in the comp open in AE)
     maya -> server    motion.request {comp_id, comp, layer_id, layer, times}  (Phase 3, D-30)
                       server -> ae  motion.export.request (same)
     ae -> server      motion.export.result {comp, layer, samples}   server -> maya  motion.result (same, ...)

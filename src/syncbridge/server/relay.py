@@ -127,7 +127,8 @@ NO_AE = u"After Effects が接続されていません。After Effects の SyncB
 
 
 class LayersFlow(RelayToMaya):
-    """layers.request {} from Maya (the layer map, D-28): AE answers the active comp's layers.
+    """layers.request {[main_comp_id, main_comp]} from Maya (the layer map, D-28): AE answers the layers of
+    the main comp (else the active comp), each with `selected` in the comp open in AE (D-40), and `active`.
 
         maya --layers.request--> hub --layers.export.request--> AE --layers.export.result--> hub
         hub --layers.result {comp, layers, source, target}--> maya
@@ -140,7 +141,10 @@ class LayersFlow(RelayToMaya):
     RECORD = False
 
     def payload(self, data: dict) -> dict:
-        return {}
+        # the layer map's main comp (D-40): listed even while a precomp inside it is open in AE
+        if data.get("main_comp_id") is None and not data.get("main_comp"):
+            return {}
+        return {"main_comp_id": data.get("main_comp_id"), "main_comp": data.get("main_comp")}
 
 
 class MotionFlow(LayersFlow):

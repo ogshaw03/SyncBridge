@@ -120,6 +120,12 @@ class MotionTransfer(object):
             self.say(NOT_CONNECTED, error=True)
             return
         start, end = timing.playback_range()
+        store = layer_mapping.store()
+        outside = [link["ae"].get("layer") for link in links if core_lm.outside_main(store, link["ae"])]
+        if outside:
+            text += (u"\n⚠ メインのコンポの外で記録された接続があります（%s）。メインのコンポでの動き（プリコンポを動かした"
+                     u"カメラワークなど）は入りません。レイヤーマップでメインのコンポを開いて「AE のレイヤーを読み込む」を押すと直せます。"
+                     % u"、".join(outside))
         dialog = MotionDialog(text, start, end, timing.origin(), self.parent)
         run = getattr(dialog, "exec", None) or dialog.exec_       # PySide6 / PySide2
         if not run():

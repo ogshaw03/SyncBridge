@@ -25,7 +25,7 @@ Qt = QtCore.Qt
 KIND_LABELS = {"still": u"静止画", "sequence": u"連番", "movie": u"動画", "comp": u"コンポ", "solid": u"平面",
                "null": u"ヌル", "camera": u"カメラ", "light": u"ライト", "text": u"テキスト",
                "shape": u"シェイプ", "other": u"その他"}
-# Layers with pictures: shown unless "すべてのレイヤー" is on.
+# Layers with pictures (D-28; the map now shows the AE layers put on it, D-40).
 FOOTAGE_KINDS = ("still", "sequence", "movie", "comp", "solid")
 KIND_COLORS = {"still": "#3f8f8a", "sequence": "#4a72b8", "movie": "#c07a35", "comp": "#8a5ab0",
                "solid": "#7a7a7a"}
@@ -57,12 +57,7 @@ PAN_ROOM = 2000          # px of scene around the nodes the middle drag can move
 GAP = 14
 
 
-def ae_key(ae: dict):
-    """What identifies an AE layer (core.layer_mapping.matches): ids when known, else names, and the
-    precomp layers above it (D-37)."""
-    if ae.get("layer_id") is not None:
-        return ("id", ae.get("comp_id"), ae.get("layer_id"), core_lm.via_key(ae))
-    return ("name", ae.get("comp"), ae.get("layer"), core_lm.via_key(ae))
+ae_key = core_lm.ae_key
 
 
 def ae_title(ae: dict) -> str:
@@ -343,6 +338,8 @@ class LayerMapEditor(QtWidgets.QWidget):
     the owner changes the store and calls set_data again."""
 
     reload_requested = QtCore.Signal()                    # AE のレイヤーを読み込む
+    add_selection_requested = QtCore.Signal()             # put the layers selected in AE on the map (D-40)
+    hide_ae_requested = QtCore.Signal(object)             # AE node key: take it off the map
     new_method_changed = QtCore.Signal(str)               # method for new links
     new_mode_changed = QtCore.Signal(str)                 # mode for new links (relative / source, D-39)
     add_layer_requested = QtCore.Signal()                 # Maya レイヤーを追加
@@ -373,11 +370,17 @@ class LayerMapEditor(QtWidgets.QWidget):
         self._positions: Dict[object, QtCore.QPointF] = {}
 
         self.reload_btn = QtWidgets.QPushButton(u"AE のレイヤーを読み込む")
+        self.reload_btn.setToolTip(u"AE で開いているコンポをメインのコンポにして、そのレイヤーを読み込みます。\n"
+                                   u"カメラワーク（PAN）を付けたいちばん外のコンポを開いて押してください")
         self.reload_btn.clicked.connect(self.reload_requested.emit)
         self.add_btn = QtWidgets.QPushButton(u"Maya レイヤーを追加")
         self.add_btn.clicked.connect(self.add_layer_requested.emit)
-        self.all_check = QtWidgets.QCheckBox(u"すべてのレイヤー")
-        self.all_check.setToolTip(u"オフのときは画像のあるレイヤー（静止画・連番・動画・コンポ・平面）だけを表示します。")
+        self.add_sel_btn = QtWidgets.QPushButton(u"AE の選択を追加")
+        self.add_sel_btn.setToolTip(u"AE で選んでいるレイヤーをマップに出します。プリコンポの中の BG などは、そのプリコンポを開いて"
+                                    u"選んでから押してください（メインのコンポからの経路ごと追加するので、外側の動きも転送に入ります）")
+        self.add_sel_btn.clicked.connect(self.add_selection_requested.emit)
+        self.all_check = QtWidgets.QCheckBox(u"コンポのすべてのレイヤー")
+        self.all_check.setToolTip(u"オン: マップに出していないレイヤーも一時的にすべて表示します（線でつなぐとマップに残ります）")
         self.all_check.toggled.connect(lambda _: self.rebuild())
         self.comp_label = QtWidgets.QLabel(u"AE: 未読み込み")
         self.comp_label.setStyleSheet("color: #9a9a9a;")
@@ -394,7 +397,7 @@ class LayerMapEditor(QtWidgets.QWidget):
                                        u"それぞれのカメラに打ちます（範囲の指定と確認は 1 回。Ctrl+Z 1 回で全部戻ります）")
         self.motion_all_btn.clicked.connect(self.motion_all_requested.emit)
         bar = QtWidgets.QHBoxLayout()                       # AE side
-        for w in (self.reload_btn, self.all_check, self.comp_label):
+        for w in (self.add_sel_btn, self.reload_btn, self.all_check, self.comp_label):
             bar.addWidget(w)
         bar.addStretch(1)
         self.new_mode = QtWidgets.QComboBox()
@@ -444,7 +447,8 @@ class LayerMapEditor(QtWidgets.QWidget):
         split.addWidget(self.inspector)
         split.setStretchFactor(0, 1)
         self.hint = QtWidgets.QLabel(u"AE のレイヤーの右の ● から Maya レイヤーへドラッグしてつなぎます。"
-                                     u"線を選んで Delete で外します。Maya レイヤーのダブルクリックで、そのレイヤーだけをビューに表示。"
+                                     u"線を選んで Delete で外します（AE のノードは Delete でマップから外れます）。"
+                                     u"Maya レイヤーのダブルクリックで、そのレイヤーだけをビューに表示。"
                                      u"ホイールで拡大縮小。")
         self.hint.setStyleSheet("color: #9a9a9a;")
         self.hint.setWordWrap(True)
@@ -473,7 +477,12 @@ class LayerMapEditor(QtWidgets.QWidget):
         self.ae_text.setWordWrap(True)
         self.ae_text.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.ae_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        QtWidgets.QVBoxLayout(ae).addWidget(self.ae_text, 1)
+        self.hide_ae_btn = QtWidgets.QPushButton(u"マップから外す")
+        self.hide_ae_btn.setToolTip(u"この AE のレイヤーをマップに出さないようにします（AE とシーンは変えません。Delete キーでも同じ）")
+        self.hide_ae_btn.clicked.connect(self._on_hide_ae)
+        ae_lay = QtWidgets.QVBoxLayout(ae)
+        ae_lay.addWidget(self.ae_text, 1)
+        ae_lay.addWidget(self.hide_ae_btn)
         self.inspector.addWidget(ae)
 
         maya = QtWidgets.QWidget()
@@ -574,11 +583,25 @@ class LayerMapEditor(QtWidgets.QWidget):
 
     def _show_ae(self, node: Node):
         layer = self._ae_layers.get(node.key)
-        if layer is None:
-            m = self._mapping_of_key(node.key)
+        linked = self._mapping_of_key(node.key) is not None
+        self.hide_ae_btn.setEnabled(not linked and node.key in core_lm.shown_keys(self.store))
+        self.hide_ae_btn.setToolTip(u"つながっているレイヤーは外せません（先に接続を外してください）" if linked else
+                                    u"この AE のレイヤーをマップに出さないようにします（AE とシーンは変えません。Delete キーでも同じ）")
+        stored = self._stored_ae(node.key)
+        if layer is None and stored is not None and core_lm.outside_main(self.store, stored):
+            self.ae_text.setText(
+                u"<b>%s</b><br>メインのコンポ「%s」ではなく、その中のコンポ「%s」を基準に記録されています。"
+                u"メインのコンポでの動き（プリコンポを動かしたカメラワークなど）は転送に入りません。<br><br>"
+                u"AE でメインのコンポを開いて「AE のレイヤーを読み込む」を押すと、メインのコンポからの経路に直せます。"
+                % (node.title, (core_lm.main_comp(self.store) or {}).get("name"), core_lm.top_comp(stored).get("name")))
+        elif layer is None and not self.ae_info:
+            self.ae_text.setText(u"<b>%s</b><br>AE からまだ読み込んでいません。「AE のレイヤーを読み込む」を押してください。"
+                                 % node.title)
+        elif layer is None:
+            ae = self._stored_ae(node.key) or {}
             self.ae_text.setText(u"<b>%s</b><br>現在の AE のコンポにありません（コンポ「%s」）。<br>"
                                  u"コンポを開いて「AE のレイヤーを読み込む」を押すか、接続を外してください。"
-                                 % (node.title, (m or {}).get("ae", {}).get("comp") or "?"))
+                                 % (node.title, ae.get("comp") or "?"))
         else:
             keyed = [k for k, v in (layer.get("keyed") or {}).items() if v]
             rows = [(u"種類", KIND_LABELS.get(layer.get("kind"), layer.get("kind"))),
@@ -643,10 +666,27 @@ class LayerMapEditor(QtWidgets.QWidget):
         layer = self._ae_layers.get(ae_key_value)
         if layer is not None and self.ae_info:
             self.link_requested.emit(core_lm.ae_from_layers_info(self.ae_info["comp"], layer), layer_id)
+        elif self._stored_ae(ae_key_value) is not None:          # on the map, AE not read yet
+            self.link_requested.emit(dict(self._stored_ae(ae_key_value)), layer_id)
 
     def _on_delete_key(self):
+        item = self._selected()
         if self._selected_mapping_id():
             self.unlink_requested.emit(self._selected_mapping_id())
+        elif isinstance(item, Node) and item.kind == "ae":
+            self._on_hide_ae()
+
+    def _on_hide_ae(self):
+        item = self._selected()
+        if isinstance(item, Node) and item.kind == "ae":
+            self.hide_ae_requested.emit(item.key)
+
+    def _stored_ae(self, key) -> Optional[dict]:
+        """The `ae` kept in the scene for this AE node (a link's or one put on the map)."""
+        for ae in [m["ae"] for m in self.store["mappings"]] + list(self.store.get("ae_shown") or []):
+            if ae_key(ae) == key:
+                return ae
+        return None
 
     # -- graph ------------------------------------------------------------------------------------------
     def _mapping_of_key(self, key) -> Optional[dict]:
@@ -669,20 +709,29 @@ class LayerMapEditor(QtWidgets.QWidget):
         for item in self.scene.items():
             if isinstance(item, Node):
                 self._positions[(item.kind, item.key)] = item.pos()
+        if getattr(self, "_all_shown", None) != self.all_check.isChecked():
+            # other AE nodes come and go: lay the AE side out again (they overlapped the kept places)
+            self._positions = {k: v for k, v in self._positions.items() if k[0] != "ae"}
+            self._all_shown = self.all_check.isChecked()
         self.scene.clear()
         nodes: Dict[object, Node] = {}
         comp = (self.ae_info or {}).get("comp") or {}
-        if self.ae_info:
-            self.comp_label.setText(u"AE: %s（%s×%s・%s fps・%d レイヤー）" % (
+        main = core_lm.main_comp(self.store)
+        if self.ae_info and core_lm.same_comp(main, comp):
+            self.comp_label.setText(u"メインのコンポ: %s（%s×%s・%s fps・%d レイヤー）" % (
                 comp.get("name"), comp.get("width"), comp.get("height"), _fps(comp.get("frameRate")),
                 len(self.ae_info.get("layers") or [])))
+        elif main:
+            self.comp_label.setText(u"メインのコンポ: %s（AE から未読み込み）" % main.get("name"))
+        elif self.ae_info:
+            self.comp_label.setText(u"AE: %s" % comp.get("name"))
         self._ae_layers = {}
-        linked = set(ae_key(m["ae"]) for m in self.store["mappings"])
+        on_map = core_lm.shown_keys(self.store)
         y = 0.0
         for layer in (self.ae_info or {}).get("layers") or []:
             key = ae_key(core_lm.ae_from_layers_info(comp, layer))
             self._ae_layers[key] = layer
-            if layer.get("kind") not in FOOTAGE_KINDS and not self.all_check.isChecked() and key not in linked:
+            if key not in on_map and not self.all_check.isChecked():        # D-40
                 continue
             kind = KIND_LABELS.get(layer.get("kind"), layer.get("kind") or "?")
             size = "%s×%s" % (layer["width"], layer["height"]) if layer.get("width") else ""
@@ -693,16 +742,27 @@ class LayerMapEditor(QtWidgets.QWidget):
             title = u"%d  %s" % (layer.get("index", 0), layer.get("name")) if not depth else \
                 u"%d  %s" % (layer.get("index", 0), ae_title(core_lm.ae_from_layers_info(comp, layer)))
             node = Node("ae", key, title, [l for l in lines if l],
-                        QtGui.QColor(KIND_COLORS.get(layer.get("kind"), "#6a6a6a")), "right")
+                        QtGui.QColor(KIND_COLORS.get(layer.get("kind"), "#6a6a6a")), "right",
+                        dim=key not in on_map)               # shown by the check only
             y = self._place(node, nodes, AE_X + NEST_INDENT * depth, y)       # inside a precomp: indented (D-37)
-        for m in self.store["mappings"]:                   # linked AE layers that are not in this comp
-            key = ae_key(m["ae"])
+        for ae in [m["ae"] for m in self.store["mappings"]] + list(self.store.get("ae_shown") or []):
+            key = ae_key(ae)                               # on the map, not in what AE answered
             if ("ae", key) in nodes:
                 continue
-            node = Node("ae", key, ae_title(m["ae"]),
-                        [u"⚠ 現在のコンプにありません", u"コンポ: %s" % (m["ae"].get("comp") or "?")],
-                        C_MISSING, "right", dim=True)
-            y = self._place(node, nodes, AE_X, y)
+            if core_lm.outside_main(self.store, ae):
+                # recorded from a comp inside the main one: the main comp's motion is not transferred
+                lines, color = [u"⚠ メインのコンポの外で記録", u"外側の動きが入りません"], C_WARN
+            elif self.ae_info:
+                lines, color = [u"⚠ 現在のコンプにありません", u"コンポ: %s" % (ae.get("comp") or "?")], C_MISSING
+            else:
+                lines, color = [u"AE から未読み込み", ae.get("source") or ""], QtGui.QColor("#6a6a6a")
+            node = Node("ae", key, ae_title(ae), [l for l in lines if l], color, "right", dim=bool(self.ae_info))
+            y = self._place(node, nodes, AE_X + NEST_INDENT * len(ae.get("via") or []), y)
+        if not any(k == "ae" for k, _ in nodes):
+            hint = self.scene.addText(u"AE で BG やキャラのレイヤーを選んで\n「AE の選択を追加」を押してください。\n"
+                                      u"（プリコンポの中のレイヤーは、そのプリコンポを開いて選びます）")
+            hint.setDefaultTextColor(C_DIM)
+            hint.setPos(AE_X, 0)
         y = 0.0
         for layer in self.store["maya_layers"]:
             objects = layer.get("objects") or []

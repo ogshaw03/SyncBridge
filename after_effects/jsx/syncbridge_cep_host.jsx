@@ -382,7 +382,9 @@ var SBCep = (function () {
     var MAX_DEPTH = 3;          // precomps inside precomps listed (D-37)
 
     // The comp's layers, and the layers of its precomps under them (via = the precomp layers above).
-    function listLayers(comp, via, out) {
+    // selected: the layer is selected in the comp open in AE (activeId); a selection left in another comp
+    // is not used. H-AE-32: Layer.selected is the layer's selection in its own comp.
+    function listLayers(comp, via, out, activeId) {
         var i, layer, tr, src, kind;
         for (i = 1; i <= comp.numLayers; i++) {
             layer = comp.layer(i);
@@ -396,23 +398,41 @@ var SBCep = (function () {
                 width: (src && src.width) ? src.width : null, height: (src && src.height) ? src.height : null,
                 inPoint: layer.inPoint, outPoint: layer.outPoint, threeD: !!layer.threeDLayer,
                 parent: layer.parent ? layer.parent.name : null,
+                selected: comp.id === activeId && !!layer.selected,
                 keyed: {position: keyed(tr, 'ADBE Position'), scale: keyed(tr, 'ADBE Scale'),
                         rotation: keyed(tr, 'ADBE Rotate Z')}
             });
             if (kind === 'comp' && via.length < MAX_DEPTH) {
                 listLayers(src, via.concat([{ comp_id: comp.id, comp: comp.name, layer_id: layer.id,
-                                              layer: layer.name }]), out);
+                                              layer: layer.name }]), out, activeId);
             }
         }
     }
 
-    function layersInfo() {
+    //   argsText = {main_comp_id, main_comp} as JSON text, or empty: the comp the layer map is built on.
+    //   Without it the active comp is the main comp. With it, the main comp is listed even while a precomp
+    //   inside it is open in AE (to select a BG in there), so the layers keep their path from the main
+    //   comp and the precomps' motion (the camera work) is not lost.
+    function layersInfo(argsText) {
         try {
-            var comp = activeComp(), out = [];
-            listLayers(comp, [], out);
+            var args = argsText ? SBJSON.parse(argsText) : {}, comp, out = [], active = app.project.activeItem;
+            if (!(active instanceof CompItem)) { active = null; }
+            if (args.main_comp_id !== undefined && args.main_comp_id !== null) {
+                comp = findComp(args.main_comp_id, args.main_comp);
+            } else {
+                comp = activeComp();
+            }
+            listLayers(comp, [], out, active ? active.id : null);
+            // H-AE-33: CompItem.usedIn = the comps that use this comp as a precomp. Maya asks to take the
+            // outer comp as the main comp (a precomp read as the main comp lost the PAN, the user, 2026-10-26).
+            var usedIn = [], j;
+            for (j = 0; j < comp.usedIn.length; j++) {
+                usedIn.push({ id: comp.usedIn[j].id, name: comp.usedIn[j].name });
+            }
             return ok({
                 comp: { id: comp.id, name: comp.name, width: comp.width, height: comp.height,
-                        frameRate: comp.frameRate, duration: comp.duration, time: comp.time },
+                        frameRate: comp.frameRate, duration: comp.duration, time: comp.time, usedIn: usedIn },
+                active: active ? { id: active.id, name: active.name, selected: active.selectedLayers.length } : null,
                 layers: out
             });
         } catch (e) { return fail(e); }

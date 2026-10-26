@@ -346,6 +346,26 @@ def disconnect(mapping_id: str) -> None:
     _edit("SyncBridge disconnect", lambda data: core.disconnect(data, mapping_id))
 
 
+def show_ae_layers(aes: List[dict]) -> int:
+    """Put AE layers on the layer map (D-40); returns how many were not on it yet."""
+    return _edit("SyncBridge show AE layers", lambda data: core.show_ae(data, aes))
+
+
+def set_main_comp(comp: dict) -> None:
+    """The AE comp the layer map is built on (D-40)."""
+    _edit("SyncBridge main comp", lambda data: core.set_main_comp(data, comp))
+
+
+def reroute_ae_layers(fixes: List[tuple]) -> int:
+    """Give AE layers recorded outside the main comp their path from it (core.reroute)."""
+    return _edit("SyncBridge reroute AE layers", lambda data: core.reroute(data, fixes))
+
+
+def hide_ae_layer(key: tuple) -> None:
+    """Take an AE layer off the layer map (not a linked one)."""
+    _edit("SyncBridge hide AE layer", lambda data: core.hide_ae(data, key))
+
+
 def change_mode(mapping_id: str, mode: str) -> dict:
     """Relative / absolute for one link; absolute takes the selected mesh as its BG (or the recorded one)."""
     mesh = selected_mesh()

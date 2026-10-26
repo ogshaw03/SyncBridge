@@ -40,18 +40,22 @@ def ensure_plugin() -> None:
 
 def layers() -> List[tuple]:
     """[(name, camera path, [object paths])] bottom first, nodes that are gone left out."""
-    return _resolve(core_lm.stack(layer_mapping.store()))[0]
+    return _resolve(core_lm.stack(layer_mapping.store()))
 
 
 def _resolve(stack):
-    out, top_original = [], None
+    out = []
     for item in stack:
         camera = layer_mapping.node_by_uuid(item["camera_uuid"])
         objects = [p for p in (layer_mapping.node_by_uuid(u) for u in item["object_uuids"]) if p]
         if camera and objects:
             out.append((item["name"], camera, objects))
-            top_original = layer_mapping.node_by_uuid(item.get("original_camera_uuid")) or camera
-    return out, top_original
+    return out
+
+
+def view_camera(store: Optional[dict] = None) -> Optional[str]:
+    """The camera the viewer looks through and draws the comp frame for (core view_camera_uuid)."""
+    return layer_mapping.node_by_uuid(core_lm.view_camera_uuid(store or layer_mapping.store()))
 
 
 def frame_overlay(camera: Optional[str]) -> Optional[tuple]:
@@ -64,11 +68,15 @@ def frame_overlay(camera: Optional[str]) -> Optional[tuple]:
         return None
     camera_tr = cmds.listRelatives(camera, parent=True, fullPath=True)[0] if cmds.nodeType(camera) == "camera" \
         else camera
-    for guide in comp_guide.existing():
-        if comp_guide.guide_camera(guide) == camera_tr:
-            return (camera, {"width": cmds.getAttr(guide + ".compWidth"), "height": cmds.getAttr(guide + ".compHeight"),
-                             "name": cmds.getAttr(guide + ".compName") or ""})
-    return None
+    guides = comp_guide.existing()
+    # the camera's own frame first; else the frame shown on another camera (the same AE comp: the layers
+    # may use different cameras, e.g. a plate camera in the source camera mode, D-39)
+    mine = [g for g in guides if comp_guide.guide_camera(g) == camera_tr]
+    if not guides:
+        return None
+    guide = (mine or guides)[0]
+    return (camera, {"width": cmds.getAttr(guide + ".compWidth"), "height": cmds.getAttr(guide + ".compHeight"),
+                     "name": cmds.getAttr(guide + ".compName") or ""})
 
 
 def publish() -> List[tuple]:
@@ -77,8 +85,9 @@ def publish() -> List[tuple]:
     import __main__
     import maya.api.OpenMayaUI as omui2
     old = getattr(__main__, STATE_KEY, None) or {"version": 0, "layers": None}
-    stack, top_original = _resolve(core_lm.stack(layer_mapping.store()))
-    overlay = frame_overlay(top_original)
+    store = layer_mapping.store()
+    stack = _resolve(core_lm.stack(store))
+    overlay = frame_overlay(view_camera(store))
     m = margin()
     if stack != old.get("layers") or overlay != old.get("overlay") or m != old.get("margin"):
         setattr(__main__, STATE_KEY, {"version": old["version"] + 1, "layers": stack, "overlay": overlay,

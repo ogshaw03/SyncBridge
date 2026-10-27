@@ -71,7 +71,7 @@ cmds.select(plate_cam, cmds.ls("box*", type="transform"))
 layer, _ = layer_mapping.add_layer("BG")
 layer_mapping.set_defaults(method="pan_zoom", mode="source")
 layer_mapping.connect({"comp_id": 1, "comp": "c", "layer_id": 5, "layer": "BG", "source": "plate",
-                       "source_width": PW, "source_height": PH}, layer["id"])
+                       "source_width": PW, "source_height": PH}, layer["id"], "pan_zoom", "source")
 own = layer["layer_camera"]
 check("linked in source camera mode", layer_mapping.stored()[0]["mode"] == "source")
 COMP = {"id": 1, "name": "c", "width": W, "height": H, "pixelAspect": 1, "time": 0}

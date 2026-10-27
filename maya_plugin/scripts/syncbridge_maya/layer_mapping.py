@@ -333,13 +333,12 @@ def remove_layer(layer_id: str) -> int:
     return _edit("SyncBridge remove layer", fn)
 
 
-def connect(ae: dict, layer_id: str) -> dict:
-    """Link an AE layer (core.layer_mapping.ae_from_layers_info) to a Maya layer with the mode (relative or
-    source camera, D-39) and method chosen for new links in the layer map (change_mode switches a link
-    to absolute, which needs a BG plane)."""
-    chosen = defaults()
-    mode = chosen["mode"] if chosen["mode"] in ("relative", "source") else "relative"
-    return _edit("SyncBridge connect", lambda data: dict(core.connect(data, ae, layer_id, chosen["method"], mode)))
+def connect(ae: dict, layer_id: str, method: Optional[str] = None, mode: Optional[str] = None) -> dict:
+    """Link an AE layer (core.layer_mapping.ae_from_layers_info) to a Maya layer: always the source camera
+    mode with Film Translate・Scale・Roll, like the layers made with the AE selection (D-43). The link's mode and method
+    are changed in the layer map's inspector (absolute needs a BG plane). method / mode: the check tools'."""
+    return _edit("SyncBridge connect", lambda data: dict(core.connect(
+        data, ae, layer_id, method or core.NEW_LAYER_METHOD, mode or core.NEW_LAYER_MODE)))
 
 
 def disconnect(mapping_id: str) -> None:
@@ -349,6 +348,17 @@ def disconnect(mapping_id: str) -> None:
 def show_ae_layers(aes: List[dict]) -> int:
     """Put AE layers on the layer map (D-40); returns how many were not on it yet."""
     return _edit("SyncBridge show AE layers", lambda data: core.show_ae(data, aes))
+
+
+def add_ae_layers(aes: List[dict]):
+    """Put AE layers on the layer map, each with its own Maya layer linked to it (source camera mode, Film
+    Translate, D-43); the cameras and objects are set by hand. One undo.
+    Returns (how many were not on the map yet, [the new links])."""
+    def fn(data):
+        shown = core.show_ae(data, aes)
+        links = [link for link in (core.add_linked_layer(data, ae) for ae in aes) if link is not None]
+        return shown, [dict(link) for link in links]
+    return _edit("SyncBridge add AE layers", fn)
 
 
 def set_main_comp(comp: dict) -> None:

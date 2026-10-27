@@ -38,6 +38,7 @@ class LayerStackList(QtWidgets.QWidget):
     order_changed = QtCore.Signal(list)        # layer ids, top (front) first
     visible_changed = QtCore.Signal(str, bool)
     motion_requested = QtCore.Signal(str)      # layer id: transfer the AE motion of its links (D-30)
+    editing_requested = QtCore.Signal(str)     # layer id: edit it in the viewer (D-44), a row clicked
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -58,8 +59,10 @@ class LayerStackList(QtWidgets.QWidget):
         self.tree.itemChanged.connect(self._on_item_changed)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._menu)
+        self.tree.itemClicked.connect(self._on_clicked)
         self.hint = QtWidgets.QLabel(u"上の行ほど手前に重なります。行をドラッグして並べ替え、左のチェックで表示・非表示。"
-                                     u"カメラか表示するオブジェクトのないレイヤーは描きません。")
+                                     u"行をクリックすると、そのレイヤーを編集中にします（ビューでの選択・移動がそのレイヤーの"
+                                     u"見え方どおりになります）。カメラか表示するオブジェクトのないレイヤーは描きません。")
         self.hint.setStyleSheet("color: #9a9a9a;")
         self.hint.setWordWrap(True)
         lay = QtWidgets.QVBoxLayout(self)
@@ -67,6 +70,24 @@ class LayerStackList(QtWidgets.QWidget):
         lay.addWidget(self.tree, 1)
         lay.addWidget(self.hint)
         self._filling = False
+        self.editing = None
+
+    def set_editing(self, layer_id) -> None:
+        """Mark the layer edited in the viewer (bold, "（編集中）"; a symbol was a box in mayapy's font)."""
+        self.editing = layer_id
+        for i in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(i)
+            mine = item.data(0, ID_ROLE) == layer_id
+            font = item.font(2)
+            font.setBold(mine)
+            item.setFont(2, font)
+            name = item.data(2, ID_ROLE) or item.text(2)
+            item.setData(2, ID_ROLE, name)
+            item.setText(2, (name + u"（編集中）") if mine else name)
+
+    def _on_clicked(self, item, column):
+        if column != 0:                                          # the eye toggles, it does not choose
+            self.editing_requested.emit(item.data(0, ID_ROLE))
 
     def set_data(self, store: dict) -> None:
         self._filling = True
@@ -95,6 +116,7 @@ class LayerStackList(QtWidgets.QWidget):
                 self.tree.addTopLevelItem(item)
                 if layer["id"] == current:
                     item.setSelected(True)
+            self.set_editing(self.editing)
         finally:
             self._filling = False
 

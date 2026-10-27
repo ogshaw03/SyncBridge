@@ -88,12 +88,24 @@ def publish() -> List[tuple]:
     store = layer_mapping.store()
     stack = _resolve(core_lm.stack(store))
     overlay = frame_overlay(view_camera(store))
-    m = margin()
-    if stack != old.get("layers") or overlay != old.get("overlay") or m != old.get("margin"):
+    m, s, e = margin(), shade(), editing()
+    if stack != old.get("layers") or overlay != old.get("overlay") or m != old.get("margin") \
+            or s != old.get("shade") or e != old.get("editing"):
         setattr(__main__, STATE_KEY, {"version": old["version"] + 1, "layers": stack, "overlay": overlay,
-                                      "margin": m})
+                                      "margin": m, "shade": s, "editing": e})
         omui2.M3dView.scheduleRefreshAllViews()
     return stack
+
+
+def editing() -> Optional[tuple]:
+    """(dedicated camera, viewer camera) of the layer edited in the viewer (D-44), or None: the viewer
+    camera is the only record of it (it is a child of that layer's dedicated camera)."""
+    from . import viewer_camera
+    shape = viewer_camera.current()
+    if not shape:
+        return None
+    dedicated = viewer_camera.followed(shape)
+    return (dedicated, shape) if dedicated else None
 
 
 MARGIN_VAR = "syncBridgeViewerMargin"          # optionVar: 1.0 = none, 1.2 = 20 %
@@ -112,6 +124,25 @@ def margin() -> float:
 
 def set_margin(value: float) -> None:
     cmds.optionVar(floatValue=(MARGIN_VAR, max(1.0, float(value))))
+    publish()
+
+
+SHADE_VAR = "syncBridgeViewerShade"            # optionVar: opacity of the black outside the comp frame
+DEFAULT_SHADE = 0.5                            # the plug-in's DEFAULT_SHADE
+
+
+def shade() -> float:
+    """How dark the view is outside the comp frame: 0 = not darkened, 1 = black (the user, 2026-10-27)."""
+    if cmds.optionVar(exists=SHADE_VAR):
+        try:
+            return min(1.0, max(0.0, float(cmds.optionVar(q=SHADE_VAR))))
+        except (TypeError, ValueError):
+            pass
+    return DEFAULT_SHADE
+
+
+def set_shade(value: float) -> None:
+    cmds.optionVar(floatValue=(SHADE_VAR, min(1.0, max(0.0, float(value)))))
     publish()
 
 

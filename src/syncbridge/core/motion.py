@@ -46,7 +46,7 @@ def solve_motion(link: dict, samples: Sequence[dict], cameras: Sequence[dict], r
     ref = link.get("reference")
     if mode == "relative" and not ref:
         raise ValueError(u"接続「%s」にはまだ基準がありません。Maya と AE の見え方を合わせ、AE のパネルで一度"
-                         u"「BG の位置を Maya のカメラへ」を送って基準を記録してから、アニメーションを転送してください。"
+                         u"「レイヤーの初期位置を Maya へ」を送って基準を記録してから、アニメーションを転送してください。"
                          % link.get("name", ""))
     if mode == "absolute" and bg is None:
         raise ValueError("absolute mode needs the BG plane")

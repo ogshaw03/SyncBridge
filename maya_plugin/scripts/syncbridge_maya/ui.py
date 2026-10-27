@@ -1,4 +1,4 @@
-"""Minimal SyncBridge panel for Maya (Phase 1-B; Phase 6 builds the real UI).
+"""SyncBridge panel for Maya: state on top, then tabs (time warp / sync and settings / layers / other).
 
     import syncbridge_maya.ui as sbui
     sbui.show()
@@ -48,7 +48,64 @@ def _maya_main_window():
     return wrapInstance(int(ptr), QtWidgets.QWidget) if ptr is not None else None
 
 
+GREEN, GREY = "#5cc85c", "#7a7a7a"
+PRIMARY_STYLE = ("QPushButton { background: #3f6d8f; font-weight: bold; } "
+                 "QPushButton:disabled { background: #4a4a4a; }")
+TAB_VAR = "syncBridgePanelTab"
+
+
+def _note(text: str) -> QtWidgets.QLabel:
+    """A grey explanation under the controls."""
+    label = QtWidgets.QLabel(text)
+    label.setWordWrap(True)
+    label.setStyleSheet("color: #a8a8a8;")
+    return label
+
+
+def _row(*widgets) -> QtWidgets.QHBoxLayout:
+    """Widgets side by side; None is a stretch."""
+    row = QtWidgets.QHBoxLayout()
+    for widget in widgets:
+        if widget is None:
+            row.addStretch(1)
+        elif isinstance(widget, QtWidgets.QLayout):
+            row.addLayout(widget)
+        else:
+            row.addWidget(widget)
+    return row
+
+
+def _group(title: str, *items) -> QtWidgets.QGroupBox:
+    box = QtWidgets.QGroupBox(title)
+    layout = QtWidgets.QVBoxLayout(box)
+    layout.setSpacing(6)
+    for item in items:
+        if isinstance(item, QtWidgets.QLayout):
+            layout.addLayout(item)
+        else:
+            layout.addWidget(item)
+    return box
+
+
+def _tab(*items) -> QtWidgets.QWidget:
+    page = QtWidgets.QWidget()
+    layout = QtWidgets.QVBoxLayout(page)
+    for item in items:
+        if isinstance(item, QtWidgets.QLayout):
+            layout.addLayout(item)
+        else:
+            layout.addWidget(item)
+    layout.addStretch(1)
+    return page
+
+
+def _dot(label: QtWidgets.QLabel, text: str, on: bool) -> None:
+    label.setText(u"<span style='color:%s'>●</span> %s" % (GREEN if on else GREY, text))
+
+
 class SyncBridgePanel(QtWidgets.QDialog):
+    """Connection and state on top, the Origin frame, then four tabs (UI/UX proposal, 2026-10-27)."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName(WINDOW_NAME)
@@ -60,29 +117,51 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.busy = False
         self._had_ae = False
 
-        self.status = QtWidgets.QLabel()
-        self.peer_label = QtWidgets.QLabel()
-        self.connect_btn = QtWidgets.QPushButton("Connect")
+        # -- connection and state: one look tells what is connected and what is on
+        self.connect_btn = QtWidgets.QPushButton(u"接続")
         self.connect_btn.clicked.connect(self.toggle_connection)
+        self.server_state, self.ae_state = QtWidgets.QLabel(), QtWidgets.QLabel()
+        self.time_state, self.live_state = QtWidgets.QLabel(), QtWidgets.QLabel()
+        for label in (self.server_state, self.ae_state, self.time_state, self.live_state):
+            label.setTextFormat(QtCore.Qt.RichText)
 
-        self.mode = QtWidgets.QComboBox()
-        self.mode.addItems(["editable", "precision"])
         self.origin = QtWidgets.QDoubleSpinBox()
         self.origin.setRange(-1e6, 1e6)
         self.origin.setDecimals(2)
         self.origin.setValue(timing.origin())          # one Origin frame, kept in the scene (D-38)
-        self.origin.setToolTip(u"AE のコンプの 0 秒にあたる Maya のフレーム（ふつうはレンダーの開始フレーム）。\n"
+        self.origin.setToolTip(u"AE のコンポの 0 秒にあたる Maya のフレーム（ふつうはレンダーの開始フレーム）。\n"
                                u"シーンに保存され、AE のパネル・時間の同期・転送・レイヤーマップのすべてで共通です")
+
+        # -- time warp: Mode and Tolerance are rarely changed, folded under "詳細" (the user, 2026-10-27)
+        self.mode = QtWidgets.QComboBox()
+        self.mode.addItems(["editable", "precision"])
         self.tolerance = QtWidgets.QDoubleSpinBox()
         self.tolerance.setRange(0.001, 10.0)
         self.tolerance.setDecimals(3)
         self.tolerance.setSingleStep(0.05)
         self.tolerance.setValue(0.1)
-
-        self.to_ae = QtWidgets.QPushButton("Maya  →  AE")
-        self.from_ae = QtWidgets.QPushButton("AE  →  Maya")
+        self.to_ae = QtWidgets.QPushButton(u"タイムワープを AE へ  →")
+        self.to_ae.setToolTip(u"この Scene Time Warp を、AE で選んでいるレイヤーのタイムリマップにします（AE で確認してから適用）")
+        self.from_ae = QtWidgets.QPushButton(u"←  AE から読み込む")
+        self.from_ae.setToolTip(u"AE で選んでいるレイヤーのタイムリマップを、この Scene Time Warp にします（確認してから適用）")
+        for button in (self.to_ae, self.from_ae):
+            button.setMinimumHeight(30)
+            button.setStyleSheet(PRIMARY_STYLE)
         self.to_ae.clicked.connect(lambda: self.transfer("maya2ae"))
         self.from_ae.clicked.connect(lambda: self.transfer("ae2maya"))
+        self.detail_btn = QtWidgets.QToolButton()
+        self.detail_btn.setCheckable(True)
+        self.detail_btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)   # "▸" was a box in mayapy
+        self.detail_btn.setStyleSheet("QToolButton { border: none; color: #9a9a9a; }")
+        self.detail_box = QtWidgets.QWidget()
+        detail_form = QtWidgets.QFormLayout(self.detail_box)
+        detail_form.setContentsMargins(12, 0, 0, 0)
+        detail_form.addRow(u"モード", self.mode)
+        detail_form.addRow(u"許容誤差（フレーム）", self.tolerance)
+        self.detail_box.setVisible(False)
+        self.detail_btn.toggled.connect(self.show_detail)
+        self.mode.currentIndexChanged.connect(self.show_detail)
+        self.tolerance.valueChanged.connect(self.show_detail)
 
         self.save_btn = QtWidgets.QPushButton(u"保存")
         self.save_btn.setToolTip(u"今の Scene Time Warp を名前を付けて保存します")
@@ -94,6 +173,52 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.restore_btn.clicked.connect(self.restore_warp)
         self.retime_btn.clicked.connect(self.retime_warp)
 
+        # -- time slider sync (D-22) and scene settings (D-21)
+        self.time_sync_check = QtWidgets.QCheckBox(u"同期する")
+        self.time_sync_check.setToolTip(u"Maya と AE のどちらで時間を動かしても、もう片方が同じ時間に移ります\n"
+                                        u"（Origin frame = AE のコンポの 0 秒。AE のパネルと共通のスイッチ）")
+        self.follow_check = QtWidgets.QCheckBox(u"再生中も追従")
+        self.follow_check.setToolTip(u"オフ: 再生中は送らず、止めた位置だけを AE に送ります")
+        self.time_sync_check.clicked.connect(self.toggle_time_sync)
+        self.follow_check.clicked.connect(self.toggle_follow)
+        self.origin.valueChanged.connect(service.set_time_origin)
+        chosen = _saved_setting_items()
+        self.setting_checks = {}
+        for item in scene_sync.ITEMS:
+            check = QtWidgets.QCheckBox(scene_sync.ITEM_LABELS[item])
+            check.setChecked(item in chosen)
+            check.toggled.connect(self.save_setting_items)
+            self.setting_checks[item] = check
+        self.settings_to_ae = QtWidgets.QPushButton(u"Maya の設定を AE へ  →")
+        self.settings_to_ae.setToolTip(u"チェックした設定を、AE のアクティブなコンポに送ります（AE で確認してから適用）")
+        self.settings_from_ae = QtWidgets.QPushButton(u"←  AE の設定を Maya へ")
+        self.settings_from_ae.setToolTip(u"AE のアクティブなコンポのチェックした設定を、このシーンに適用します（確認してから適用）")
+        self.settings_to_ae.clicked.connect(lambda: self.send_settings("maya2ae"))
+        self.settings_from_ae.clicked.connect(lambda: self.send_settings("ae2maya"))
+
+        # -- layers (D-24, D-28): set in the layer map window; the panel opens it and the viewer
+        from .layer_map_view import make_live_check
+        from .motion_transfer import MotionTransfer
+        self.pm_summary = QtWidgets.QLabel()
+        self.pm_summary.setWordWrap(True)
+        self.pm_layer_map = QtWidgets.QPushButton(u"レイヤーマップ")
+        self.pm_layer_map.setToolTip(u"AE のレイヤーと SyncBridge の Maya レイヤー（カメラと表示するオブジェクト）を、"
+                                     u"ノードをつなぐ形で対応付けます")
+        self.pm_layer_map.clicked.connect(self.open_layer_map)
+        self.pm_viewer = QtWidgets.QPushButton(u"ビューアー")
+        self.pm_viewer.setToolTip(u"Maya レイヤーをそれぞれのカメラで描いて AE のように重ねて見ます（D-33）")
+        self.pm_viewer.clicked.connect(self.open_viewer)
+        for button in (self.pm_layer_map, self.pm_viewer):
+            button.setMinimumHeight(30)
+            button.setStyleSheet(PRIMARY_STYLE)
+        self.live_check = make_live_check()               # D-41, shared with the layer map, the viewer and AE
+        self.live_check.toggled.connect(self.toggle_live)
+        self.motion = MotionTransfer(self, lambda text, error=False: self.write(text))
+        self.motion_btn = QtWidgets.QPushButton(u"すべてのアニメーションを転送…")
+        self.motion_btn.setToolTip(u"つないだ AE のレイヤーの動きを、各 Maya レイヤーの専用カメラのキーにします（確認してから適用）")
+        self.motion_btn.clicked.connect(self.motion.all)
+
+        # -- other tools: the resolution frame (D-16) and the AE key markers (D-18)
         width, height = comp_guide.last_size()
         self.guide_width, self.guide_height = QtWidgets.QSpinBox(), QtWidgets.QSpinBox()
         for box, value in ((self.guide_width, width), (self.guide_height, height)):
@@ -111,42 +236,6 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.clear_guide_btn = QtWidgets.QPushButton(u"枠を消す")
         self.clear_guide_btn.setToolTip(u"表示中の解像度の枠をビューから消します")
         self.clear_guide_btn.clicked.connect(self.clear_guide)
-
-        # scene settings (D-21) and time slider sync (D-22)
-        chosen = _saved_setting_items()
-        self.setting_checks = {}
-        for item in scene_sync.ITEMS:
-            check = QtWidgets.QCheckBox(scene_sync.ITEM_LABELS[item])
-            check.setChecked(item in chosen)
-            check.toggled.connect(self.save_setting_items)
-            self.setting_checks[item] = check
-        self.settings_to_ae = QtWidgets.QPushButton(u"設定  Maya → AE")
-        self.settings_to_ae.setToolTip(u"チェックした設定を、AE のアクティブなコンプに送ります（AE で確認してから適用）")
-        self.settings_from_ae = QtWidgets.QPushButton(u"設定  AE → Maya")
-        self.settings_from_ae.setToolTip(u"AE のアクティブなコンプのチェックした設定を、このシーンに適用します（確認してから適用）")
-        self.settings_to_ae.clicked.connect(lambda: self.send_settings("maya2ae"))
-        self.settings_from_ae.clicked.connect(lambda: self.send_settings("ae2maya"))
-        self.time_sync_check = QtWidgets.QCheckBox(u"タイムスライダーを同期")
-        self.time_sync_check.setToolTip(u"Maya と AE のどちらで時間を動かしても、もう片方が同じ時間に移ります\n"
-                                        u"（Origin frame = AE のコンプの 0 秒。AE のパネルと共通のスイッチ）")
-        self.follow_check = QtWidgets.QCheckBox(u"再生中も追従")
-        self.follow_check.setToolTip(u"オフ: 再生中は送らず、止めた位置だけを AE に送ります")
-        self.time_sync_check.clicked.connect(self.toggle_time_sync)
-        self.follow_check.clicked.connect(self.toggle_follow)
-        self.origin.valueChanged.connect(service.set_time_origin)
-
-        # Pixel Mapping (D-24, D-28): everything is set in the layer map window; the panel only opens it
-        # (two places to set it were confusing, the user, 2026-10-25)
-        self.pm_summary = QtWidgets.QLabel()
-        self.pm_summary.setWordWrap(True)
-        self.pm_layer_map = QtWidgets.QPushButton(u"レイヤーマップを開く…")
-        self.pm_layer_map.setToolTip(u"AE のレイヤーと SyncBridge の Maya レイヤー（カメラと表示するオブジェクト）を、"
-                                     u"ノードをつなぐ形で対応付けます")
-        self.pm_layer_map.clicked.connect(self.open_layer_map)
-        self.pm_viewer = QtWidgets.QPushButton(u"ビューアーを開く…")
-        self.pm_viewer.setToolTip(u"Maya レイヤーをそれぞれのカメラで描いて AE のように重ねて見ます（D-33）")
-        self.pm_viewer.clicked.connect(self.open_viewer)
-
         self.markers_label = QtWidgets.QLabel()
         self.markers_label.setWordWrap(True)
         self.clear_markers_btn = QtWidgets.QPushButton(u"マーカーを消す")
@@ -156,117 +245,97 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.log = QtWidgets.QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(500)
+        self.log.setMinimumHeight(70)
 
-        form = QtWidgets.QFormLayout()
-        form.addRow("Mode", self.mode)
-        form.addRow("Origin frame", self.origin)
-        form.addRow("Tolerance (frames)", self.tolerance)
-        top = QtWidgets.QHBoxLayout()
-        top.addWidget(_logo_label())                 # top left
-        top.addSpacing(4)
-        top.addWidget(self.status, 1)
-        top.addWidget(self.connect_btn)
-        buttons = QtWidgets.QHBoxLayout()
-        buttons.addWidget(self.to_ae)
-        buttons.addWidget(self.from_ae)
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.addLayout(top)
-        layout.addWidget(self.peer_label)
-        layout.addLayout(form)
-        layout.addLayout(buttons)
-        # The sections scroll when the panel is shorter than they are (Maya on a 1080p screen):
-        # squeezed, Qt cut the combo boxes' text (mock, 2026-10-25).
-        sections = QtWidgets.QWidget()
-        outer = layout
-        layout = QtWidgets.QVBoxLayout(sections)
-        layout.setContentsMargins(0, 0, 0, 0)
-        sync_box = QtWidgets.QGroupBox(u"シーン設定と時間の同期")
-        sync_layout = QtWidgets.QVBoxLayout(sync_box)
+        # -- layout
+        title = QtWidgets.QLabel(u"<b>SyncBridge</b> <span style='color:#9a9a9a'>%s</span>" % __version__)
+        head = _row(_logo_label(), title, None, self.connect_btn)
+        state = QtWidgets.QFrame()
+        state.setObjectName("syncBridgeState")
+        state.setStyleSheet("QFrame#syncBridgeState { background: #3a3a3a; border-radius: 4px; }")
+        grid = QtWidgets.QGridLayout(state)
+        grid.setContentsMargins(8, 6, 8, 6)
+        grid.addWidget(self.server_state, 0, 0)
+        grid.addWidget(self.ae_state, 0, 1)
+        grid.addWidget(self.time_state, 1, 0)
+        grid.addWidget(self.live_state, 1, 1)
+        grid.setColumnStretch(1, 1)
+        origin_note = QtWidgets.QLabel(u"＝ AE のコンポの 0 秒（AE と共通）")
+        origin_note.setStyleSheet("color: #a8a8a8;")
+
         checks = QtWidgets.QGridLayout()
         for index, item in enumerate(scene_sync.ITEMS):
             checks.addWidget(self.setting_checks[item], index // 2, index % 2)
-        settings_row = QtWidgets.QHBoxLayout()
-        settings_row.addWidget(self.settings_to_ae)
-        settings_row.addWidget(self.settings_from_ae)
-        time_row = QtWidgets.QHBoxLayout()
-        time_row.addWidget(self.time_sync_check)
-        time_row.addWidget(self.follow_check)
-        time_row.addStretch(1)
-        sync_layout.addLayout(checks)
-        sync_layout.addLayout(settings_row)
-        sync_layout.addLayout(time_row)
-        layout.addWidget(sync_box)
-        warp_box = QtWidgets.QGroupBox("Scene Time Warp")
-        warp_row = QtWidgets.QHBoxLayout(warp_box)
-        for button in (self.save_btn, self.restore_btn, self.retime_btn):
-            warp_row.addWidget(button)
-        layout.addWidget(warp_box)
-        guide_box = QtWidgets.QGroupBox(u"解像度の枠")
-        guide_layout = QtWidgets.QVBoxLayout(guide_box)
-        size_row = QtWidgets.QHBoxLayout()
-        size_row.addWidget(QtWidgets.QLabel(u"幅"))
-        size_row.addWidget(self.guide_width)
-        size_row.addWidget(QtWidgets.QLabel(u"高さ"))
-        size_row.addWidget(self.guide_height)
-        size_row.addWidget(self.guide_preset, 1)
-        action_row = QtWidgets.QHBoxLayout()
-        action_row.addStretch(1)
-        action_row.addWidget(self.show_guide_btn)
-        action_row.addWidget(self.clear_guide_btn)
-        guide_hint = QtWidgets.QLabel(u"AE のパネルの「解像度の枠を Maya へ」でも表示できます。")
-        guide_hint.setWordWrap(True)
-        guide_layout.addLayout(size_row)
-        guide_layout.addLayout(action_row)
-        guide_layout.addWidget(guide_hint)
-        layout.addWidget(guide_box)
-        pm_box = QtWidgets.QGroupBox(u"Pixel Mapping（BG スライド）")
-        pm_layout = QtWidgets.QVBoxLayout(pm_box)
-        pm_hint = QtWidgets.QLabel(u"設定はすべてレイヤーマップで行います。つないだレイヤーを AE のパネルで選び、"
-                                   u"「BG の位置を Maya のカメラへ」で送ります（相対モードの最初の 1 回は基準の記録）。"
-                                   u"見比べるときは解像度ゲートを隠して（Overscan 1.0）。")
-        pm_hint.setWordWrap(True)
-        pm_hint.setStyleSheet("color: #9a9a9a;")
-        pm_layout.addWidget(self.pm_summary)
-        pm_buttons = QtWidgets.QHBoxLayout()
-        pm_buttons.addWidget(self.pm_layer_map)
-        pm_buttons.addWidget(self.pm_viewer)
-        pm_layout.addLayout(pm_buttons)
-        pm_layout.addWidget(pm_hint)
-        layout.addWidget(pm_box)
-        markers_box = QtWidgets.QGroupBox(u"AE のキーのマーカー")
-        markers_row = QtWidgets.QHBoxLayout(markers_box)
-        markers_row.addWidget(self.markers_label, 1)
-        markers_row.addWidget(self.clear_markers_btn)
-        layout.addWidget(markers_box)
-        layout.addStretch(1)
-        scroll = QtWidgets.QScrollArea()
-        scroll.setWidget(sections)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        self.log.setMinimumHeight(90)
-        outer.addWidget(scroll, 3)
-        outer.addWidget(self.log, 1)
-        self.resize(440, 820)
+        # Maya's own tab look: a QTabBar::tab style sheet drew black borders in Maya (the user, 2026-10-27)
+        self.tabs = QtWidgets.QTabWidget()
+        self.tabs.addTab(_tab(
+            _note(u"Maya の Scene Time Warp ⇔ AE で選んでいるレイヤーのタイムリマップ"),
+            _group(u"転送", _row(self.to_ae, self.from_ae)),
+            _group(u"Scene Time Warp", _row(self.save_btn, self.restore_btn, self.retime_btn)),
+            self.detail_btn, self.detail_box), u"タイムワープ")
+        self.tabs.addTab(_tab(
+            _group(u"タイムスライダー", _row(self.time_sync_check, self.follow_check, None),
+                   _note(u"Maya と AE のどちらで時間を動かしても、もう片方が合わせます（AE のパネルと共通）")),
+            _group(u"シーン設定", checks, _row(self.settings_to_ae, self.settings_from_ae),
+                   _note(u"受け取る側で確認してから適用します"))), u"同期・設定")
+        self.tabs.addTab(_tab(
+            _group(u"レイヤー（BG スライド・カメラワーク）", self.pm_summary, _row(self.pm_layer_map, self.pm_viewer),
+                   _note(u"つなぐのはレイヤーマップで。AE のパネルの「レイヤーの初期位置を Maya へ」で基準を記録します")),
+            _group(u"AE の動きを Maya へ", self.live_check, self.motion_btn,
+                   _note(u"つないだレイヤーの動きを、各 Maya レイヤーの専用カメラのキーにします"))), u"レイヤー")
+        self.tabs.addTab(_tab(
+            _group(u"解像度の枠",
+                   _row(QtWidgets.QLabel(u"幅"), self.guide_width, QtWidgets.QLabel(u"高さ"), self.guide_height,
+                        self.guide_preset),
+                   _row(None, self.show_guide_btn, self.clear_guide_btn),
+                   _note(u"AE のパネルの「解像度の枠」でも出せます")),
+            _group(u"AE のキーのマーカー", _row(self.markers_label, self.clear_markers_btn))), u"その他")
+        if cmds.optionVar(exists=TAB_VAR):
+            self.tabs.setCurrentIndex(int(cmds.optionVar(q=TAB_VAR)))
+        self.tabs.currentChanged.connect(lambda index: cmds.optionVar(intValue=(TAB_VAR, index)))
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setSpacing(6)
+        layout.addLayout(head)
+        layout.addWidget(state)
+        layout.addLayout(_row(QtWidgets.QLabel("Origin frame"), self.origin, origin_note, None))
+        layout.addWidget(self.tabs, 3)
+        layout.addWidget(self.log, 1)
+        self.resize(440, 600)
 
         service.add_listener(self.on_event)
+        self.show_detail()
         self.refresh()
         self.show_stored_markers()
         self.refresh_pixel_mapping()
+
+    def show_detail(self, *_args):
+        opened = self.detail_btn.isChecked()
+        self.detail_box.setVisible(opened)
+        self.detail_btn.setArrowType(QtCore.Qt.DownArrow if opened else QtCore.Qt.RightArrow)
+        self.detail_btn.setText(u"詳細（モード: %s、許容誤差: %g フレーム）" % (
+            self.mode.currentText(), self.tolerance.value()))
+
+    def toggle_live(self, enabled: bool):
+        try:
+            service.set_live_sync(enabled)
+        except Exception as exc:
+            self.write(u"リアルタイム同期を切り替えられませんでした: %s（先に接続してください）" % exc)
+        self.refresh()
 
     # -- actions -----------------------------------------------------------------
     def toggle_connection(self):
         if service.is_connected():
             service.disconnect()
             return
-        self.write("connecting (the server is started if needed)...")
+        self.write(u"接続しています（必要ならサーバーを起動します）...")
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
         try:
             welcome = service.connect(start_server=True)
             if welcome.get("note"):
                 self.write(welcome["note"])
         except Exception as exc:
-            self.write("connect failed: %s" % exc)
+            self.write(u"接続できませんでした: %s" % exc)
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
         self.refresh()
@@ -279,12 +348,12 @@ class SyncBridgePanel(QtWidgets.QDialog):
         try:
             if direction == "maya2ae":
                 service.send_to_ae(self.options())
-                self.write("Maya → AE: confirm in After Effects...")
+                self.write(u"タイムワープを AE へ: After Effects で確認してください...")
             else:
                 service.receive_from_ae(self.options())
-                self.write("AE → Maya: waiting for After Effects...")
+                self.write(u"AE から読み込み: After Effects の応答を待っています...")
         except Exception as exc:
-            self.write("cannot start the transfer: %s" % exc)
+            self.write(u"転送を始められませんでした: %s" % exc)
             return
         self.busy = True
         self.refresh()
@@ -453,7 +522,7 @@ class SyncBridgePanel(QtWidgets.QDialog):
         """Show the markers stored in this scene (also in the view, where the plug-in draws them)."""
         data = key_markers.stored()
         if not data:
-            self.markers_label.setText(u"このシーンにはマーカーがありません。AE のパネルの「キーのマーカーを Maya へ」で送れます。")
+            self.markers_label.setText(u"このシーンにはマーカーがありません。AE のパネルの「キーのマーカー」で送れます。")
             self.clear_markers_btn.setEnabled(False)
             return
         frames = [m["frame"] for m in data.get("markers") or []]
@@ -489,34 +558,36 @@ class SyncBridgePanel(QtWidgets.QDialog):
         if event == "transfer_result":
             self.busy = False
             if payload["kind"] == "error":
-                self.write("failed: %s" % payload["data"].get("message"))
+                self.write(u"転送できませんでした: %s" % payload["data"].get("message"))
             else:
                 data = payload["data"]
                 self.write(protocol.describe_result(data))
                 if data.get("message"):
                     self.write(data["message"])
                 for w in (data.get("report") or {}).get("warnings", []):
-                    self.write("warning: %s" % w)
+                    self.write(u"注意: %s" % w)
         elif event == "disconnected":
             self.busy = False
             self._had_ae = False
-            self.write("disconnected: %s" % payload)
+            self.write(u"切断しました: %s" % payload)
         elif event == "connected":
-            self.write("connected as %s" % payload.get("client_id"))
+            self.write(u"サーバーに接続しました（ID %s）" % payload.get("client_id"))
         elif event == "request":
             if payload == "apply.request":
-                self.write("AE → Maya: confirm the dialog in Maya...")
+                self.write(u"AE から読み込み: Maya の確認ダイアログで適用してください...")
         elif event == "applied":
             status = payload.get("status")
             if status == "applied":
                 rb = payload.get("readback") or {}
-                self.write("AE → Maya applied %s keys, readback %s (max %.4f f). Undo once to revert."
+                self.write(u"AE から読み込みました: キー %s 個、読み戻し %s（最大 %.4f フレーム）。元に戻すときは Ctrl+Z を 1 回。"
                            % (payload.get("keys"), "PASS" if rb.get("passed") else "FAIL",
                               rb.get("max_error_frames", float("nan"))))
             elif status == "cancelled":
-                self.write("AE → Maya cancelled (nothing changed)")
+                self.write(u"AE からの読み込みはキャンセルしました（何も変更していません）。")
             else:
-                self.write("AE → Maya failed: %s" % payload.get("message"))
+                self.write(u"AE から読み込めませんでした: %s" % payload.get("message"))
+        elif event == "live_applied":
+            self.write(payload["text"])
         elif event == "markers":
             if payload.get("status") == "applied":
                 self.write(u"AE「%s / %s」のキーのマーカー %d 個を受け取りました（フレーム %s〜%s）。"
@@ -528,7 +599,7 @@ class SyncBridgePanel(QtWidgets.QDialog):
             self.show_stored_markers()
         elif event == "guide":
             if payload.get("status") == "applied":
-                self.write(u"AE のコンプ「%s」（%dx%d）の枠を、カメラ %s のビューに表示しました（Maya のレンダー %dx%d）。"
+                self.write(u"AE のコンポ「%s」（%dx%d）の枠を、カメラ %s のビューに表示しました（Maya のレンダー %dx%d）。"
                            % (payload.get("name") or "", payload["comp"][0], payload["comp"][1], payload["camera"],
                               payload["render"][0], payload["render"][1]))
                 for w in payload.get("warnings") or []:
@@ -555,14 +626,14 @@ class SyncBridgePanel(QtWidgets.QDialog):
             elif payload.get("status") == "applied":
                 values = u"、".join(u"%s %.6g" % (k, v) for k, v in payload["values"].items()
                                    if not isinstance(v, bool))
-                self.write(u"AE の BG の位置をカメラに設定しました: %s（%s、ずれ %.3f, %.3f px、計算上の誤差 %.1e px）。"
+                self.write(u"AE のレイヤーの位置をカメラに設定しました: %s（%s、ずれ %.3f, %.3f px、計算上の誤差 %.1e px）。"
                            u"元に戻すときは Ctrl+Z を 1 回。" % (
                                payload["mapping"]["text"], values, payload["shift_px"][0], payload["shift_px"][1],
                                payload["max_error_px"]))
                 for w in payload.get("warnings") or []:
                     self.write(u"注意: %s" % w)
             else:
-                self.write(u"AE の BG の位置を設定できませんでした: %s" % payload.get("message"))
+                self.write(u"AE のレイヤーの位置を設定できませんでした: %s" % payload.get("message"))
             self.refresh_pixel_mapping()
         elif event == "layer_map":                       # changed in the layer map window
             self.refresh_pixel_mapping()
@@ -581,26 +652,21 @@ class SyncBridgePanel(QtWidgets.QDialog):
         elif event == "peers":
             ae_now = [p for p in payload if p["app"] == "ae"]
             if bool(ae_now) != self._had_ae:
-                self.write("After Effects %s" % ("connected" if ae_now else "disconnected"))
+                self.write(u"After Effects がつながりました" if ae_now else u"After Effects が切断しました")
             self._had_ae = bool(ae_now)
         elif event == "error":
-            self.write("error: %s" % payload.get("message"))
+            self.write(u"エラー: %s" % payload.get("message"))
         self.refresh()
 
     def refresh(self):
+        from .layer_map_view import show_live
         connected = service.is_connected()
-        if connected:
-            self.status.setText("Server: connected (%s)" % service.client().client_id)
-        else:
-            self.status.setText("Server: not connected")
-        self.connect_btn.setText("Disconnect" if connected else "Connect")
-        ae = [p for p in service.peers() if p["app"] == "ae"]
-        if not connected:
-            self.peer_label.setText("")
-        elif ae:
-            self.peer_label.setText("After Effects: connected (%s)" % (ae[-1].get("document") or ae[-1]["client_id"]))
-        else:
-            self.peer_label.setText("After Effects: not connected")
+        _dot(self.server_state, u"サーバー: 接続中" if connected else u"サーバー: 未接続", connected)
+        self.server_state.setToolTip(u"ID %s" % service.client().client_id if connected else u"")
+        self.connect_btn.setText(u"切断" if connected else u"接続")
+        ae = [p for p in service.peers() if p["app"] == "ae"] if connected else []
+        _dot(self.ae_state, u"After Effects: 接続中（%s）" % (ae[-1].get("document") or ae[-1]["client_id"]) if ae
+             else u"After Effects: 未接続", bool(ae))
         enabled = connected and bool(ae) and not self.busy
         self.to_ae.setEnabled(enabled)
         self.from_ae.setEnabled(enabled)
@@ -613,6 +679,14 @@ class SyncBridgePanel(QtWidgets.QDialog):
             check.blockSignals(False)
         self.time_sync_check.setEnabled(connected)
         self.follow_check.setEnabled(connected)
+        self.time_sync_check.setStyleSheet("QCheckBox { color: %s; font-weight: bold; }" % GREEN
+                                           if state["enabled"] else "")
+        time_on = connected and bool(state["enabled"])
+        _dot(self.time_state, u"タイムスライダー同期: %s" % (u"オン" if time_on else u"オフ"), time_on)
+        live = service.live_sync_state()
+        live_on = connected and bool(live["enabled"])
+        show_live(self.live_check, live["enabled"], connected, len(live.get("layers") or []))
+        _dot(self.live_state, u"リアルタイム同期: %s" % (u"オン" if live_on else u"オフ"), live_on)
 
     def write(self, text: str):
         self.log.appendPlainText(str(text))

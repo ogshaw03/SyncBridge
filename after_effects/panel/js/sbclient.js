@@ -109,6 +109,9 @@
     // run one at a time in AE, so a read queued before setTime delays it.
     var TIME_POLL_MS = 50;
     var QUIET_AFTER_SET_MS = 300;
+    // Live sync (D-41): how often the watched layers are read. A change is sent when the next read shows
+    // the same thing again (the user is done with it), so a drag is sent once, after it.
+    var LIVE_POLL_MS = 400;
 
     function SBPanelClient(opts) {
         this.host = opts.host;
@@ -118,6 +121,7 @@
         this.onTimeSync = opts.onTimeSync || function () {};
         this.onOrigin = opts.onOrigin || function () {};      // the shared Origin frame changed (D-38)
         this.onSettingsApplied = opts.onSettingsApplied || function () {};
+        this.onLiveSync = opts.onLiveSync || function () {};   // live sync switched / layers changed (D-41)
         this.setInterval = opts.setInterval || function (fn, ms) { return setInterval(fn, ms); };
         this.clearInterval = opts.clearInterval || function (id) { clearInterval(id); };
         this.now = opts.now || function () { return Date.now(); };
@@ -138,6 +142,11 @@
         this._wantTime = null;
         this._lastApplied = null;
         this._lastSent = null;
+        this.liveSync = { enabled: false, layers: [] };
+        this._liveTimer = null;
+        this._livePolling = false;
+        this._livePrints = null;        // what was read last, per watched layer
+        this._liveSent = null;          // what Maya was told about last, per watched layer
     }
 
     SBPanelClient.prototype.connected = function () {
@@ -168,6 +177,7 @@
             self.clientId = null;
             self.peers = [];
             self._setTimeState({ enabled: false, follow_playback: false });
+            self._setLiveState({ enabled: false, layers: [] });
             var pending = self.pending;
             self.pending = {};
             Object.keys(pending).forEach(function (id) {
@@ -282,6 +292,57 @@
         if (!this.connected() || !isFinite(origin)) { return false; }
         this._send(message('timing.set', { origin: Number(origin) }));
         return true;
+    };
+
+    // Live sync (D-41): one switch shared with Maya through the hub (Maya says which layers to watch).
+    SBPanelClient.prototype.setLiveSync = function (enabled) {
+        if (!this.connected()) { throw new Error('not connected'); }
+        this._send(message('live.sync', { enabled: !!enabled }));
+    };
+
+    SBPanelClient.prototype._setLiveState = function (state) {
+        var wasOn = this.liveSync.enabled, oldKey = JSON.stringify(this.liveSync.layers);
+        this.liveSync = { enabled: !!state.enabled, layers: state.layers || [], by: state.by || null };
+        if (oldKey !== JSON.stringify(this.liveSync.layers) || !wasOn) {
+            this._livePrints = null;        // a new list: the next read is the starting point
+            this._liveSent = null;
+        }
+        var self = this;
+        if (this.liveSync.enabled && !this._liveTimer) {
+            this._liveTimer = this.setInterval(function () { self._pollLive(); }, LIVE_POLL_MS);
+        } else if (!this.liveSync.enabled && this._liveTimer) {
+            this.clearInterval(this._liveTimer);
+            this._liveTimer = null;
+        }
+        if (wasOn !== this.liveSync.enabled || oldKey !== JSON.stringify(this.liveSync.layers)) {
+            this.onLiveSync(this.liveSync);
+        }
+    };
+
+    // Read the watched layers; tell Maya about the ones that changed and are not changing any more.
+    SBPanelClient.prototype._pollLive = function () {
+        var self = this, layers = this.liveSync.layers;
+        if (this._livePolling || !this.liveSync.enabled || !layers.length) { return; }
+        this._livePolling = true;
+        this.host.call('layersFingerprint', [JSON.stringify({ layers: layers })], function (r) {
+            self._livePolling = false;
+            if (r.error || !r.prints || layers !== self.liveSync.layers || !self.liveSync.enabled) { return; }
+            var before = self._livePrints, changed = [], i;
+            self._livePrints = r.prints;
+            if (!self._liveSent) { self._liveSent = r.prints.slice(); return; }    // the starting point
+            if (!before) { return; }
+            for (i = 0; i < r.prints.length; i++) {
+                if (r.prints[i] !== null && r.prints[i] === before[i] && r.prints[i] !== self._liveSent[i]) {
+                    changed.push(layers[i]);
+                    self._liveSent[i] = r.prints[i];
+                }
+            }
+            if (changed.length) {
+                self._send(message('live.changed', { layers: changed }));
+                self.onLog('リアルタイム同期: ' + changed.map(function (l) { return l.layer; }).join('、') +
+                           ' の変更を Maya に送りました');
+            }
+        });
     };
 
     SBPanelClient.prototype._setTimeState = function (state) {
@@ -456,6 +517,9 @@
         case 'time.sync.state':
             this._setTimeState(msg.data);
             break;
+        case 'live.sync.state':
+            this._setLiveState(msg.data);
+            break;
         case 'timing.state':
             if (msg.data.by !== this.clientId) { this.onOrigin(Number(msg.data.origin)); }
             break;
@@ -509,6 +573,7 @@
 
     SBPanelClient.describeChanges = describeChanges;
     SBPanelClient.TIME_POLL_MS = TIME_POLL_MS;
+    SBPanelClient.LIVE_POLL_MS = LIVE_POLL_MS;
     SBPanelClient.QUIET_AFTER_SET_MS = QUIET_AFTER_SET_MS;
     SBPanelClient.jsxCall = jsxCall;
     SBPanelClient.userMessage = userMessage;

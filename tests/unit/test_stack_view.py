@@ -60,5 +60,56 @@ class StackViewTest(unittest.TestCase):
             sv.ndc_affine(cam(orthographic=True, ortho_width=30.0), 100, 100)
 
 
+class ViewerPanZoomTest(unittest.TestCase):
+    """D-44: the viewer camera's own 2D pan / zoom are the view's; the editing camera's are folded."""
+
+    CAMS = StackViewTest.CAMS
+    POINTS = StackViewTest.POINTS
+    VIEW = (1200, 700)
+
+    def test_folding_keeps_the_picture(self):
+        for camera in self.CAMS:
+            a = sv.ndc_affine(camera, *self.VIEW)
+            b = sv.ndc_affine(sv.fold_pan_zoom(camera), *self.VIEW)
+            for p in self.POINTS:
+                for x, y in zip(sv.apply_affine(a, p), sv.apply_affine(b, p)):
+                    self.assertAlmostEqual(x, y)
+
+    def test_no_view_pan_zoom_is_the_identity(self):
+        for camera in self.CAMS:
+            affine = sv.view_affine(camera, sv.with_view(camera, 0.0, 0.0, 1.0), *self.VIEW)
+            for got, want in zip(affine, (1.0, 0.0, 0.0, 0.0, 1.0, 0.0)):
+                self.assertAlmostEqual(got, want)
+
+    def test_other_layers_follow_the_view(self):
+        # a layer drawn with view_affine o its own camera lands where the viewer camera puts the same point
+        editing, other = self.CAMS[1], self.CAMS[2]
+        viewer = sv.with_view(editing, 0.04, -0.01, 0.5)          # zoomed in 2x and panned
+        va = sv.view_affine(editing, viewer, *self.VIEW)
+        for p in self.POINTS:
+            through_viewer = sv.apply_affine(sv.ndc_affine(viewer, *self.VIEW), p)
+            through_editing = sv.map_point(va, sv.apply_affine(sv.ndc_affine(editing, *self.VIEW), p))
+            for x, y in zip(through_viewer, through_editing):
+                self.assertAlmostEqual(x, y)
+        # zoom 0.5 doubles the distances on screen
+        a, b = sv.map_point(va, (0.0, 0.0)), sv.map_point(va, (0.1, 0.0))
+        self.assertAlmostEqual(abs(b[0] - a[0]), 0.2)
+        layer_affine = sv.compose(va, sv.ndc_affine(other, *self.VIEW))
+        self.assertIsNotNone(layer_affine)
+
+    def test_the_ray_goes_through_the_clicked_point(self):
+        camera = self.CAMS[2]
+        affine = sv.compose(sv.view_affine(camera, sv.with_view(camera, 0.02, 0.0, 0.7), *self.VIEW),
+                            sv.ndc_affine(camera, *self.VIEW))
+        for p in self.POINTS:
+            ndc = sv.apply_affine(affine, p)
+            u, v, w = sv.ray_direction(affine, ndc)
+            self.assertAlmostEqual(u, p[0] / -p[2])
+            self.assertAlmostEqual(v, p[1] / -p[2])
+            self.assertEqual(w, -1.0)
+        self.assertEqual(sv.pixel_to_ndc(600, 350, *self.VIEW), (0.0, 0.0))
+        self.assertEqual(sv.pixel_to_ndc(0, 0, *self.VIEW), (-1.0, 1.0))
+
+
 if __name__ == "__main__":
     unittest.main()

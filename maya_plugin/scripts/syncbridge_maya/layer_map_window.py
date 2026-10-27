@@ -55,10 +55,6 @@ class LayerMapWindow(QtWidgets.QWidget):
         layout.addWidget(self.status)
 
         e = self.editor
-        e.set_new_method(layer_mapping.defaults()["method"])
-        e.new_method_changed.connect(lambda method: layer_mapping.set_defaults(method=method))
-        e.set_new_mode(layer_mapping.defaults()["mode"])
-        e.new_mode_changed.connect(lambda mode: layer_mapping.set_defaults(mode=mode))
         e.reload_requested.connect(self.load_ae_layers)
         e.add_selection_requested.connect(self.add_ae_selection)
         e.hide_ae_requested.connect(lambda key: self._do(
@@ -101,6 +97,7 @@ class LayerMapWindow(QtWidgets.QWidget):
         self.motion = motion_transfer.MotionTransfer(self, self.say)        # Phase 3 (D-30), shared with the viewer
         e.motion_requested.connect(self.motion.link)
         e.motion_all_requested.connect(self.motion.all)
+        e.live_toggled.connect(self._toggle_live)
         e.view_layer_requested.connect(self.view_layer)
         e.view_all_requested.connect(self.view_all)
         e.viewer_requested.connect(self._open_viewer)
@@ -111,6 +108,7 @@ class LayerMapWindow(QtWidgets.QWidget):
         self._jobs = [cmds.scriptJob(event=[name, self.refresh]) for name in
                       ("Undo", "Redo", "SceneOpened", "NewSceneOpened")]
         self.refresh()
+        self._show_live()
         if _last_ae is None and service.is_connected():
             self.load_ae_layers()
 
@@ -276,7 +274,7 @@ class LayerMapWindow(QtWidgets.QWidget):
                 self.refresh()
                 return
             try:
-                added = layer_mapping.show_ae_layers(aes)
+                added, links = layer_mapping.add_ae_layers(aes)
             except Exception as exc:
                 self.say(u"マップに追加できませんでした: %s" % exc, error=True)
                 return
@@ -284,6 +282,11 @@ class LayerMapWindow(QtWidgets.QWidget):
             text = u"%d 個をマップに追加しました（メインのコンポ「%s」）: %s" % (added, main.get("name"), u"、".join(names))
             if added < len(aes):
                 text += u"（%d 個はすでにマップにあります）" % (len(aes) - added)
+            if links:
+                # one Maya layer per AE layer (D-43): the user sets the camera and the objects by hand
+                text += (u"\nAE のレイヤー %d 個を Maya レイヤーにつなぎました（素材カメラ・Film Translate・Scale・Roll。同じ名前の"
+                         u"Maya レイヤーがあればそれを使い、なければ作りました）。カメラ未設定のものは、右の欄で素材を"
+                         u"書き出したカメラと表示するオブジェクトを設定してください。" % len(links))
             same = len(set((a.get("comp_id"), a.get("layer_id")) for a in aes))
             if same < len(aes):
                 text += (u"\n同じプリコンポがメインのコンポの中で複数の場所に使われているので、経路ごとに追加しました。"
@@ -397,6 +400,24 @@ class LayerMapWindow(QtWidgets.QWidget):
     def on_event(self, event, payload):
         if event == "pixelmap":                # a send from AE may have made or changed a link
             self.refresh()
+        elif event in ("live_sync", "connected", "disconnected"):
+            self._show_live()
+        elif event == "live_applied":
+            self.say(payload["text"], error=payload.get("error", False))
+
+    # -- D-41: live sync ----------------------------------------------------------------------------------
+    def _show_live(self):
+        live = service.live_sync_state()
+        layer_map_view.show_live(self.editor.live_check, live["enabled"], service.is_connected(),
+                                 len(live.get("layers") or []))
+
+    def _toggle_live(self, enabled: bool):
+        try:
+            service.set_live_sync(enabled)
+        except Exception as exc:
+            self.say(u"リアルタイム同期を切り替えられませんでした: %s（SyncBridge のパネルで Connect してください）" % exc,
+                     error=True)
+        self._show_live()
 
     def closeEvent(self, event):
         service.remove_listener(self.on_event)

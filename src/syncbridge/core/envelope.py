@@ -70,6 +70,10 @@ KINDS = (
     # one Origin frame for every panel (D-38)
     "timing.set",
     "timing.state",
+    "live.sync",
+    "live.sync.state",
+    "live.watch",
+    "live.changed",
     "error",
 )
 

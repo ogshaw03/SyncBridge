@@ -235,6 +235,9 @@ def apply_from_ae(info: dict, options: dict = None) -> dict:
     if not mapping.get("enabled", True):
         raise ValueError(u"対応付け「%s」は無効になっています。" % mapping["name"])
     mode = core_lm.mode_of(mapping)
+    if not core_lm.has_camera(mapping):
+        raise ValueError(u"AE のレイヤー「%s」の Maya レイヤーには、まだカメラが設定されていません。Maya のレイヤーマップで"
+                         u"カメラを設定してから、もう一度送ってください。" % ae["layer"])
     camera = layer_mapping.node_by_uuid(mapping["maya"]["camera_uuid"])
     if camera is None:
         raise ValueError(u"対応付け「%s」のカメラ（%s）がシーンにありません。" % (mapping["name"], mapping["maya"].get("camera")))

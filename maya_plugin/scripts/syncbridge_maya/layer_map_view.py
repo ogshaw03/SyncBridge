@@ -60,6 +60,28 @@ GAP = 14
 ae_key = core_lm.ae_key
 
 
+LIVE_TEXT = u"リアルタイム同期（AE → Maya）"
+LIVE_TIP = (u"オン: つないだ AE のレイヤーの位置やキーを AE で変え終えると、再生範囲の動きを読み直して専用カメラのキーを"
+            u"自動で更新します（確認なし、1 回ごとに Ctrl+Z で戻せます）。AE のパネル・ビューアーと共通のスイッチ。\n"
+            u"Maya で専用カメラのキーを変えたときは上書きしません（オンにし直すと AE の状態で上書きします）")
+
+
+def make_live_check() -> QtWidgets.QCheckBox:
+    """The live sync switch (D-41), the same in the layer map and the viewer."""
+    check = QtWidgets.QCheckBox(LIVE_TEXT)
+    check.setToolTip(LIVE_TIP)
+    return check
+
+
+def show_live(check: QtWidgets.QCheckBox, enabled: bool, connected: bool, layers: int = 0) -> None:
+    check.blockSignals(True)
+    check.setChecked(enabled)
+    check.blockSignals(False)
+    check.setEnabled(connected)
+    check.setText(LIVE_TEXT + (u"：%d レイヤー" % layers if enabled else u""))
+    check.setStyleSheet("QCheckBox { color: #6fd06f; font-weight: bold; }" if enabled else "")
+
+
 def ae_title(ae: dict) -> str:
     """'SC_PRE › BG' for a layer inside a precomp."""
     return u" › ".join([v.get("layer") or "?" for v in ae.get("via") or []] + [ae.get("layer") or "?"])
@@ -340,8 +362,6 @@ class LayerMapEditor(QtWidgets.QWidget):
     reload_requested = QtCore.Signal()                    # AE のレイヤーを読み込む
     add_selection_requested = QtCore.Signal()             # put the layers selected in AE on the map (D-40)
     hide_ae_requested = QtCore.Signal(object)             # AE node key: take it off the map
-    new_method_changed = QtCore.Signal(str)               # method for new links
-    new_mode_changed = QtCore.Signal(str)                 # mode for new links (relative / source, D-39)
     add_layer_requested = QtCore.Signal()                 # Maya レイヤーを追加
     link_requested = QtCore.Signal(object, str)           # (ae dict for core.layer_mapping.connect, layer id)
     unlink_requested = QtCore.Signal(str)                 # mapping id
@@ -351,6 +371,7 @@ class LayerMapEditor(QtWidgets.QWidget):
     record_reference_requested = QtCore.Signal(str)       # mapping id: the reference from AE at this frame (D-37)
     motion_requested = QtCore.Signal(str)                 # mapping id: transfer the AE layer's motion (Phase 3)
     motion_all_requested = QtCore.Signal()                # every link at once
+    live_toggled = QtCore.Signal(bool)                    # the live sync switch (D-41)
     view_layer_requested = QtCore.Signal(str)             # Maya layer id: show it in the view (D-31)
     view_all_requested = QtCore.Signal()                  # Isolate Select off
     viewer_requested = QtCore.Signal()                    # open the SyncBridge viewer (D-33)
@@ -384,33 +405,19 @@ class LayerMapEditor(QtWidgets.QWidget):
         self.all_check.toggled.connect(lambda _: self.rebuild())
         self.comp_label = QtWidgets.QLabel(u"AE: 未読み込み")
         self.comp_label.setStyleSheet("color: #9a9a9a;")
-        self.new_method = QtWidgets.QComboBox()
-        for method in ("pan_zoom", "film_roll", "film_translate", "film_offset"):
-            self.new_method.addItem(METHOD_LABELS[method], method)
-        self.new_method.setToolTip(u"新しくつなぐ線の方式（相対モードで始まります。あとから線ごとに変えられます）\n"
-                                   u"2D Pan/Zoom: 平行移動と拡大縮小\n"
-                                   u"Film Translate・Scale・Roll: 平行移動・拡大縮小・回転\n"
-                                   u"Film Translate / Film Offset: 平行移動だけ")
-        self.new_method.activated.connect(lambda i: self.new_method_changed.emit(self.new_method.itemData(i)))
         self.motion_all_btn = QtWidgets.QPushButton(u"すべてのアニメーションを転送…")
         self.motion_all_btn.setToolTip(u"すべての接続について、AE のレイヤーの動きを範囲の各フレームのキーとして"
                                        u"それぞれのカメラに打ちます（範囲の指定と確認は 1 回。Ctrl+Z 1 回で全部戻ります）")
         self.motion_all_btn.clicked.connect(self.motion_all_requested.emit)
+        self.live_check = make_live_check()
+        self.live_check.toggled.connect(self.live_toggled.emit)
         bar = QtWidgets.QHBoxLayout()                       # AE side
         for w in (self.add_sel_btn, self.reload_btn, self.all_check, self.comp_label):
             bar.addWidget(w)
         bar.addStretch(1)
-        self.new_mode = QtWidgets.QComboBox()
-        for mode in ("source", "relative"):
-            self.new_mode.addItem(core_lm.MODE_LABELS[mode], mode)
-        self.new_mode.setToolTip(u"素材カメラ: AE の素材を書き出したカメラを Maya レイヤーのカメラにすると、素材の大きさから直接合わせます"
-                                 u"（基準を合わせる手間なし）\n"
-                                 u"相対: 基準のフレームで Maya と AE の見え方を合わせて記録し、そこからの動きを足します")
-        self.new_mode.activated.connect(lambda i: self.new_mode_changed.emit(self.new_mode.itemData(i)))
+        # New links are always the source camera mode with Film Translate・Scale・Roll (D-43): no choice on the toolbar
+        # (the user, 2026-10-27). A link's mode and method are still changed in the inspector.
         bar2 = QtWidgets.QHBoxLayout()                      # Maya side
-        bar2.addWidget(QtWidgets.QLabel(u"新しい接続"))
-        bar2.addWidget(self.new_mode)
-        bar2.addWidget(self.new_method)
         bar2.addStretch(1)
         self.view_all_btn = QtWidgets.QPushButton(u"表示を戻す")
         self.view_all_btn.setToolTip(u"「このレイヤーで見る」をやめ、ビューにすべてを表示します（カメラはそのまま）")
@@ -424,6 +431,7 @@ class LayerMapEditor(QtWidgets.QWidget):
         bar2.addWidget(self.add_btn)
         bar2.addSpacing(12)
         bar2.addWidget(self.motion_all_btn)
+        bar.addWidget(self.live_check)
 
         self.scene = LayerMapScene(self)
         self.scene.link_requested.connect(self._on_link)
@@ -446,7 +454,9 @@ class LayerMapEditor(QtWidgets.QWidget):
         split.addWidget(self.view)
         split.addWidget(self.inspector)
         split.setStretchFactor(0, 1)
-        self.hint = QtWidgets.QLabel(u"AE のレイヤーの右の ● から Maya レイヤーへドラッグしてつなぎます。"
+        self.hint = QtWidgets.QLabel(u"「AE の選択を追加」で、AE のレイヤーごとに Maya レイヤーができてつながります"
+                                     u"（素材カメラ・Film Translate・Scale・Roll。カメラとオブジェクトは右の欄で設定）。"
+                                     u"つなぎ直すときは AE のレイヤーの右の ● から Maya レイヤーへドラッグします。"
                                      u"線を選んで Delete で外します（AE のノードは Delete でマップから外れます）。"
                                      u"Maya レイヤーのダブルクリックで、そのレイヤーだけをビューに表示。"
                                      u"ホイールで拡大縮小。")
@@ -457,12 +467,6 @@ class LayerMapEditor(QtWidgets.QWidget):
         lay.addLayout(bar2)
         lay.addWidget(split, 1)
         lay.addWidget(self.hint)
-
-    def set_new_method(self, method: str) -> None:
-        self.new_method.setCurrentIndex(max(0, self.new_method.findData(method)))
-
-    def set_new_mode(self, mode: str) -> None:
-        self.new_mode.setCurrentIndex(max(0, self.new_mode.findData(mode)))
 
     # -- inspector --------------------------------------------------------------------------------------
     def _build_inspector(self):

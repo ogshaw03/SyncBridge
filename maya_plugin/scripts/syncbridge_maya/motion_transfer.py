@@ -79,7 +79,10 @@ class MotionTransfer(object):
     def link(self, mapping_id: str):
         """One link (the selected wire)."""
         link = next((m for m in layer_mapping.stored() if m["id"] == mapping_id), None)
-        if link is not None:
+        if link is not None and not core_lm.has_camera(link):
+            self.say(u"AE のレイヤー「%s」の Maya レイヤーには、まだカメラが設定されていません。レイヤーマップで設定してください。"
+                     % link["ae"].get("layer"), error=True)
+        elif link is not None:
             self._transfer([link], [], u"AE のレイヤー「%s」の動きを、範囲の各フレームのキーとしてカメラ %s に打ちます。"
                            % (link["ae"].get("layer"), camera_label(link["maya"].get("camera"))))
 

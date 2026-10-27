@@ -10,6 +10,7 @@ thread through maya.utils.executeDeferred (H-MY-14):
     settings.export.request / settings.apply.request -> scene_settings (FPS, ranges, D-21)
     time.sync.state / time.set -> time_sync (time slider sync, D-22)
     pixelmap.apply.request -> pixel_mapping.apply_from_ae (AE BG position on the mapped camera, D-24)
+    live.sync.state / live.changed -> live_sync (AE layers to the dedicated cameras while it is on, D-41)
 
     import syncbridge_maya.service as svc
     svc.connect(start_server=True)
@@ -92,6 +93,9 @@ def _notify(event: str, payload) -> None:
 def announce(event: str, payload=None) -> None:
     """Tell the listeners about something done in Maya's own windows (e.g. "layer_map")."""
     _notify(event, payload)
+    if event == "layer_map":
+        from . import live_sync
+        live_sync.publish_watch()          # the links changed: the AE layers to watch may too (D-41)
 
 
 def _on_event(event: str, payload) -> None:
@@ -102,6 +106,8 @@ def _on_event(event: str, payload) -> None:
         _timesync.stop()
         _time_state.update(enabled=False, by=None)
         _notify("time_sync", dict(_time_state))
+        from . import live_sync
+        live_sync.on_state({"data": {"enabled": False, "layers": []}})
     elif event == "error":
         cmds.warning("SyncBridge: %s" % payload.get("message"))
     _notify(event, payload)
@@ -201,12 +207,14 @@ _scene_jobs: List[int] = []
 
 def _publish_origin() -> None:
     """The scene's Origin frame to the hub (on connect and when a scene is opened)."""
-    from . import timing
+    from . import live_sync, timing
     value = timing.origin()
     _timesync.origin = value
     if is_connected():
         _client.send("timing.set", {"origin": value})
     _notify("timing", value)
+    live_sync.reset()                      # another scene: its links and cameras (D-41)
+    live_sync.publish_watch(force=True)
 
 
 def _on_timing(msg: dict) -> None:
@@ -228,6 +236,28 @@ def _watch_scenes() -> None:
     del _scene_jobs[:]
     for event in ("SceneOpened", "NewSceneOpened"):
         _scene_jobs.append(cmds.scriptJob(event=[event, _publish_origin]))      # None in mayapy
+
+
+def _on_live_state(msg: dict) -> None:
+    from . import live_sync
+    live_sync.on_state(msg)
+
+
+def _on_live_changed(msg: dict) -> None:
+    from . import live_sync
+    live_sync.on_changed(msg)
+
+
+def live_sync_state() -> dict:
+    from . import live_sync
+    return dict(live_sync.state)
+
+
+def set_live_sync(enabled: bool) -> None:
+    """Switch the shared live sync of AE layers to Maya (D-41)."""
+    if not is_connected():
+        raise ConnectError("not connected to the SyncBridge server")
+    _client.send("live.sync", {"enabled": bool(enabled)})
 
 
 def client() -> Optional[SyncClient]:
@@ -258,7 +288,8 @@ def connect(start_server: bool = True, port: Optional[int] = None) -> dict:
                   "settings.export.request": _handle_settings_export,
                   "settings.apply.request": _handle_settings_apply,
                   "pixelmap.apply.request": _handle_pixelmap},
-        notices={"time.sync.state": _on_time_state, "time.set": _on_time_set, "timing.state": _on_timing},
+        notices={"time.sync.state": _on_time_state, "time.set": _on_time_set, "timing.state": _on_timing,
+                 "live.sync.state": _on_live_state, "live.changed": _on_live_changed},
         dispatch=maya.utils.executeDeferred,
         on_event=_on_event,
         version=cmds.about(version=True),

@@ -36,7 +36,7 @@ cmds.select(cam, cmds.polyCube()[0])
 layer, _ = layer_mapping.add_layer("BG")
 layer_mapping.set_defaults(method="pan_zoom")
 layer_mapping.connect({"comp_id": 1, "comp": "c", "layer_id": 5, "layer": "BG", "source": "bg",
-                       "source_width": 6000, "source_height": 4000}, layer["id"])
+                       "source_width": 6000, "source_height": 4000}, layer["id"], "pan_zoom", "relative")
 COMP = {"id": 1, "name": "c", "width": 1920, "height": 1080, "pixelAspect": 1, "time": 0}
 NULL = {"name": "PAN", "position": [960.0, 540.0], "anchorPoint": [50.0, 50.0], "scale": [100.0, 100.0],
         "rotation": 0.0, "threeD": False}
@@ -95,7 +95,7 @@ inner_layer, _ = layer_mapping.add_layer("BG_IN")
 VIA = [{"comp_id": 1, "comp": "c", "layer_id": 70, "layer": "SC_PRE"}]
 inner_ae = {"comp_id": 40, "comp": "SC_PRE", "layer_id": 9, "layer": "BG_IN", "source": "bg", "source_width": 6000,
             "source_height": 4000, "via": VIA}
-layer_mapping.connect(inner_ae, inner_layer["id"])
+layer_mapping.connect(inner_ae, inner_layer["id"], "pan_zoom", "relative")
 inner_link = [m for m in layer_mapping.stored() if m["ae"].get("via")][0]
 try:
     pixel_mapping.apply_from_ae({"comp": dict(COMP, id=40, name="SC_PRE"), "layer": {

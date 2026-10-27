@@ -44,7 +44,84 @@
 
 ## テスト結果
 
+### 2026-10-27（Windows 11, Python 3.10.6）
+
+- **0.1.10 の zip を作成（リリースはまだ、利用者の指示）:** `packaging\build_release.py` でテスト → ビルド → 署名 → zip。
+  `dist\SyncBridge-0.1.10.zip` 45.9MB、SHA-256 001245a6…、296 ファイル。新しいファイル（`viewer_camera.py`, `viewer_pick.py`,
+  `live_sync.py`, `server/livesync.py`, プラグイン r11）が入り、証明書・シーンが入っていないことを確認。
+  利用者の PC で film_roll への変更後に BG・BOOK・CHAR が AE と一致することを開発用の状態で確認。
+  **ビューアーでの選択操作はまだ不安定（H-MY-38/40 未解決）、インストール版での確認は未実施、未コミット**
+- **ビューアーの編集中レイヤーと 2D パン・ズーム（D-44、未コミット、利用者の要望）:** 新規 `viewer_camera.py`
+  （SB ビューカメラ）、`viewer_pick.py`（クリックしたレイヤーの判定）、`core.stack_view` に `compose` / `invert` /
+  `fold_pan_zoom` / `with_view` / `view_affine` / `ray_direction`、プラグイン r11（編集中はビューカメラ、ほかは同じ変化、枠も）、
+  `layer_stack.editing`、ビューアー（「編集中: …」、一覧の行クリック・「（編集中）」、「ズームを戻す」、クリックの監視）。
+  - テスト 389 件 OK（`test_stack_view` に 4 件）。mayapy 2023 で 18 項目 PASS（ビューカメラの描き方が専用カメラと一致、
+    保存されない、プラグイン r11 の読み込み、CHAR / BG のクリック判定、ピボット付近の判定、片付け）。
+  - **未確認（実機 GUI、H-MY-38・H-MY-40）:** Maya の選択・移動が編集中のレイヤーで見た目どおりか、\ キーの 2D Pan/Zoom で
+    ほかのレイヤーと枠が一緒に動くか、ほかのレイヤーのクリックで切り替わるか、Alt＋ドラッグでビューカメラが動かないか、
+    取り消しの履歴にビューカメラの作成が入らないか（mayapy では確かめられなかった）。
+  - 実機 1 回目（利用者）: 編集中の CHAR だけ大きく見えた。`tools/viewer_diagnose.py` でビューカメラの値は正しいと確認
+    （Zoom 1.3 = 余白）。パスはカメラ自身の投影で描き、Render Pan Zoom オフだと 2D Pan/Zoom が入らないと推定（H-MY-41）
+    → ビューカメラの Render Pan Zoom をオンに（既存のビューカメラも次の更新で直す）。
+  - 実機 2 回目（利用者）: レイヤーと枠は一緒に動いた。BG・BOOK が AE と合わない → D-43 の既定が Film Translate で、
+    横 3 倍のプレートの拡大縮小が表せなかった。利用者の意図は Film Translate・Scale・Roll だったので既定を `film_roll` に。
+    利用者のシーンの既存の接続は、スクリプトか右の欄で方式を変える。
+- **AE の選択を追加すると、つないだ Maya レイヤーを自動で作る（D-43、未コミット、利用者の要望）:** 1 対 1、素材カメラ・
+  Film Translate。カメラ・オブジェクトは手で設定。`core.layer_mapping.add_linked_layer` / `has_camera`、
+  `layer_mapping.add_ae_layers`、`layer_map_window.add_ae_selection`。カメラ未設定の接続は転送・リアルタイム同期・1 回送信で
+  理由を出して飛ばす。テスト 384 件 OK（単体テスト 1 件追加）。mayapy 2023 で: 3 個追加 → 3 レイヤー・3 接続、
+  もう一度押しても増えない、取り消し 1 回で全部戻る・やり直し、カメラ設定で専用カメラができ接続が付く、転送の対象になる。
+  マップの撮影 `docs/ui_audit/auto_layers_map.png`。**未確認: 実機の AE から追加すること。**
+  - 続けて「新しい接続」の選択欄を外した（利用者の指示）。手でつなぐときも素材カメラ・Film Translate、線ごとの変更は右の欄で。
+    同じ名前のつながっていない Maya レイヤーがあれば作らずに使う（`make_test_pan_scene.py` の CHAR / BOOK / BG もそれで使える）。
+    検証ツール `maya_motion_check` / `maya_pan_margin_check` / `maya_source_camera_check` は方式とモードを明示して渡すように
+    直し、mayapy 2023 で 3 本とも RESULT PASS。テスト 385 件 OK。
+- **ビューアーの枠の外の濃さを調整できるように（未コミット、利用者の要望）:** `viewer_window.py` の上のバーに「枠の外」
+  スライダー（0〜100%、既定 50%）。`layer_stack.shade` / `set_shade`（optionVar `syncBridgeViewerShade`）、
+  プラグイン `syncbridge_layer_stack.py` は r10 で `shade_color` を使う。mayapy 2023 で設定 → プラグインへの受け渡しと
+  範囲外の値の丸めを確認、`.venv` で 383 件 OK、バーのモック `docs/ui_audit/viewer_shade.png`。**未確認: 実機のビューで濃さが変わること**
+  （SB Dev でプラグインも読み直される。ビューのレンダラー名が「r10」になっているか）。
+- Maya パネルのタブの黒い縁: `QTabBar::tab` のスタイルシートを外して Maya 標準のタブに（利用者の指摘、実機で未確認）。
+- AE パネルが古いまま: この PC は 0.1.10 のインストール版（リンクでない）だった。アンインストール → `tools\dev_env_on.ps1` を
+  利用者が実行する手順を案内。
+- **Maya パネル・AE パネルを改善案のとおりに実装（D-42、未コミット）:** `maya_plugin/scripts/syncbridge_maya/ui.py`
+  （状態の ●、Origin frame、タブ 4 つ、詳細の折りたたみ、レイヤーのタブにリアルタイム同期とアニメーション転送、ログを日本語に）、
+  `after_effects/panel/js/main.js`・`css/panel.css`（状態、選択中のレイヤーの枠、タイムワープ・Maya へ送る・同期・シーン設定、
+  詳細は `<details>`）、`manifest.xml` の既定の高さ 460 → 680。ボタン名「レイヤーの初期位置を Maya へ」に合わせて
+  `motion.py`・`core/motion.py` の案内文、`PIXEL_MAPPING.md` も直した。
+  - テスト: `.venv` で 383 件 OK、`node --check main.js` OK。
+  - 見た目: mayapy 2023 / 2024 で本物の `ui.py` を撮影（`docs/ui_audit/new_maya_panel.png`、接続中は service を差し替えた表示）、
+    AE はブラウザで本物のパネルを幅 320 で撮影（`docs/ui_audit/new_ae_panel.png`、接続中は表示だけ書き換え）。
+  - **未確認: 実機の Maya・AE で触ること**（タブの記憶、詳細の開閉、AE の `<details>` が CEP で開くか、状態の ● の更新）。
+- **UI/UX の現状調査 `docs/UI_UX_AUDIT.md`（未コミット、利用者の依頼、調査のみ）:** 画面 7 つ・ダイアログ 12 種、構成図、各画面の詳細、
+  ワークフロー 9 つとステップ数、UX の課題（事実と推測を区別）、整理の候補。実際の UI のコードを Maya・AE の外で描いたモック画像
+  `docs/ui_audit/*.png`（実機のスクリーンショットではない）。
+- **Maya パネル・AE パネルの改善案のモック（未コミット、利用者が検討中）:** `docs/ui_audit/proposal/`
+  （`proposal_maya_compare.png` ほか。Maya はタブ 4 つ「タイムワープ / 同期・設定 / レイヤー / その他」、上に状態の ●、Origin frame は上、
+  Mode・Tolerance は「詳細」にしまう（利用者: Mode はほぼ触らない）。AE は状態・選択中のレイヤー・タイムワープ・Maya へ送る・同期・
+  シーン設定の順。作成スクリプト `maya_panel_mock.py`、`ae_panel_mock.html`）。→ 10-27 に利用者が承認し実装（上の D-42）。
+  利用者の指示（10-27）: AE の「BG の位置を Maya のカメラへ」は実質は基準の設定なので「レイヤーの初期位置を Maya へ」にする
+  （実装時は `motion.py`・`core/motion.py`・`ui.py`・`main.js` のログ・案内の文、`docs/PIXEL_MAPPING.md` の手順の名前も直す）。
+  Maya のタブは「その他」（ひらがなにしない）。
+  左右の順はモックのまま（そのパネルから見た向き）で実装した。元の未決: 送る / 読み込むボタンの左右の順（Maya 案は「AE へ」が左、AE 案は「Maya から」が左）を揃えるか。
+- 未コミットのもの: リアルタイム同期（D-41）、テスト版 0.1.10 のバージョン（4 か所）、この調査とモック、`make_test_pan_scene.py`、
+  `docs/STATUS_REPORT_2026-10-26.md`。テスト版 0.1.10 は会社の PC で実機確認待ち。
+
 ### 2026-10-26（Windows 11, Python 3.10.6）
+
+- **リアルタイム同期 AE → Maya（D-41、未コミット、利用者の要望）:** つないだ AE のレイヤーを変え終えると、専用カメラのキーを自動で更新。
+  スイッチはレイヤーマップ・ビューアー・AE パネルで共通（ハブの `LiveSync`、`live.sync` / `live.watch` / `live.changed`）。
+  AE: `layersFingerprint`（JSX）、パネルが 0.4 秒ごとに読み、次の読み取りで同じなら送る。Maya: `live_sync.py`（確認なし、
+  1 回ごとに 1 回の undo、最初だけバックアップ、Maya で変わったキーは上書きしない）。テスト 383 件 OK（ハブ・パネルの検出・
+  プロトコル）。mayapy 2023: 偽の AE で、反映・2 回目の更新・Maya での編集を上書きしない・オンにし直すと上書き・1 回の undo・
+  バックアップ 1 回を確認。**AE と Maya の実機で未確認（H-AE-34）。AE の再起動とハブの再起動が必要。**
+  利用者が会社の PC で試すため、テスト版 `SyncBridge-0.1.10.zip`（45.8 MB、SHA-256 4a724d27…、バージョン 4 か所を 0.1.10 に。
+  タグ・リリースなし）を作って送った。
+
+- **横 PAN のテストシーン `tools/pixel_mapping/make_test_pan_scene.py`（未コミット）:** アニメの撮影の流れどおり、Maya のカメラは固定、
+  キャラはその場歩き。BOOK・BG は望遠（200mm）の素材カメラ `PLATE_BOOK_CAM` / `PLATE_BG_CAM` で横 3 倍（5760×1080）の 1 枚、
+  キャラは SHOT_CAM の連番（`render_material`）。Maya レイヤーは CHAR→SHOT_CAM、BOOK・BG→素材カメラ、新しい接続は素材カメラモード。
+  mayapy 2023: 素材を 100% で ±1700px までスライドさせた見え方と、専用カメラのレンダーが平均差 0.001〜0.010 / 255 で一致。**GUI で未確認。**
 
 - **0.1.9 をリリース:** バージョンを 4 か所で 0.1.9 に。`SyncBridge-0.1.9.zip`（45.8 MB、SHA-256 da410562…）、リリースノート
   `docs/release_notes/0.1.9.md`、タグ v0.1.9。GitHub Releases のページは利用者が作る（この PC に GitHub CLI がない）。

@@ -219,6 +219,45 @@ class AeOnTheMapTest(unittest.TestCase):
         self.assertEqual(lm.show_ae(store, aes), 0)                      # already on the map
         self.assertEqual(lm.main_comp(store), self.MAIN)                 # the top comp, not the precomp
 
+    def test_an_added_ae_layer_gets_its_own_linked_maya_layer(self):
+        # D-43: one Maya layer per AE layer, source camera mode, Film Translate・Scale・Roll; the camera comes later
+        store = lm.empty_store()
+        aes = lm.selected_in_ae(self.info())
+        links = [lm.add_linked_layer(store, ae) for ae in aes]
+        self.assertEqual(len(store["maya_layers"]), 2)
+        self.assertEqual([layer["name"] for layer in store["maya_layers"]], ["BG", "BG"])
+        for link, layer in zip(links, store["maya_layers"]):
+            self.assertEqual((link["mode"], link["method"], link["maya_layer"]), ("source", "film_roll", layer["id"]))
+            self.assertFalse(lm.has_camera(link))
+            self.assertEqual(lm.camera_conflicts(store["mappings"], link), [])   # no camera: no conflict
+        self.assertIn(u"カメラ未設定", lm.describe(links[0]))
+        self.assertIsNone(lm.add_linked_layer(store, aes[0]))           # linked already: nothing new
+        self.assertEqual(len(store["maya_layers"]), 2)
+        self.assertEqual(lm.shown_keys(store), set(lm.ae_key(a) for a in aes))
+        self.assertEqual(lm.stack(store), [])                            # no camera, no objects: not drawn
+        # the camera set by hand: the link follows the dedicated camera
+        layer = store["maya_layers"][0]
+        lm.set_layer_camera(store, layer["id"], "CAM", "|CAM|CAMShape", "OWN", "|CAM|SB_BG_CAM|SB_BG_CAMShape")
+        self.assertTrue(lm.has_camera(links[0]))
+        self.assertEqual(links[0]["maya"]["camera_uuid"], "OWN")
+        self.assertFalse(lm.has_camera(links[1]))
+        with self.assertRaises(ValueError):                              # a normal link still needs a camera
+            lm.new_mapping(aes[0], {}, "film_translate", mode="source")
+        with self.assertRaises(ValueError):                              # and a relative one its layer's camera
+            lm.connect(store, dict(AE, layer_id=99), store["maya_layers"][1]["id"], mode="relative")
+
+    def test_a_maya_layer_of_the_same_name_is_used(self):
+        # made by hand (or by the test scene) before the AE layer was added: linked, not doubled
+        store = lm.empty_store()
+        own = lm.new_maya_layer("BG", "CAM", "|CAM|CAMShape")
+        store["maya_layers"].append(own)
+        link = lm.add_linked_layer(store, dict(AE, layer="BG"))
+        self.assertEqual(len(store["maya_layers"]), 1)
+        self.assertEqual((link["maya_layer"], link["maya"]["camera_uuid"]), (own["id"], "CAM"))
+        other = lm.add_linked_layer(store, dict(AE, layer_id=2, layer="BG"))    # BG is linked now: a new one
+        self.assertEqual(len(store["maya_layers"]), 2)
+        self.assertNotEqual(other["maya_layer"], own["id"])
+
     def test_take_off_and_linked_ones(self):
         store = lm.empty_store()
         layer = lm.new_maya_layer("BG", "CAM", "|CAM|CAMShape")

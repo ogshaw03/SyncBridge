@@ -183,20 +183,49 @@ def connect(store: dict, ae: dict, layer_id: str, method: str = "pan_zoom", mode
     layer = maya_layer(store, layer_id)
     if layer is None:
         raise ValueError("no Maya layer %r" % layer_id)
-    if not layer.get("camera_uuid"):
+    if not layer.get("camera_uuid") and mode != "source":
         raise ValueError(u"Maya レイヤー「%s」にカメラがありません。先にカメラを選んでください。" % layer["name"])
-    maya = driven_camera(layer)
+    maya = driven_camera(layer)          # no camera yet: set by hand later, the link follows (D-43)
     if bg:
         maya.update(bg_uuid=bg.get("uuid"), bg=bg.get("name"))
     old = find(store["mappings"], ae)
     if old is not None:
         old.update(maya_layer=layer_id, maya=dict(old.get("maya") or {}, **maya), reference=None)
         return old
-    link = new_mapping(ae, maya, method, name, mode)
+    link = new_mapping(ae, maya, method, name, mode, camera_required=False)
     link["maya_layer"] = layer_id
     store["mappings"].append(link)
     show_ae(store, [ae])                  # stays on the map when it is disconnected (D-40)
     return link
+
+
+# an AE layer put on the map gets its Maya layer linked like this: Film Translate・Scale・Roll (the user,
+# 2026-10-27: "Film Translate" meant this one; a plate wider than the comp needs the scale)
+NEW_LAYER_METHOD = "film_roll"
+NEW_LAYER_MODE = "source"
+
+
+def add_linked_layer(store: dict, ae: dict, method: str = NEW_LAYER_METHOD,
+                     mode: str = NEW_LAYER_MODE) -> Optional[dict]:
+    """An AE layer and a Maya layer are always one to one (the user, 2026-10-27): a new Maya layer named
+    after the AE layer, linked to it in the source camera mode with Film Translate・Scale・Roll (D-43). Its camera and
+    objects are set later by hand; until then the link has no camera and is left out of the transfers.
+    A Maya layer of the same name with no link yet (made by hand or by a test scene) is used instead of a
+    new one. None when the AE layer is linked already. Returns the new link."""
+    if find(store["mappings"], ae) is not None:
+        return None
+    name = ae.get("layer") or u"Layer %d" % (len(store["maya_layers"]) + 1)
+    layer = next((layer for layer in store["maya_layers"]
+                  if layer["name"] == name and not links_of(store, layer["id"])), None)
+    if layer is None:
+        layer = new_maya_layer(name)
+        store["maya_layers"].append(layer)
+    return connect(store, ae, layer["id"], method, mode)
+
+
+def has_camera(mapping: dict) -> bool:
+    """Has the link's Maya layer been given its camera (see add_linked_layer)?"""
+    return bool((mapping.get("maya") or {}).get("camera_uuid"))
 
 
 def disconnect(store: dict, mapping_id: str) -> None:
@@ -229,12 +258,14 @@ def dump_store(store: dict) -> Dict[str, object]:
 
 # -- links --------------------------------------------------------------------------------------------
 def new_mapping(ae: dict, maya: dict, method: str = "film_offset", name: Optional[str] = None,
-                mode: str = "absolute") -> dict:
+                mode: str = "absolute", camera_required: bool = True) -> dict:
+    """camera_required=False: a link whose Maya layer gets its camera later (add_linked_layer)."""
     if method not in METHODS:
         raise ValueError("method must be one of %s" % (METHODS,))
     if mode not in MODES:
         raise ValueError("mode must be one of %s" % (MODES,))
-    for key in ("camera_uuid", "bg_uuid") if mode == "absolute" else ("camera_uuid",):
+    needed = ("camera_uuid", "bg_uuid") if mode == "absolute" else ("camera_uuid",) if camera_required else ()
+    for key in needed:
         if not maya.get(key):
             raise ValueError("maya.%s is required" % key)
     return {
@@ -320,7 +351,7 @@ def camera_conflicts(mappings: List[dict], mapping: dict) -> List[dict]:
     take two different offsets at once (spec 4.2)."""
     out = []
     for m in mappings:
-        if m["id"] == mapping["id"] or not m.get("enabled", True):
+        if m["id"] == mapping["id"] or not m.get("enabled", True) or not has_camera(mapping):
             continue
         if m["maya"].get("camera_uuid") == mapping["maya"].get("camera_uuid") and m["method"] == mapping["method"]:
             out.append(m)
@@ -356,7 +387,7 @@ def describe(mapping: dict) -> str:
     """'BG Slide: AE c010 / BG -> BG_CAMShape (Film Offset)'"""
     labels = {"film_offset": "Film Offset", "film_translate": "Film Translate", "pan_zoom": "2D Pan/Zoom",
               "film_roll": u"Film Translate・Scale・Roll"}
-    cam = (mapping["maya"].get("camera") or "?").split("|")[-1]
+    cam = (mapping["maya"].get("camera") or u"カメラ未設定").split("|")[-1]
     mode = mode_of(mapping)
     extra = ""
     if mode == "relative" and not mapping.get("reference"):

@@ -352,6 +352,75 @@ var SBCep = (function () {
         } catch (e) { return fail(e); }
     }
 
+    // ---- live sync (D-41): a text that changes when anything that moves a watched layer changes -------
+    //   argsText = {layers: [{comp_id, comp, layer_id, layer, via}]} as JSON text.
+    //   The keys (time, value, interpolation, ease, spatial tangents), the value when not keyed and the
+    //   expression text of the transform properties (not opacity), of the layer, its parents and the
+    //   precomp layers above it (with their time remap and timing). Not sampled over time: an
+    //   expression that depends on time would look changed whenever the time moves.
+    function valueText(v) {
+        if (v instanceof Array) { return v.join(','); }
+        return String(v);
+    }
+
+    function easeText(eases) {
+        var out = [], i;
+        for (i = 0; i < eases.length; i++) { out.push(eases[i].speed + '/' + eases[i].influence); }
+        return out.join(',');
+    }
+
+    function propPrint(p) {
+        var out = [], k, n;
+        if (!p || p.propertyValueType === PropertyValueType.NO_VALUE) { return ''; }
+        n = p.numKeys;
+        if (n === 0) {
+            out.push('v' + valueText(p.value));
+        }
+        for (k = 1; k <= n; k++) {
+            out.push(p.keyTime(k) + ':' + valueText(p.keyValue(k)) + ':' + p.keyInInterpolationType(k) + ',' +
+                     p.keyOutInterpolationType(k));
+            try { out.push(easeText(p.keyInTemporalEase(k)) + '|' + easeText(p.keyOutTemporalEase(k))); } catch (e1) {}
+            if (p.isSpatial) {
+                try { out.push(valueText(p.keyInSpatialTangent(k)) + '|' + valueText(p.keyOutSpatialTangent(k))); } catch (e2) {}
+            }
+        }
+        if (p.canSetExpression && p.expressionEnabled) { out.push('x' + p.expression); }
+        return out.join(';');
+    }
+
+    function layerPrint(layer, depth) {
+        var tr = layer.property('ADBE Transform Group'), out = [], i, p;
+        out.push('L' + layer.id + ' s' + layer.startTime + ' r' + layer.stretch + ' 3' + layer.threeDLayer);
+        for (i = 1; i <= tr.numProperties; i++) {
+            p = tr.property(i);
+            if (p.matchName !== 'ADBE Opacity') { out.push(p.matchName + '=' + propPrint(p)); }
+        }
+        if (layer.parent && depth < 20) { out.push('P(' + layerPrint(layer.parent, depth + 1) + ')'); }
+        return out.join('\n');
+    }
+
+    function layersFingerprint(argsText) {
+        try {
+            var args = SBJSON.parse(argsText), prints = [], i, j, found, text;
+            for (i = 0; i < args.layers.length; i++) {
+                try {
+                    found = findLayer(args.layers[i]);
+                    text = layerPrint(found.layer, 0);
+                    for (j = 0; j < found.containers.length; j++) {
+                        text += '\nC' + j + '(' + layerPrint(found.containers[j], 0) + ' t' +
+                                found.containers[j].timeRemapEnabled + ' ' +
+                                (found.containers[j].timeRemapEnabled
+                                    ? propPrint(found.containers[j].property('ADBE Time Remapping')) : '') + ')';
+                    }
+                    prints.push(text);
+                } catch (e1) {
+                    prints.push(null);           // not found now: nothing is sent for it
+                }
+            }
+            return ok({ prints: prints });
+        } catch (e) { return fail(e); }
+    }
+
     // ---- layer map (D-28): the active comp's layers for Maya's node editor ---------------------------
     //   H-AE-28: FootageItem.mainSource is a FileSource (isStill: still or sequence / movie), a
     //            SolidSource or a PlaceholderSource; CompItem sources are precomps.
@@ -443,6 +512,7 @@ var SBCep = (function () {
         pixelMapInfo: pixelMapInfo,
         layersInfo: layersInfo,
         layerMotion: layerMotion,
+        layersFingerprint: layersFingerprint,
         info: info,
         exportSelected: exportSelected,
         applyEnvelope: applyEnvelope,

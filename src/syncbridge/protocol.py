@@ -44,6 +44,11 @@ Time slider sync (D-22), no replies:
     client -> server  time.update {t}    server -> the other app  time.set {t, source}
     client -> server  timing.set {origin}   server -> all  timing.state {origin, by}  (one Origin frame, D-38)
     (t = AE comp time in seconds; Maya converts with its origin frame, core.time_sync)
+Live sync of AE layers to Maya (D-41), no replies:
+    client -> server  live.sync {enabled}       server -> all  live.sync.state {enabled, layers, by}
+    maya -> server    live.watch {layers}       (the linked AE layers to watch; also in live.sync.state)
+    ae -> server      live.changed {layers}     server -> maya  live.changed {layers}  (while it is on)
+    layers = [{comp_id, comp, layer_id, layer, via}]
 A reply carries `reply_to` = the request's event_id. Failures are `error`
 {code, message} with `reply_to` when they answer a request.
 """
@@ -138,6 +143,10 @@ REQUIRED = {
     "time.set": ("t",),
     "timing.set": ("origin",),
     "timing.state": ("origin",),
+    "live.sync": ("enabled",),
+    "live.sync.state": ("enabled", "layers"),
+    "live.watch": ("layers",),
+    "live.changed": ("layers",),
     "error": ("code", "message"),
 }
 
@@ -151,6 +160,7 @@ RESULT_KINDS = ("apply.result", "transfer.result", "guide.result", "guide.apply.
                 "markers.result", "markers.apply.result", "settings.result", "settings.apply.result",
                 "pixelmap.result", "pixelmap.apply.result")
 TIME_KINDS = ("time.sync", "time.update", "timing.set")      # client -> server, no reply
+LIVE_KINDS = ("live.sync", "live.watch", "live.changed")      # client -> server, no reply (D-41)
 
 
 class ProtocolError(ValueError):
@@ -226,6 +236,11 @@ def decode(text) -> dict:
     if kind in ("timing.set", "timing.state") and (isinstance(data["origin"], bool)
                                                    or not isinstance(data["origin"], (int, float))):
         raise ProtocolError(E_BAD_MESSAGE, "origin must be a number (Maya frame)")
+    if kind in ("live.sync", "live.sync.state") and not isinstance(data["enabled"], bool):
+        raise ProtocolError(E_BAD_MESSAGE, "enabled must be true or false")
+    if kind in ("live.sync.state", "live.watch", "live.changed") and (
+            not isinstance(data["layers"], list) or not all(isinstance(x, dict) for x in data["layers"])):
+        raise ProtocolError(E_BAD_MESSAGE, "layers must be a list of AE layers")
     if kind == "hello" and data["app"] not in APPS:
         raise ProtocolError(E_BAD_MESSAGE, "app must be one of %s" % (APPS,))
     return msg

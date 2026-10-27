@@ -5,9 +5,11 @@ render override, D-32) and, below it, an AE-like layer list to order and show / 
     vw.show()
 
 The view is a model panel made by this window (H-MY-34: a modelPanel can live in a Qt layout of our
-window); it looks through the original camera of the top layer (for the gate and the HUD), while each
-layer is drawn through its own dedicated camera. Order and visibility are saved in the scene (one undo
-each). Nothing else in the scene changes.
+window). Each layer is drawn through its own dedicated camera. One layer is the editing one (D-44): the
+panel looks through the viewer camera that follows it (viewer_camera.py), so Maya's selection, manipulators
+and 2D Pan/Zoom tool work in that layer's picture; the other layers follow the same 2D pan / zoom. A click
+on another layer's mesh makes that layer the editing one (viewer_pick.py). Order and visibility are saved
+in the scene (one undo each). The viewer camera is not saved and goes when the window closes.
 """
 from __future__ import annotations
 
@@ -25,7 +27,7 @@ except ImportError:
 
 from syncbridge.core import layer_mapping as core_lm
 
-from . import layer_mapping, layer_stack, motion_transfer, service
+from . import layer_mapping, layer_stack, motion_transfer, service, viewer_camera
 from .layer_stack_view import LayerStackList
 
 WINDOW_NAME = "SyncBridgeViewer"
@@ -63,22 +65,47 @@ class ViewerWindow(QtWidgets.QWidget):
         self.margin_combo = QtWidgets.QComboBox()
         for value, text in ((1.0, u"なし"), (1.1, u"10%"), (1.2, u"20%"), (1.3, u"30%")):
             self.margin_combo.addItem(text, value)
-        self.margin_combo.setToolTip(u"枠を表示しているとき、ビューアーだけを少し縮めて枠のまわりを見せます"
+        self.margin_combo.setToolTip(u"ビューアーだけを少し縮めて枠のまわりを見せます。「ズームを戻す」で戻る大きさにもなります"
                                      u"（カメラの値は変えません。普通のビューと Playblast には影響しません）")
         self.margin_combo.setCurrentIndex(max(0, self.margin_combo.findData(round(layer_stack.margin(), 2))))
-        self.margin_combo.activated.connect(
-            lambda i: layer_stack.set_margin(self.margin_combo.itemData(i)))
+        self.margin_combo.activated.connect(self._set_margin)
+        # D-44: Maya's 2D Pan/Zoom tool zooms the viewer (the viewer camera); this goes back to the margin
+        self.reset_zoom_btn = QtWidgets.QPushButton(u"ズームを戻す")
+        self.reset_zoom_btn.setToolTip(u"2D パン/ズーム（\\ キー＋ドラッグ）で変えた見え方を、余白の大きさに戻します")
+        self.reset_zoom_btn.clicked.connect(self._reset_zoom)
+        # how dark outside the frame (the user, 2026-10-27): 0 = as the layers are, 100 = black
+        self.shade_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.shade_slider.setRange(0, 100)
+        self.shade_slider.setSingleStep(5)
+        self.shade_slider.setPageStep(10)
+        self.shade_slider.setFixedWidth(90)
+        self.shade_slider.setValue(int(round(layer_stack.shade() * 100)))
+        self.shade_label = QtWidgets.QLabel()
+        self.shade_label.setMinimumWidth(32)
+        for widget in (self.shade_slider, self.shade_label):
+            widget.setToolTip(u"枠の外側を暗くする濃さ（0% = 暗くしない、100% = 黒）。ビューアーだけの表示で、"
+                              u"レンダーと Playblast には影響しません")
+        self.shade_slider.valueChanged.connect(self._set_shade)
+        self._show_shade(self.shade_slider.value())
         # Phase 3 from here too: the layer map is not always open (the user, 2026-10-25)
         self.motion = motion_transfer.MotionTransfer(self, self.say)
         motion_btn = QtWidgets.QPushButton(u"すべてのアニメーションを転送…")
         motion_btn.setToolTip(u"つないだすべての AE のレイヤーの動きを、範囲の各フレームのキーとしてそれぞれの専用カメラに打ちます"
                               u"（範囲の指定と確認は 1 回。Ctrl+Z 1 回で全部戻ります）。1 つのレイヤーだけなら、下の一覧で右クリック")
         motion_btn.clicked.connect(self.motion.all)
+        from .layer_map_view import make_live_check
+        self.live_check = make_live_check()                 # D-41, shared with the layer map and AE
+        self.live_check.toggled.connect(self._toggle_live)
         bar = QtWidgets.QHBoxLayout()
         bar.addWidget(self.camera_label, 1)
+        bar.addWidget(self.live_check)
         bar.addWidget(motion_btn)
         bar.addWidget(QtWidgets.QLabel(u"余白"))
         bar.addWidget(self.margin_combo)
+        bar.addWidget(self.reset_zoom_btn)
+        bar.addWidget(QtWidgets.QLabel(u"枠の外"))
+        bar.addWidget(self.shade_slider)
+        bar.addWidget(self.shade_label)
         bar.addWidget(self.frame_btn)
         bar.addWidget(map_btn)
 
@@ -93,6 +120,10 @@ class ViewerWindow(QtWidgets.QWidget):
         self.layers.order_changed.connect(self._on_order)
         self.layers.visible_changed.connect(self._on_visible)
         self.layers.motion_requested.connect(self.motion.layer)
+        self.layers.editing_requested.connect(self.set_editing)
+        self._editing: Optional[str] = None               # the editing Maya layer's id (D-44)
+        self._view_widget = None
+        self._swallow_release = False
         self.status = QtWidgets.QLabel()
         self.status.setWordWrap(True)
         split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
@@ -119,6 +150,7 @@ class ViewerWindow(QtWidgets.QWidget):
         self._jobs = [cmds.scriptJob(event=[name, self.refresh]) for name in
                       ("Undo", "Redo", "SceneOpened", "NewSceneOpened")]
         self.refresh()
+        self._show_live()
 
     # -- the embedded Maya view ----------------------------------------------------------------------------
     def _make_panel(self):
@@ -134,10 +166,97 @@ class ViewerWindow(QtWidgets.QWidget):
         cmds.modelEditor(self.panel, e=True, rendererName="vp2Renderer",
                          rendererOverrideName=layer_stack.OVERRIDE_NAME, displayAppearance="smoothShaded",
                          grid=False)
+        self._watch_clicks()
+
+    def _watch_clicks(self):
+        """Clicks on another layer's mesh make it the editing layer (D-44, H-MY-40)."""
+        try:
+            import maya.api.OpenMayaUI as omui2
+            view = omui2.M3dView.getM3dViewFromModelPanel(self.panel)
+            self._view_widget = wrapInstance(int(view.widget()), QtWidgets.QWidget)
+            self._view_widget.installEventFilter(self)
+        except Exception as exc:                 # the viewer works without it (choose layers in the list)
+            self._view_widget = None
+            print("SyncBridge: viewer clicks are not watched: %s" % exc)
+
+    def eventFilter(self, obj, event):
+        if obj is not self._view_widget:
+            return False
+        kind = event.type()
+        if kind == QtCore.QEvent.Type.MouseButtonRelease and self._swallow_release:
+            self._swallow_release = False
+            return True
+        if kind != QtCore.QEvent.Type.MouseButtonPress or event.button() != QtCore.Qt.MouseButton.LeftButton:
+            return False
+        mods = event.modifiers()
+        if mods & (QtCore.Qt.KeyboardModifier.AltModifier | QtCore.Qt.KeyboardModifier.ControlModifier):
+            return False                         # camera tools / Maya's own selection modifiers
+        try:
+            return self._click(event)
+        except Exception as exc:                 # never break Maya's own click
+            print("SyncBridge: viewer click: %s" % exc)
+            return False
+
+    def _click(self, event) -> bool:
+        """True when the click went to another layer (it is taken; Maya does not see it)."""
+        from . import viewer_pick
+        pos = event.pos()
+        w, h = float(self._view_widget.width()), float(self._view_widget.height())
+        store = layer_mapping.store()
+        hit = viewer_pick.pick(store, pos.x(), pos.y(), w, h)
+        if hit is None or hit["layer"] == self._editing:
+            return False                         # Maya picks in the editing layer's picture
+        if viewer_pick.near_selection(store, pos.x(), pos.y(), w, h):
+            return False                         # probably the manipulator of what is selected
+        self.set_editing(hit["layer"])
+        add = bool(event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier)
+        cmds.select(hit["node"], add=add, replace=not add)
+        self._swallow_release = True
+        return True
 
     def _look_through(self, store: dict) -> Optional[str]:
         """The original camera of the top layer, shown or hidden (the frame and the HUD follow it)."""
         return layer_stack.view_camera(store)
+
+    # -- the editing layer and the 2D pan / zoom (D-44) ---------------------------------------------------
+    def set_editing(self, layer_id: Optional[str]):
+        """Edit this layer in the viewer: the panel looks through the viewer camera that follows it."""
+        store = layer_mapping.store()
+        layer = core_lm.maya_layer(store, layer_id)
+        dedicated = layer_mapping.node_by_uuid(core_lm.driven_camera(layer)["camera_uuid"]) if layer else None
+        if layer is not None and not dedicated:
+            self.say(u"Maya レイヤー「%s」にはカメラがないので、編集中にできません（レイヤーマップでカメラを設定してください）。"
+                     % layer["name"], error=True)
+            return
+        self._editing = layer_id if dedicated else None
+        self._apply_editing(store)
+        if layer is not None:
+            self.say(u"「%s」を編集中にしました。ビューでの選択・移動は、このレイヤーの見え方どおりになります。" % layer["name"])
+        self.refresh()
+
+    def _apply_editing(self, store: dict) -> Optional[str]:
+        """Make / move / remove the viewer camera for the editing layer; returns the camera to look through."""
+        ids = [item["id"] for item in reversed(core_lm.stack(dict(store, maya_layers=[
+            dict(layer, visible=True) for layer in store["maya_layers"]])))]        # drawable, top first
+        if self._editing not in ids:
+            self._editing = ids[0] if ids else None
+        self.layers.set_editing(self._editing)
+        if self._editing is None:
+            viewer_camera.remove()
+            return None
+        layer = core_lm.maya_layer(store, self._editing)
+        dedicated = layer_mapping.node_by_uuid(core_lm.driven_camera(layer)["camera_uuid"])
+        shape = viewer_camera.ensure(dedicated, initial_zoom=layer_stack.margin())
+        return cmds.listRelatives(shape, parent=True, fullPath=True)[0]
+
+    def _set_margin(self, index: int):
+        layer_stack.set_margin(self.margin_combo.itemData(index))
+        self._reset_zoom()
+
+    def _reset_zoom(self):
+        shape = viewer_camera.current()
+        if shape:
+            viewer_camera.set_view(shape, 0.0, 0.0, layer_stack.margin())
 
     # -- data ----------------------------------------------------------------------------------------------
     def refresh(self, *_args):
@@ -152,15 +271,21 @@ class ViewerWindow(QtWidgets.QWidget):
         self.layers.set_data(store)
         self._repair_cameras(store)
         try:
+            viewer = self._apply_editing(store)              # before publish: it hands the editing layer on
+        except Exception as exc:
+            viewer = None
+            self.say(u"編集中のレイヤーのビューを作れませんでした: %s" % exc, error=True)
+        try:
             stack = layer_stack.publish()
         except Exception as exc:
             self.say(u"重ねて表示できませんでした: %s" % exc, error=True)
             return
-        camera = self._look_through(store)
+        camera = viewer or self._look_through(store)
         if camera and self.panel:
             cmds.modelEditor(self.panel, e=True, camera=camera)
-        self.camera_label.setText(u"カメラ: %s（重ねて表示: %d レイヤー）" % (
-            core_lm.short_name(camera).replace("Shape", "") if camera else u"なし", len(stack)))
+        editing = core_lm.maya_layer(store, self._editing)
+        self.camera_label.setText(u"編集中: %s（重ねて表示: %d レイヤー）" % (editing["name"], len(stack)) if editing
+                                  else u"重ねて表示: %d レイヤー" % len(stack))
 
     def _repair_cameras(self, store: dict):
         """Dedicated cameras made by an earlier version: link what they lack from the original and put
@@ -224,6 +349,33 @@ class ViewerWindow(QtWidgets.QWidget):
     def on_event(self, event, payload):
         if event in ("layer_map", "pixelmap"):
             self.refresh()
+        elif event in ("live_sync", "connected", "disconnected"):
+            self._show_live()
+        elif event == "live_applied":
+            self.say(payload["text"], error=payload.get("error", False))
+
+    def _show_live(self):
+        from .layer_map_view import show_live
+        live = service.live_sync_state()
+        show_live(self.live_check, live["enabled"], service.is_connected(), len(live.get("layers") or []))
+
+    def _toggle_live(self, enabled: bool):
+        try:
+            service.set_live_sync(enabled)
+        except Exception as exc:
+            self.say(u"リアルタイム同期を切り替えられませんでした: %s（SyncBridge のパネルで Connect してください）" % exc,
+                     error=True)
+        self._show_live()
+
+    def _show_shade(self, value: int):
+        self.shade_label.setText(u"%d%%" % value)
+
+    def _set_shade(self, value: int):
+        self._show_shade(value)
+        try:
+            layer_stack.set_shade(value / 100.0)
+        except Exception as exc:
+            self.say(u"枠の外の濃さを変えられませんでした: %s" % exc, error=True)
 
     def _open_layer_map(self):
         from . import layer_map_window
@@ -236,9 +388,20 @@ class ViewerWindow(QtWidgets.QWidget):
             if job is not None and cmds.scriptJob(exists=job):      # None in mayapy (no UI)
                 cmds.scriptJob(kill=job, force=True)
         self._jobs = []
+        if self._view_widget is not None:
+            try:
+                self._view_widget.removeEventFilter(self)
+            except RuntimeError:                              # the panel's widget is gone already
+                pass
+            self._view_widget = None
         if self.panel and cmds.modelPanel(self.panel, exists=True):
             cmds.deleteUI(self.panel, panel=True)
         self.panel = None
+        try:                                                  # the viewer camera is the viewer's only (D-44)
+            viewer_camera.remove()
+            layer_stack.publish()
+        except Exception as exc:
+            print("SyncBridge: viewer camera: %s" % exc)
         super().closeEvent(event)
 
 

@@ -142,7 +142,7 @@ class CepClientTest(ServerFixture):
         self.assertEqual(len(self.applied), 1)
 
     def test_panel_sends_the_comp_guide(self):
-        # D-16: "解像度の枠を Maya へ" -> guide.request -> Maya draws the frame.
+        # D-16: "解像度の枠" -> guide.request -> Maya draws the frame.
         p, events = self.driver("guide")
         self.assertEqual(p.wait(30), 0, events)
         reply = [e for e in events if e["event"] == "result"][0]["reply"]
@@ -160,7 +160,7 @@ class CepClientTest(ServerFixture):
         self.assertEqual(self.guides, [])
 
     def test_panel_sends_key_markers(self):
-        # D-18: "キーのマーカーを Maya へ" -> the selected layer's export + the origin frame.
+        # D-18: "キーのマーカー" -> the selected layer's export + the origin frame.
         p, events = self.driver("markers")
         self.assertEqual(p.wait(30), 0, events)
         reply = [e for e in events if e["event"] == "result"][0]["reply"]
@@ -245,7 +245,7 @@ class CepClientTest(ServerFixture):
         self.assertEqual(self.settings_plans[0]["plan"]["apply"]["animation_range"], [1.0, 96.0])
 
     def test_panel_sends_the_bg_position(self):
-        # D-24: "BG の位置を Maya のカメラへ" -> the selected layer's transform -> Maya
+        # D-24: "レイヤーの初期位置を Maya へ" -> the selected layer's transform -> Maya
         p, events = self.driver("pixelmap")
         self.assertEqual(p.wait(30), 0, events)
         reply = [e for e in events if e["event"] == "result"][0]["reply"]

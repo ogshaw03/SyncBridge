@@ -124,6 +124,9 @@ mapping: --mode editable|precision --tol 0.1 --origin F --maya-in-origin F --may
 | `settings.export.request` / `settings.export.result` | サーバー ⇔ アプリ | `{}` / `{settings}`（Maya: `scene_settings.read()`、AE: `SBCep.sceneSettings()`） |
 | `settings.apply.request` / `settings.apply.result` | サーバー ⇔ 転送先 | `{plan: core.scene_sync の計画, message: 確認の文（日本語）}` / `{status, after?, backup?}` |
 | `settings.result` | サーバー → 要求元 | `status`（applied / unchanged / cancelled）, `direction`, `changes: [{item, label, before, after}]`, `warnings`, `readback: {passed, problems}`, `source`, `target`, `message` |
+| `live.sync` / `live.sync.state` | パネル → サーバー → 全員 | `{enabled}` / `{enabled, layers, by}`。AE のレイヤー → Maya のリアルタイム同期のスイッチと、見張る AE のレイヤー（D-41）。応答なし |
+| `live.watch` | Maya → サーバー | `{layers: [{comp_id, comp, layer_id, layer, via}]}`。見張る AE のレイヤー（転送できる接続のもの）。`live.sync.state` で AE に届く |
+| `live.changed` | AE → サーバー → Maya | `{layers}`（Maya へは `source` 付き）。変え終えた AE のレイヤー。スイッチがオンのときだけ中継 |
 | `layers.request` / `layers.result` | Maya → サーバー → Maya | `{[main_comp_id, main_comp]}` / `{comp, active, layers, source, target}`。メインのコンプ（なければ AE のアクティブなコンプ）のレイヤー一覧（レイヤーマップ、D-28, D-40）。履歴に残さない |
 | `layers.export.request` / `layers.export.result` | サーバー ⇔ AE | `{[main_comp_id, main_comp]}` / `SBCep.layersInfo(args)`: `comp: {id, name, width, height, frameRate, duration, time}`, `active: {id, name, selected}`（AE で開いているコンプ）, `layers: [{id, index, name, comp_id, comp, via, selected（AE で開いているコンプで選択中）, kind（still / sequence / movie / comp / solid / null / camera / light / text / shape / other）, enabled, source, source_id, width, height, inPoint, outPoint, threeD, parent, keyed: {position, scale, rotation}}]` |
 | `motion.request` / `motion.result` | Maya → サーバー → Maya | `{comp_id, comp, layer_id, layer, times: [AE のコンプ時間（秒）]}` / `{comp, layer, samples, source, target}`。Phase 3（D-30）。履歴に残さない |

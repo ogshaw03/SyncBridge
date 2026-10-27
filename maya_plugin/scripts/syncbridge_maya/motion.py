@@ -79,6 +79,9 @@ def record_reference(mapping_id: str, frame: float, reply: dict) -> dict:
 def plan(mapping_id: str, frames: List[float], reply: dict) -> Dict[str, object]:
     """Solve every frame (nothing is changed). reply = motion.result data {comp, layer, samples}."""
     link = _link(mapping_id)
+    if not core_lm.has_camera(link):
+        raise ValueError(u"接続「%s」の Maya レイヤーには、まだカメラが設定されていません。レイヤーマップで Maya レイヤーを選び、"
+                         u"素材を書き出したカメラを設定してください。" % link["name"])
     camera = layer_mapping.node_by_uuid(link["maya"]["camera_uuid"])
     if camera is None:
         raise ValueError(u"接続「%s」のカメラ（%s）がシーンにありません。" % (link["name"], link["maya"].get("camera")))
@@ -193,9 +196,11 @@ def describe_all(plans: List[dict], olds: List[dict], skipped: List[str]) -> str
 
 
 def apply_all(plans: List[dict], confirm: bool = True, parent=None, skipped: Optional[List[str]] = None,
-              text: Optional[str] = None) -> List[Dict[str, object]]:
+              text: Optional[str] = None, backup: bool = True,
+              chunk: str = "SyncBridge motion") -> List[Dict[str, object]]:
     """Key every planned camera: one confirmation, a backup per link, ONE undo chunk, readback.
-    Returns a result per plan ([{"status": "cancelled"}] when the user cancels)."""
+    Returns a result per plan ([{"status": "cancelled"}] when the user cancels). The live sync (D-41)
+    keys without asking and backs up only the first time (backup=False afterwards)."""
     for p in plans:
         trouble = problems(p["camera"], list(p["keys"]) + list(p["constant"]))
         if trouble:
@@ -208,8 +213,8 @@ def apply_all(plans: List[dict], confirm: bool = True, parent=None, skipped: Opt
                 describe_all(plans, olds, skipped or [])
         if not dialogs.ask("SyncBridge", text, u"キーを打つ", u"キャンセル", parent):
             return [{"status": "cancelled"}]
-    backups = [_backup(p, old) for p, old in zip(plans, olds)]
-    cmds.undoInfo(openChunk=True, chunkName="SyncBridge motion")
+    backups = [_backup(p, old) if backup else None for p, old in zip(plans, olds)]
+    cmds.undoInfo(openChunk=True, chunkName=chunk)
     try:
         for p in plans:
             start, end = p["frames"][0], p["frames"][-1]
@@ -249,8 +254,10 @@ def transferable(store: dict):
         name = m["ae"].get("layer") or m.get("name")
         if not m.get("enabled", True):
             skipped.append(u"%s: 無効になっています" % name)
+        elif not core_lm.has_camera(m):
+            skipped.append(u"%s: Maya レイヤーのカメラがまだ設定されていません（レイヤーマップで設定してください）" % name)
         elif core_lm.mode_of(m) == "relative" and not m.get("reference"):
-            skipped.append(u"%s: まだ基準がありません（AE のパネルで一度「BG の位置を Maya のカメラへ」を送ってください）" % name)
+            skipped.append(u"%s: まだ基準がありません（AE のパネルで一度「レイヤーの初期位置を Maya へ」を送ってください）" % name)
         else:
             links.append(m)
     return links, skipped

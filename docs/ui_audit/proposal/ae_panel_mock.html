@@ -1,0 +1,57 @@
+<style>
+  #app { padding: 8px; display: flex; flex-direction: column; gap: 7px; height: auto; }
+  .state { background: #2f2f2f; border-radius: 4px; padding: 5px 7px; display: grid; grid-template-columns: 1fr 1fr; gap: 1px 8px; font-size: 11px; }
+  .on::before { content: "● "; color: #5cc85c; }
+  .off::before { content: "● "; color: #6a6a6a; }
+  .target { background: #2f2f2f; border-left: 3px solid #2d8ceb; padding: 4px 7px; border-radius: 3px; }
+  .target b { font-size: 13px; }
+  .primary { background: #24537a; border-color: #2d8ceb; font-weight: 600; }
+  .full { width: 100%; }
+  .stack { display: flex; flex-direction: column; gap: 5px; }
+  .fold { color: #8f8f8f; font-size: 11px; cursor: pointer; }
+  .live-on { color: #5cc85c; font-weight: 600; }
+  h4 { margin: 0; color: #8f8f8f; font-size: 11px; font-weight: normal; }
+</style>
+<div id="app">
+  <div class="row"><img class="logo" src="/panel/img/syncbridge_logo.png" onerror="this.style.display='none'"><b class="grow">SyncBridge</b><button>切断</button></div>
+  <div class="state">
+    <span class="on">サーバー: 接続中</span><span class="on">Maya: 接続中</span>
+    <span class="on">タイムスライダー同期</span><span class="off">リアルタイム同期</span>
+  </div>
+  <div class="target row"><div class="grow">選択中 <b>BG_pre</b><br><span class="muted">コンポ shot010</span></div><button title="選択を読み直す">↻</button></div>
+  <div class="field"><span>Origin frame</span><input value="1001"></div>
+  <div class="muted" style="font-size:11px;margin-top:-4px">＝ このコンポの 0 秒（Maya と共通）</div>
+
+  <div class="section">
+    <h4>タイムワープ（選択中のレイヤーのタイムリマップ）</h4>
+    <div class="row"><button class="send primary">← Maya から読み込む</button><button class="send primary">Maya へ送る →</button></div>
+    <div class="fold">▸ 詳細（モード: editable、許容誤差: 0.1 フレーム）</div>
+  </div>
+
+  <div class="section">
+    <h4>Maya へ送る</h4>
+    <div class="stack">
+      <button class="full" title="選んだレイヤーの今の位置を、Maya のカメラの基準にします">レイヤーの初期位置を Maya へ</button>
+      <div class="row"><button class="half">解像度の枠</button><button class="half">キーのマーカー</button></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h4>同期</h4>
+    <div class="row"><label class="check sync-on"><input type="checkbox" checked>タイムスライダー</label><label class="check"><input type="checkbox">Maya の再生中も追従</label></div>
+    <label class="check"><input type="checkbox">リアルタイム同期（AE → Maya）</label>
+  </div>
+
+  <div class="section">
+    <h4>シーン設定</h4>
+    <div class="checks">
+      <label class="check"><input type="checkbox" checked>FPS</label><label class="check"><input type="checkbox" checked>再生範囲</label>
+      <label class="check"><input type="checkbox" checked>アニメーション範囲</label><label class="check"><input type="checkbox" checked>ピクセル縦横比</label>
+    </div>
+    <div class="row"><button class="half">← Maya から</button><button class="half">Maya へ →</button></div>
+  </div>
+
+  <div id="log" style="min-height:90px">10:12:03  サーバーに接続しました
+10:12:04  Maya がつながりました
+10:15:40  タイムワープを Maya へ送りました（適用）</div>
+</div>

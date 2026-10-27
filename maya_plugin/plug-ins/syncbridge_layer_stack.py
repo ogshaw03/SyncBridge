@@ -23,7 +23,14 @@ The layers come from syncbridge_maya.layer_stack.publish(), through __main__ (th
 be reloaded by the SB Dev button, the plug-in is not):
     __main__._syncbridge_layer_stack = {"version": n, "layers": [(name, camera dag path, [dag paths])],
                                         "overlay": (camera dag path, {width, height, name}) or None,
-                                        "margin": 1.0 = none, 1.2 = 20 %}
+                                        "margin": 1.0 = none, 1.2 = 20 %,
+                                        "shade": 0.0 - 1.0, the opacity outside the frame,
+                                        "editing": (dedicated camera, viewer camera) dag paths or None}
+
+The viewer's 2D pan / zoom (D-44): the editing layer is drawn through the viewer camera (its dedicated
+camera with free 2D pan / zoom that Maya's 2D Pan/Zoom tool changes, syncbridge_maya.viewer_camera); the
+other layers and the comp frame go through the same change of the picture (core.stack_view.view_affine),
+which replaces the margin while a layer is edited.
 """
 from __future__ import annotations
 
@@ -35,11 +42,20 @@ import maya.api.OpenMayaRender as omr
 import maya.api.OpenMayaUI as omui
 
 OVERRIDE_NAME = "SyncBridgeLayerStack"
-REVISION = 9                                       # shown in uiName: is the plug-in really reloaded?
+REVISION = 11                                      # shown in uiName: is the plug-in really reloaded?
 UI_NAME = "SyncBridge Layer Stack r%d" % REVISION
 STATE_KEY = "_syncbridge_layer_stack"
 FRAME_COLOR = om.MColor((1.0, 0.55, 0.1, 1.0))       # the comp guide's colour (D-16)
-MASK_COLOR = om.MColor((0.0, 0.0, 0.0, 0.5))         # outside the frame, like the resolution gate's shade
+DEFAULT_SHADE = 0.5                                  # outside the frame, like the resolution gate's shade
+
+
+def shade_color(shade) -> om.MColor:
+    """Black at the viewer's "shade" opacity (the user sets it, 2026-10-27)."""
+    try:
+        alpha = min(1.0, max(0.0, float(shade)))
+    except (TypeError, ValueError):
+        alpha = DEFAULT_SHADE
+    return om.MColor((0.0, 0.0, 0.0, alpha))
 
 core_guide = None      # syncbridge.core.comp_guide, imported in initializePlugin
 core_frame = None      # syncbridge.core.view_frame
@@ -185,14 +201,20 @@ def _render_values():
             "pixel_aspect": dep.findPlug("pixelAspect", False).asFloat()}
 
 
-def frame_screen_points(camera_path, comp, viewport, margin=1.0):
+def frame_screen_points(camera_path, comp, viewport, margin=1.0, view=None):
     """The comp frame's 4 corners in view pixels (2D, origin bottom-left) and its label. Only the film
     back, Film Fit, the margin and the render's aspect place it: film translate, offset, pan and roll move
-    the picture, not the frame (core.view_frame, D-34). The margin shrinks it like the layers (D-35)."""
+    the picture, not the frame (core.view_frame, D-34). The margin shrinks it like the layers (D-35);
+    `view` (the viewer's 2D pan / zoom, an NDC affine map, D-44) moves it like the layers instead."""
     render = _render_values()
-    cam = dict(_camera_values(om.MFnCamera(camera_path)), overscan=float(margin))
+    cam = dict(_camera_values(om.MFnCamera(camera_path)), overscan=1.0 if view else float(margin))
     left, bottom, right, top = core_frame.frame_rect(tuple(viewport), cam, render, comp)
-    points = [om.MPoint(left, top), om.MPoint(right, top), om.MPoint(right, bottom), om.MPoint(left, bottom)]
+    corners = [(left, top), (right, top), (right, bottom), (left, bottom)]
+    if view:
+        x0, y0, w, h = viewport
+        corners = [core_view.map_point(view, ((x - x0) / w * 2.0 - 1.0, (y - y0) / h * 2.0 - 1.0)) for x, y in corners]
+        corners = [(x0 + (nx + 1.0) * 0.5 * w, y0 + (ny + 1.0) * 0.5 * h) for nx, ny in corners]
+    points = [om.MPoint(x, y) for x, y in corners]
     return points, core_guide.label(comp, render)
 
 
@@ -232,6 +254,7 @@ class FrameHUD(omr.MHUDRender):
         super().__init__()
         self.frame = None                       # (camera MDagPath, comp dict) or None
         self.margin = 1.0
+        self.view = None                        # the viewer's 2D pan / zoom (NDC affine, D-44) or None
         self.depth = None                       # columns 2 and 3 of the view's projection (D-35)
 
     def hasUIDrawables(self):
@@ -255,14 +278,16 @@ class FrameHUD(omr.MHUDRender):
         try:
             camera, comp = self.frame
             viewport = frame_context.getViewportDimensions()
-            points, text = frame_screen_points(camera, comp, viewport, self.margin)
+            points, text = frame_screen_points(camera, comp, viewport, self.margin, self.view)
             _debug("frame points", "viewport=%s points=%s" % (
                 tuple(viewport), [(round(p.x, 1), round(p.y, 1)) for p in points]))
             draw_manager.beginDrawable()
-            draw_manager.setColor(MASK_COLOR)
-            for left, bottom, right, top in mask_bands(points, viewport):
-                draw_manager.rect2d(om.MPoint((left + right) / 2.0, (bottom + top) / 2.0), om.MVector(0.0, 1.0, 0.0),
-                                    (right - left) / 2.0, (top - bottom) / 2.0, True)
+            shade = shade_color(_state().get("shade", DEFAULT_SHADE))
+            if shade.a > 0.0:
+                draw_manager.setColor(shade)
+                for left, bottom, right, top in mask_bands(points, viewport):
+                    draw_manager.rect2d(om.MPoint((left + right) / 2.0, (bottom + top) / 2.0),
+                                        om.MVector(0.0, 1.0, 0.0), (right - left) / 2.0, (top - bottom) / 2.0, True)
             draw_manager.setColor(FRAME_COLOR)
             draw_manager.setLineWidth(1.5)
             for i in range(4):
@@ -287,6 +312,7 @@ class LayerStackOverride(omr.MRenderOverride):
         self._ops = [self._scene, self._hud, self._present]
         self._index = 0
         self._version = None
+        self._editing = None
 
     def _pass(self, i):
         while len(self._pool) <= i:
@@ -304,9 +330,17 @@ class LayerStackOverride(omr.MRenderOverride):
         if state["version"] == self._version and self._ops:
             return
         self._version = state["version"]
+        editing = state.get("editing")
+        self._editing = None                    # (dedicated camera, viewer camera) MDagPaths, D-44
+        if editing:
+            dedicated, viewer = _dag_path(editing[0]), _dag_path(editing[1])
+            if dedicated is not None and viewer is not None:
+                self._editing = (dedicated, viewer)
         ops = []
         for name, camera_name, object_names in state["layers"]:
             camera = _dag_path(camera_name)
+            if camera is not None and self._editing is not None and camera == self._editing[0]:
+                camera = self._editing[1]       # the editing layer: through the viewer camera, as Maya picks
             objects = om.MSelectionList()
             for obj in object_names:
                 try:
@@ -333,12 +367,41 @@ class LayerStackOverride(omr.MRenderOverride):
         except Exception as exc:  # never raise into the draw: keep the last good passes
             om.MGlobal.displayWarning("SyncBridge layer stack: %s" % exc)
         try:
-            self._margin(destination)
+            if self._editing is not None and self._hud.depth is not None and core_view is not None:
+                self._view(destination)
+            else:
+                self._hud.view = None
+                self._margin(destination)
         except Exception as exc:  # the stack without the margin rather than no stack
-            _warn_once("SyncBridge layer stack: the margin is off (%s)" % exc)
+            _warn_once("SyncBridge layer stack: the margin / 2D pan-zoom is off (%s)" % exc)
             for layer_pass in self._pool:
                 layer_pass.set_projection(None)
             self._hud.margin = 1.0
+            self._hud.view = None
+
+    def _view(self, destination):
+        """The viewer's 2D pan / zoom (D-44): the editing layer through the viewer camera (Maya's own
+        projection), the others through the same change of the picture."""
+        dedicated, viewer = self._editing
+        view = omui.M3dView.getM3dViewFromModelPanel(destination)
+        width, height = view.portWidth(), view.portHeight()
+        affine = core_view.view_affine(model_camera(dedicated), model_camera(viewer), width, height)
+        for layer_pass in [op for op in self._ops if isinstance(op, LayerPass)]:
+            if layer_pass.camera_path == viewer:
+                layer_pass.set_projection(None)
+                continue
+            cam = model_camera(layer_pass.camera_path)
+            if cam["orthographic"]:
+                _warn_once("SyncBridge layer stack: the 2D pan / zoom does not reach orthographic cameras")
+                layer_pass.set_projection(None)
+                continue
+            fn = om.MFnCamera(layer_pass.camera_path)
+            rows = core_view.compose(affine, core_view.ndc_affine(cam, width, height))
+            layer_pass.set_projection(core_view.projection_rows(rows, self._hud.depth, fn.nearClippingPlane,
+                                                                fn.farClippingPlane))
+        self._hud.margin = 1.0
+        self._hud.view = affine
+        _debug("view", "affine %s view %dx%d" % (tuple(round(v, 4) for v in affine), width, height))
 
     def _margin(self, destination):
         """Zoom the stack out by the margin while the comp frame is shown (D-35): every layer gets the

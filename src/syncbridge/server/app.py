@@ -23,6 +23,7 @@ from .connections import ConnectionManager
 from .flow import TransferFlow
 from .relay import GuideFlow, LayersFlow, MarkerFlow, MotionFlow, PixelMapFlow
 from .settings_flow import SettingsFlow
+from .livesync import LiveSync
 from .timesync import TimeSync
 
 log = logging.getLogger("syncbridge.server")
@@ -65,6 +66,7 @@ def create_app(token: str, idle_timeout: Optional[float] = None,
               "layers.request": LayersFlow(manager, history=history, **relay_args),
               "motion.request": MotionFlow(manager, history=history, **relay_args)}
     timesync = TimeSync(manager)
+    livesync = LiveSync(manager)
     state = types.SimpleNamespace(manager=manager, flow=flow, history=history, logbuf=logbuf, bus=bus,
                                   started=time.monotonic(), started_iso=hubstate.now_iso(),
                                   port=port, log=log)
@@ -139,6 +141,7 @@ def create_app(token: str, idle_timeout: Optional[float] = None,
                 "protocol": protocol.PROTOCOL_VERSION}, reply_to=hello["event_id"]))
             await manager.broadcast_peers()
             await timesync.send_state(client)
+            await livesync.send_state(client)
             while True:
                 text = await ws.receive_text()
                 try:
@@ -150,6 +153,9 @@ def create_app(token: str, idle_timeout: Optional[float] = None,
                     continue
                 if msg["kind"] in protocol.TIME_KINDS:
                     await timesync.handle(client, msg)       # quick: relayed in order, no task
+                    continue
+                if msg["kind"] in protocol.LIVE_KINDS:
+                    await livesync.handle(client, msg)       # D-41: same, no task
                     continue
                 if msg["kind"] == "transfer.request" or msg["kind"] in relays:
                     if msg["kind"] == "transfer.request":

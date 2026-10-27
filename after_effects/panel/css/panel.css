@@ -15,7 +15,7 @@ html, body {
   color: var(--text);
   font: 12px/1.4 "Segoe UI", system-ui, sans-serif;
 }
-#app { padding: 8px; display: flex; flex-direction: column; gap: 6px; height: calc(100vh - 16px); }
+#app { padding: 8px; display: flex; flex-direction: column; gap: 7px; min-height: 100vh; box-sizing: border-box; }
 .row { display: flex; align-items: center; gap: 6px; }
 .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .muted { color: var(--muted); }
@@ -36,6 +36,27 @@ button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: 0.4; }
 .send { flex: 1; padding: 6px; }
 .half { flex: 1; }
+.full { width: 100%; }
+.primary { background: #24537a; border-color: var(--accent); font-weight: 600; }
+/* state: what is connected and what is on (UI/UX proposal, 2026-10-27) */
+.state {
+  background: #2f2f2f;
+  border-radius: 4px;
+  padding: 5px 7px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px 8px;
+  font-size: 11px;
+}
+.state span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.on::before { content: "\25CF  "; color: var(--ok); }
+.off::before { content: "\25CF  "; color: #6a6a6a; }
+.target { background: #2f2f2f; border-left: 3px solid var(--accent); padding: 4px 7px; border-radius: 3px; }
+.target b { font-size: 13px; }
+.note { font-size: 11px; margin-top: -4px; }
+.fold { color: var(--muted); font-size: 11px; display: flex; flex-direction: column; gap: 4px; }
+.fold summary { cursor: pointer; }
+.fold .field { padding-left: 12px; }
 .section { border-top: 1px solid var(--border); padding-top: 6px; display: flex; flex-direction: column; gap: 6px; }
 .section-title { color: var(--muted); font-size: 11px; }
 .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; }

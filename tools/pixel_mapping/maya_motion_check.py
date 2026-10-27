@@ -72,7 +72,7 @@ def transform(i):
 
 layer_mapping.set_defaults(method="pan_zoom")
 layer_mapping.connect({"comp_id": 1, "comp": "c010", "layer_id": 5, "layer": "BG", "source": "bg",
-                       "source_width": 6000, "source_height": 4000}, layer["id"])
+                       "source_width": 6000, "source_height": 4000}, layer["id"], "pan_zoom", "relative")
 first = pixel_mapping.apply_from_ae({"comp": COMP, "layer": dict(LAYER, **transform(0))})
 check("reference recorded at frame 1001", first.get("reference_recorded"))
 link = layer_mapping.stored()[0]
@@ -127,7 +127,7 @@ cmds.select(cam)
 char, _ = layer_mapping.add_layer("CHAR")
 char_ae = {"comp_id": 1, "comp": "c010", "layer_id": 6, "layer": "CHAR", "source": "char",
            "source_width": 6000, "source_height": 4000}
-layer_mapping.connect(char_ae, char["id"])
+layer_mapping.connect(char_ae, char["id"], "pan_zoom", "relative")
 links, skipped = motion.transferable(layer_mapping.store())
 check("a link without a reference is left out", [m["ae"]["layer"] for m in links] == ["BG"]
       and len(skipped) == 1 and "CHAR" in skipped[0], skipped)

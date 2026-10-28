@@ -819,9 +819,13 @@
     - AE の確認中は、下のボタンの行を隠す。
   - `dist/SyncBridge-0.1.16.zip`: 45.9MB、300 ファイル、SHA-256 `e42af820fe6d1e14485148dce7b3f1152f6b9470b0a00ed67c7cd2373e60c81b`。
   - `dist/SyncBridge-Setup-0.1.16.exe`: 34.4MB、SHA-256 `56ec8ad4756001adbd41a3ed1d8810588bd9dd15f6dc1bfaabda7162d1b94ea0`。
-  - リリースノート `docs/release_notes/0.1.16.md`、タグ v0.1.16（利用者の指示でリリース）。
-    この PC に GitHub CLI がないため、GitHub Releases のページは利用者が作る。
-    添付するのは EXE と zip の 2 つで、About は EXE を優先する。
+  - リリースノート `docs/release_notes/0.1.16.md`、タグ v0.1.16 = 7b2c96b（利用者の指示でリリース）。
+  - **GitHub Releases に公開した（2026-10-28、プレリリース）:** https://github.com/ogshaw03/SyncBridge/releases/tag/v0.1.16
+    - GitHub CLI 2.103.3 を winget で利用者ごとに入れ、利用者が `gh auth login` で認証した（ogshaw03、keyring）。
+      以後のリリースは Claude が `gh release create` で作れる。gh は PATH に入っていないので、次の場所を指定して使う:
+      `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GitHub.cli_Microsoft.Winget.Source_8wekyb3d8bbwe\bin\gh.exe`
+    - 添付: EXE と zip。About の処理で一覧を取ると、0.1.16 が EXE 付きで出た（0.1.15 からは「新しい版」）。
+      GitHub からダウンロードした EXE は SHA-256 が一致した。
   - 中身: 0.1.15 に About / 更新（D-46）を足したもの。証明書とシーンは入っていない。AE パネルのマニフェストに `--enable-nodejs`、`about.js` が入っている。
   - ビルドの中のテストは 408 OK。
   - 本番の EXE を一時フォルダへ黙ってインストールした（`/SBTest=1`）。

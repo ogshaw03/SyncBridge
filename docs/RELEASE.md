@@ -55,7 +55,13 @@ Inno Setup が見つからないときは、EXE を作らずにそう表示す�
   - `SyncBridge-Setup-<version>.exe`: About はこちらを優先する。
   - `SyncBridge-<version>.zip`: 予備。
 - 下書き（draft）は一覧に出ない。プレリリースは出る。添付ファイルの SHA-256 は GitHub が付ける（`digest`）ので、About はそれと照合する。
-- 認証情報は使わない（公開の API。1 時間に 60 回まで）。リポジトリを非公開にすると、この更新は使えなくなる（PROGRESS の「配布先の検討」）。
+- 公開は Claude が GitHub CLI で行う（0.1.16 から。この PC の gh は PATH にないので、次のように場所を指定する）。
+  ```powershell
+  $gh = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\GitHub.cli_Microsoft.Winget.Source_8wekyb3d8bbwe\bin\gh.exe"
+  & $gh release create v<version> dist\SyncBridge-Setup-<version>.exe dist\SyncBridge-<version>.zip --repo ogshaw03/SyncBridge `
+      --title "SyncBridge <version>" --notes-file docs\release_notes\<version>.md --prerelease --verify-tag
+  ```
+- About（利用者の PC）は認証情報を使わない（公開の API。1 時間に 60 回まで）。リポジトリを非公開にすると、この更新は使えなくなる（PROGRESS の「配布先の検討」）。
 
 ### インストーラーの EXE（D-45、0.1.15 から）
 

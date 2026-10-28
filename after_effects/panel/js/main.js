@@ -110,8 +110,25 @@
     ui.detail.appendChild(field('モード', ui.mode));
     ui.detail.appendChild(field('許容誤差（フレーム）', ui.tolerance));
 
+    // the menu bar (D-46): About and update, also from Maya's panel
+    var helpMenu = el('div', { 'class': 'menu-items' });
+    var aboutItem = el('button', { text: 'SyncBridge について / 更新…' });
+    helpMenu.appendChild(aboutItem);
+    var helpButton = el('button', { 'class': 'menu-title', text: 'ヘルプ' });
+    var menubar = el('div', { 'class': 'menubar' }, [el('div', { 'class': 'menu' }, [helpButton, helpMenu])]);
+    helpButton.onclick = function (e) {
+        e.stopPropagation();
+        helpMenu.style.display = helpMenu.style.display === 'block' ? '' : 'block';
+    };
+    aboutItem.onclick = function () {
+        helpMenu.style.display = '';
+        SBAbout.open();
+    };
+    document.addEventListener('click', function () { helpMenu.style.display = ''; });
+
     var app = document.getElementById('app');
     [
+        menubar,
         el('div', { 'class': 'row' }, [ui.logo, el('b', { 'class': 'grow', text: 'SyncBridge' }), ui.connect]),
         el('div', { 'class': 'state' }, [ui.serverState, ui.mayaState, ui.timeState, ui.liveState]),
         el('div', { 'class': 'target row' }, [

@@ -144,5 +144,62 @@ class InstallerTest(unittest.TestCase):
         self.assertIn(record["maya_files"], ([], None))
 
 
+def _build_release_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("sb_build_release", os.path.join(REPO, "packaging", "build_release.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+BUILD = _build_release_module() if sys.platform == "win32" else None
+ISCC = BUILD.find_iscc() if BUILD else None
+UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{37BA4B31-BD87-4A70-AE30-F53FA9756084}_is1"
+
+
+@unittest.skipUnless(sys.platform == "win32" and POWERSHELL and ISCC, "Windows PowerShell and Inno Setup 6")
+class SetupExeTest(unittest.TestCase):
+    """SyncBridge-Setup.exe (SyncBridge.iss) on the same fake payload, silently, into temporary folders:
+    /SBTest=1 makes no "Apps" entry, so nothing outside the temporary folders is written."""
+    setUp = InstallerTest.setUp
+    shelf = InstallerTest.shelf
+
+    def make_setup(self):
+        return BUILD.make_setup(ISCC, self.payload, os.path.join(self.tmp, "iss"), os.path.join(self.tmp, "out"),
+                                "0.0.1", "SyncBridge-Setup-test")
+
+    def test_setup_installs_and_its_uninstaller_removes(self):
+        import winreg
+        setup = self.make_setup()
+        root = os.path.join(self.tmp, "Programs", "SyncBridge")
+        cep = os.path.join(self.tmp, "cep")
+        result = subprocess.run([setup, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SBTest=1",
+                                 "/DIR=%s" % root, "/CepRoot=%s" % cep,
+                                 "/ProgramsDir=%s" % os.path.join(self.tmp, "StartMenu"),
+                                 "/MayaAppDir=%s" % self.maya_dir], timeout=300)
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(os.path.isfile(os.path.join(root, "install.json")))
+        self.assertTrue(os.path.isfile(os.path.join(root, "uninstall.ps1")))
+        self.assertFalse(os.path.exists(os.path.join(root, "Uninstall.bat")))      # the setup's uninstaller instead
+        uninstaller = os.path.join(root, "uninstall", "unins000.exe")
+        self.assertTrue(os.path.isfile(uninstaller))
+        self.assertTrue(os.path.isfile(self.shelf("2023")))
+        self.assertTrue(os.path.isfile(os.path.join(cep, "com.syncbridge.panel", "CSXS", "manifest.xml")))
+        with self.assertRaises(OSError):                                             # no "Apps" entry in the test
+            winreg.OpenKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY)
+
+        # The uninstaller runs a copy of itself from the temporary folder and returns at once.
+        subprocess.run([uninstaller, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], timeout=120)
+        import time
+        for _ in range(120):
+            if not os.path.exists(root):
+                break
+            time.sleep(0.5)
+        self.assertFalse(os.path.exists(root), os.listdir(root) if os.path.exists(root) else "")
+        self.assertFalse(os.path.exists(self.shelf("2023")))
+        self.assertFalse(os.path.exists(os.path.join(cep, "com.syncbridge.panel")))
+        self.assertTrue(os.path.isfile(os.path.join(self.maya_dir, "2023", "prefs", "shelves", "shelf_Custom.mel")))
+
+
 if __name__ == "__main__":
     unittest.main()

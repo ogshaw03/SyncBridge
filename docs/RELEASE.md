@@ -1,6 +1,6 @@
 # 配布（リリース）
 
-最終更新: 2026-10-26 / 現在の配布: **0.1.9（先行配布。Phase 1〜3 の一部: タイムワープ、シーン設定と時間の同期、Pixel Mapping・レイヤーマップ・ビューアー）**
+最終更新: 2026-10-28 / 現在の配布: **0.1.16（先行配布。Phase 1〜3 の一部: タイムワープ、シーン設定と時間の同期、Pixel Mapping・レイヤーマップ・ビューアー。インストーラーの EXE とパネルからの更新）**
 
 ## 1. 先行配布 0.1.0 の範囲（D-14）
 
@@ -11,7 +11,8 @@
 
 ## 2. 利用者の手順（README_SyncBridge.txt と同じ）
 
-1. zip を解凍して `Install.bat` をダブルクリック（管理者権限不要）
+1. `SyncBridge-Setup-<version>.exe` を実行して「インストール」（0.1.15 から。D-45）、または zip を解凍して `Install.bat` を
+   ダブルクリック。どちらも管理者権限不要で、中身と入れ方（`install.ps1`）は同じ
 2. Maya を起動 → シェルフの「SyncBridge」タブ（0.1.5 から。インストーラーが置く。予備として
    `drag_to_maya_SyncBridge.py` のドラッグ＆ドロップも使える）
 3. AE を再起動し「ウィンドウ → エクステンション → SyncBridge」
@@ -24,7 +25,7 @@
 | モニター `SyncBridge.exe`（PySide6、PyInstaller onedir、0.1.3 から） | `%LOCALAPPDATA%\Programs\SyncBridge\app\`。スタートメニュー（利用者ごと）に「SyncBridge Monitor」（0.1.5 までは「SyncBridge モニター」。0.1.6 のインストーラーが古い名前の項目を消す） |
 | Maya のスクリプト、アイコン、ドラッグ用ファイル | `%LOCALAPPDATA%\Programs\SyncBridge\maya\` |
 | AE パネル（署名済み ZXP を展開） | `%APPDATA%\Adobe\CEP\extensions\com.syncbridge.panel\` |
-| アンインストーラー、`install.json` | `%LOCALAPPDATA%\Programs\SyncBridge\` |
+| アンインストーラー、`install.json` | `%LOCALAPPDATA%\Programs\SyncBridge\`（zip: `Uninstall.bat`。インストーラー: `uninstall\unins000.exe`、「設定 → アプリ」に「SyncBridge」として登録、HKCU） |
 | セッション、サーバーのログ（利用者のデータ） | `%LOCALAPPDATA%\SyncBridge\` |
 | Maya のシェルフ（0.1.5 から） | `<MAYA_APP_DIR またはドキュメント\maya>\<バージョン>[\ja_JP]\prefs\shelves\shelf_SyncBridge.mel` と `prefs\icons\syncbridge_shelf.png`（Maya 2023 以降で一度起動したバージョンすべて。D-17） |
 | Maya のシェルフボタン（予備） | ドラッグ＆ドロップしたときの今のシェルフ（再ドラッグで置き換え） |
@@ -39,10 +40,38 @@
 ```powershell
 .\.venv\Scripts\python -m pip install -r requirements-build.txt     # 初回のみ（PyInstaller）
 # 初回のみ: ZXPSignCmd 4.1.3 x64 を packaging\tools\ZXPSignCmd.exe に置く（requirements-build.txt の URL）
-.\.venv\Scripts\python packaging\build_release.py                   # テスト → ビルド → 署名 → zip
+# 初回のみ: Inno Setup 6（インストーラーの EXE 用）。利用者ごとに入る（%LOCALAPPDATA%\Programs\Inno Setup 6）
+winget install --id JRSoftware.InnoSetup -e --scope user
+.\.venv\Scripts\python packaging\build_release.py                   # テスト → ビルド → 署名 → zip → EXE
 ```
 
-出力: `dist\SyncBridge-<version>\` と `dist\SyncBridge-<version>.zip`（どちらも Git 管理外）。
+出力: `dist\SyncBridge-<version>\`、`dist\SyncBridge-<version>.zip`、`dist\SyncBridge-Setup-<version>.exe`（どれも Git 管理外）。
+Inno Setup が見つからないときは、EXE を作らずにそう表示する（zip はできる）。
+
+### GitHub Releases への公開とパネルからの更新（D-46、0.1.16 から。一時的な形）
+
+- Maya / AE のパネルの「ヘルプ → SyncBridge について / 更新…」は、GitHub Releases（`ogshaw03/SyncBridge`）の一覧を読み、選んだ版を入れる。
+- 公開するときは、リリース（タグ `v<version>`）に次の 2 つを添付する。
+  - `SyncBridge-Setup-<version>.exe`: About はこちらを優先する。
+  - `SyncBridge-<version>.zip`: 予備。
+- 下書き（draft）は一覧に出ない。プレリリースは出る。添付ファイルの SHA-256 は GitHub が付ける（`digest`）ので、About はそれと照合する。
+- 認証情報は使わない（公開の API。1 時間に 60 回まで）。リポジトリを非公開にすると、この更新は使えなくなる（PROGRESS の「配布先の検討」）。
+
+### インストーラーの EXE（D-45、0.1.15 から）
+
+- `packaging\installer\SyncBridge.iss`（Inno Setup 6）。ビルドが BOM 付きで写してから `ISCC` に版・中身の場所を渡す。
+- 中身（payload）は zip と同じで、一時フォルダに展開して `install.ps1 -Setup` を動かす。
+  - `-Setup` ではダイアログを出さず、メッセージを完了のページに出す。
+  - `Uninstall.bat` は置かない（zip で入れた後なら消す）。
+- アンインストーラーは「設定 → アプリ」に登録され、`uninstall.ps1 -Setup` を動かす。
+  - 先に Maya が起動中かを確かめて、終了を求める。
+  - `uninstall\` は Inno Setup 自身が消す。
+- 利用者ごと（`PrivilegesRequired=lowest`）、インストール先は固定（`%LOCALAPPDATA%\Programs\SyncBridge`）。AppId は `{37BA4B31-BD87-4A70-AE30-F53FA9756084}`（変えない）。
+- 自動テスト（`tests/integration/test_installer.py` の `SetupExeTest`）は、テスト用の中身で EXE を作り、黙ってインストールし、アンインストールする。
+  - `/SBTest=1` で「アプリ」に登録しない（レジストリに書かない）。
+  - `/DIR=`・`/CepRoot=`・`/ProgramsDir=`・`/MayaAppDir=` で、すべて一時フォルダに向ける。
+- **署名していない**ので、ダウンロードした EXE を開くと SmartScreen の「Windows によって PC が保護されました」が出る（「詳細情報」→「実行」）。
+  出さないには有料のコード署名証明書が要る（H-PKG-3）。
 バージョンは `version.json`、`src/syncbridge/__init__.py`、`pyproject.toml`、`after_effects/CSXS/manifest.xml` の 4 か所を揃える。
 
 ### 署名用の証明書
@@ -96,8 +125,11 @@ Python と `.venv` はこの PC から消せないので、Python のない PC �
 |---|---|---|
 | H-MY-17 | Maya 2023/2024/2025 で、ビューポートにドロップした `.py` の `onMayaDroppedPythonFile` が呼ばれる | ドラッグしてシェルフにボタンが出るか（出ない場合は `.mel` を使う） |
 | H-AE-18 | 自己署名した ZXP を展開したパネルが、PlayerDebugMode なしで AE 26.5 に読み込まれる | PlayerDebugMode を 0 に戻した PC（または未設定の PC）でパネルが開くか |
+| H-AE-19 | マニフェストの `<CEFCommandLine><Parameter>--enable-nodejs</Parameter>` で、パネルの JS から `window.cep_node.require('child_process')` が使え、`SyncServer.exe update list` を起動して結果を読める（D-46） | AE のパネルの「ヘルプ → SyncBridge について / 更新…」で一覧が出るか |
+| H-UPD-1 | Maya と AE を開いたまま、About から起動したインストーラー（EXE の「インストール」/ zip の Install.bat）で更新でき、再起動すると新しい版になる（AE のパネルのフォルダ・Maya のスクリプトが使用中で置き換えられない、ということがない） | Maya と AE を開いたまま、About から別の版に更新して再起動する |
 | H-PKG-1 | PyInstaller で作った `SyncServer.exe` が、ウイルス対策ソフトや SmartScreen に止められない | 利用者の PC で Connect できるか |
 | H-PKG-2 | Python の入っていない PC で動く | 別の PC でインストールして転送する |
+| H-PKG-3 | 署名していないインストーラーの EXE（Inno Setup）が、会社の PC で SmartScreen の「詳細情報 → 実行」で動き、ウイルス対策ソフトや規定に止められない | 会社の PC で EXE をダウンロード（またはコピー）して実行し、「アプリ」からアンインストールする |
 
 ## 6. リリースの記録
 
@@ -113,6 +145,7 @@ Python と `.venv` はこの PC から消せないので、Python のない PC �
 | 0.1.7 | 2026-10-20 | 解像度の枠とキーのマーカーを、ビューの「表示」メニューの専用の項目で出し入れ（ロケーターを隠しても消えない、D-20）。2 つのノードをプラグインのシェイプに変更。zip 45.7MB、SHA-256 153f9d68…。テスト 252 件と mayapy 2023 / 2024 で確認、同じ方法のテスト用プラグインを利用者の Maya 2025 の GUI で確認。**本番のプラグインの GUI での確認は未実施** |
 | 0.1.8 | 2026-10-25 | シーン設定の転送とタイムスライダーの同期（D-21, D-22）、Pixel Mapping（AE のレイヤーの動きを Maya の専用カメラへ、D-23〜D-30）、レイヤーマップ、SyncBridge ビューアー（D-32〜D-35）、ヌル・プリコンポの PAN、余白、Origin frame の統一、素材カメラモード（D-36〜D-39）。Maya のプラグイン `syncbridge_layer_stack.py` を追加。zip 45.8MB、SHA-256 5f50720f…。テスト 370 件、mayapy 2023 / 2024、利用者の PC でレイヤーマップ・転送・ビューアー・素材カメラモードを開発用の状態で確認。**インストール版での確認、ヌル・プリコンポの PAN と余白の GUI での確認は未実施** |
 | 0.1.9 | 2026-10-26 | レイヤーマップに出す AE のレイヤーを AE の選択で決める・メインのコンポを記録してプリコンポの中のレイヤーを経路ごと扱う（D-40）、ビューアーで一番上のレイヤーを非表示にしても枠が消えない修正。zip 45.8MB、SHA-256 da410562…。テスト 379 件、利用者の PC でAE の選択での追加と PAN 込みの転送を開発用の状態で確認。**インストール版での確認は未実施** |
+| 0.1.16 | 2026-10-28 | 0.1.10〜0.1.15 は公開していない（ローカルのビルドのみ）。パネルの作り直し・AE レイヤーごとの Maya レイヤー（D-42, D-43）、リアルタイム同期（D-41）、ビューアーの 2D パン・ズーム・編集中レイヤー・選択の修正（D-44）、解像度の枠・任意の枠・ゲートの阻止、インストーラーの EXE（D-45）、パネルからの更新（D-46、一時的）。EXE 34.4MB、SHA-256 56ec8ad4…、zip 45.9MB、SHA-256 e42af820…。テスト 408 件、mayapy 2023 / 2024、Maya 2023 / 2024 の GUI を自動で操作、EXE を一時フォルダで確認。**会社の PC でのインストーラーと AE のパネルの更新の画面（H-PKG-3、H-AE-19、H-UPD-1）は未確認**。リリースノート `docs/release_notes/0.1.16.md`。タグ v0.1.16 |
 
 ### 0.1.0 の利用者テストで見つかった問題（次の版で修正）
 

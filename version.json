@@ -1,6 +1,6 @@
 {
   "name": "SyncBridge",
-  "version": "0.1.14",
+  "version": "0.1.16",
   "channel": "development",
   "schema_version": "0.1",
   "phase": "1"

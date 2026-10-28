@@ -776,6 +776,58 @@
       - Maya 2023 / 2024 の自動検証で確認した。
       - Maya 2023 では、起動直後の最初の選択の変化に `SelectionChanged` が届かないことがあった（Maya 側）。
     - 残りは P-6（選べない設定のもの）と P-8（透明な部分）。どちらも、利用者の素材と使い方を見てから決める。
+- **インストーラーの EXE（2026-10-28、D-45、まだ版を上げていない・配布していない）:**
+  - Inno Setup 6.7.3 を winget で利用者ごとに入れた（利用者の許可を得て）。
+  - `packaging/installer/SyncBridge.iss` を追加。`build_release.py` が `dist/SyncBridge-Setup-<version>.exe` も作る。
+  - 入れ方の本体は `install.ps1` / `uninstall.ps1` に `-Setup` を足して使い回す。「アプリ」からアンインストールできる。
+  - テスト: 397 OK（`.venv`）、397 OK（標準ライブラリ、106 スキップ）。
+    `SetupExeTest` は、テスト用の中身で EXE を作り、一時フォルダへの黙ったインストールとアンインストールを行う。
+    `/SBTest=1` なので、レジストリには書かない。
+  - ウィザードの準備完了・完了のページを、一時フォルダへのインストールで撮って確認した（日本語、アイコン、完了のページの案内）。
+  - **未確認:** 実際の中身（46MB）での EXE、会社の PC での SmartScreen とウイルス対策ソフト（H-PKG-3）、「アプリ」からのアンインストールの実機確認。
+- **0.1.15 をビルドした（2026-10-28、まだコミット・配布していない）:**
+  - 版を 5 か所で 0.1.15 にした。
+  - `dist/SyncBridge-0.1.15.zip`: 45.9MB、296 ファイル、SHA-256 `e01e644c5485b317f72fc7f204fe3446fb4dfca92353304e037fd1b0eac675f3`。
+  - `dist/SyncBridge-Setup-0.1.15.exe`: 34.4MB、SHA-256 `0c6efb30ac771a7afcc31e71d438f07c1b2badadd1ccefc62f4d7936dec6d532`。
+  - 中身: 今日の選択の修正（P-1/4/5/7/11、9.5）、プラグイン r14。証明書とシーンは入っていない。`install.ps1` は BOM 付き。
+  - ビルドの中のテストは 397 OK。ZXP の署名と検証も通った。
+  - 本番の EXE を一時フォルダへ黙ってインストールした（`/SBTest=1`、7 秒）。
+    - サーバー・モニター・Maya のファイル・AE パネル・スタートメニュー・シェルフ（2023 / 2024）が入り、`Uninstall.bat` はなかった。
+    - インストールした `SyncServer.exe` の `/health` が 0.1.15 を返した。
+    - アンインストーラーで、すべて消えた。
+  - **未確認:** 会社の PC（SmartScreen、ウイルス対策ソフト、H-PKG-3）、画面付きでのインストール、「アプリ」からのアンインストール、zip で入れた 0.1.14 からの上書き。
+- **パネルからの更新（2026-10-28、D-46、一時的な形。まだコミット・ビルドしていない）:**
+  - Maya と AE のパネルにメニューバーを付けた（「ヘルプ → SyncBridge について / 更新…」）。
+    GitHub のリリースの一覧から選んだ版の EXE（なければ zip）をダウンロードし、SHA-256 を照合してインストーラーを起動する。
+  - 共通の処理は `syncbridge.updater`（`releases.py`・`install.py`・`__main__.py`）。
+  - AE は Node.js を有効にし（マニフェスト）、`SyncServer.exe update ...` を呼ぶ。開発中は `.venv` で呼ぶ。
+  - テスト: 408 OK（`.venv`）、408 OK（標準ライブラリ、106 スキップ）。`test_updater` を追加した（ネットワークなし）。
+  - 実際に確かめたこと:
+    - 本物の GitHub から一覧を取得できた: `python -m syncbridge.updater list`、mayapy 2023 / 2024、PyInstaller で作った `SyncServer.exe update list`。
+    - v0.1.9 の zip をダウンロードし（5 秒）、SHA-256 の照合と展開ができ、`Install.bat` が見つかった（インストール自体は実行していない）。
+  - モックを撮った: Maya のメニューバー・About（mayapy）、AE のメニュー・About・確認（Edge headless、幅 320）。
+  - **未確認:**
+    - 実際の AE でパネルの Node が動くか（H-AE-19）。
+    - Maya / AE を開いたままの更新（H-UPD-1）。
+    - EXE を起動してからの流れの実機確認。
+  - 0.1.16 として GitHub に公開すると使えるようになる。v0.1.10〜v0.1.15 は GitHub にない。
+- **0.1.16 をビルドした（2026-10-28、まだコミット・GitHub への公開はしていない）:**
+  - 版を 5 か所で 0.1.16 にした。
+  - 同じ日に言い回しを直してビルドし直した（利用者の指摘）。
+    - ボタン: 「この版に更新…」→「インストール」。
+    - 確認の文: 「SyncBridge 0.1.9 をインストールします（今は …。古い版に戻ります）」。
+    - AE の確認中は、下のボタンの行を隠す。
+  - `dist/SyncBridge-0.1.16.zip`: 45.9MB、300 ファイル、SHA-256 `e42af820fe6d1e14485148dce7b3f1152f6b9470b0a00ed67c7cd2373e60c81b`。
+  - `dist/SyncBridge-Setup-0.1.16.exe`: 34.4MB、SHA-256 `56ec8ad4756001adbd41a3ed1d8810588bd9dd15f6dc1bfaabda7162d1b94ea0`。
+  - リリースノート `docs/release_notes/0.1.16.md`、タグ v0.1.16（利用者の指示でリリース）。
+    この PC に GitHub CLI がないため、GitHub Releases のページは利用者が作る。
+    添付するのは EXE と zip の 2 つで、About は EXE を優先する。
+  - 中身: 0.1.15 に About / 更新（D-46）を足したもの。証明書とシーンは入っていない。AE パネルのマニフェストに `--enable-nodejs`、`about.js` が入っている。
+  - ビルドの中のテストは 408 OK。
+  - 本番の EXE を一時フォルダへ黙ってインストールした（`/SBTest=1`）。
+    - すべてのファイルが入り、`SyncServer.exe` の `/health` が 0.1.16 を返した。
+    - インストールした `SyncServer.exe update list` が GitHub の一覧を返した（v0.1.9 以下は「古い」）。
+    - アンインストーラーで、すべて消えた。
 
 ## 次にやること
 

@@ -8,8 +8,10 @@
 #            the fallback for a Maya that has never been started.
 #   AE     : <CepRoot>\com.syncbridge.panel   (extracted from the signed ZXP)
 #
-# -Quiet skips dialogs and Explorer (automated tests). The release build saves this file
-# as UTF-8 with BOM so Windows PowerShell 5.1 reads the Japanese messages correctly.
+# -Quiet skips dialogs and Explorer (automated tests). -Setup is the run from SyncBridge-Setup.exe
+# (Inno Setup, SyncBridge.iss): no dialogs, the message goes to -MessageFile for the wizard's last
+# page, and no Uninstall.bat (the setup's own uninstaller is used). The release build saves this
+# file as UTF-8 with BOM so Windows PowerShell 5.1 reads the Japanese messages correctly.
 param(
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'Programs\SyncBridge'),
     [string]$CepRoot = (Join-Path $env:APPDATA 'Adobe\CEP\extensions'),
@@ -18,7 +20,9 @@ param(
     # was moved, e.g. to OneDrive).
     [string]$MayaAppDir = $(if ($env:MAYA_APP_DIR) { $env:MAYA_APP_DIR }
                             else { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'maya' }),
-    [switch]$Quiet
+    [switch]$Quiet,
+    [switch]$Setup,
+    [string]$MessageFile
 )
 $ErrorActionPreference = 'Stop'
 $payload = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -77,6 +81,10 @@ function Get-ShelfCommand {
 
 function Show-Message([string]$text, [string]$icon = 'Information') {
     if ($Quiet) { Write-Output $text; return }
+    if ($Setup) {                                   # shown by the setup (UTF-8 with BOM for Inno Setup)
+        if ($MessageFile) { [IO.File]::WriteAllText($MessageFile, $text, (New-Object Text.UTF8Encoding $true)) }
+        return
+    }
     Add-Type -AssemblyName System.Windows.Forms
     [void][System.Windows.Forms.MessageBox]::Show($text, 'SyncBridge', 'OK', $icon)
 }
@@ -97,7 +105,11 @@ try {
         if (Test-Path $target) { Remove-Item -Recurse -Force $target }
         if (Test-Path (Join-Path $payload $part)) { Copy-Item -Recurse (Join-Path $payload $part) $target }
     }
-    foreach ($file in 'version.json', 'uninstall.ps1', 'Uninstall.bat', 'README_SyncBridge.txt') {
+    $files = @('version.json', 'uninstall.ps1', 'README_SyncBridge.txt')
+    $uninstallBat = Join-Path $InstallRoot 'Uninstall.bat'
+    if (-not $Setup) { $files += 'Uninstall.bat' }
+    elseif (Test-Path $uninstallBat) { Remove-Item -Force $uninstallBat }   # from a zip install before
+    foreach ($file in $files) {
         $source = Join-Path $payload $file
         if (Test-Path $source) { Copy-Item -Force $source (Join-Path $InstallRoot $file) }
     }
@@ -177,13 +189,14 @@ try {
         $restart = "`n`n※ " + ($running -join ' と ') + ' が起動中です。再起動すると使えるようになります。'
     }
     $dragFile = Join-Path $InstallRoot 'maya\drag_to_maya_SyncBridge.py'
+    $again = if ($Setup) { 'インストーラー' } else { ' Install.bat ' }
     if ($mayaVersions.Count -gt 0) {
         $mayaStep = "1. Maya（" + ($mayaVersions -join '、') + "）: Maya を起動すると、シェルフに「SyncBridge」タブが出ます。" +
             "ボタンを押すとパネルが開きます`n" +
-            "   （ほかのバージョンの Maya は、一度起動してからもう一度 Install.bat を実行してください）"
+            "   （ほかのバージョンの Maya は、一度起動してからもう一度${again}を実行してください）"
     } else {
         $mayaStep = "1. Maya: Maya 2023 以降の設定フォルダが見つかりませんでした。Maya を一度起動して終了してから、" +
-            "もう一度 Install.bat を実行してください。`n" +
+            "もう一度${again}を実行してください。`n" +
             "   または、このあと開くフォルダの「drag_to_maya_SyncBridge.py」を Maya のビューポートにドラッグ＆ドロップしてください"
     }
     Show-Message ("SyncBridge $version をインストールしました。`n`n" +

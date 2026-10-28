@@ -296,6 +296,12 @@ class SyncBridgePanel(QtWidgets.QDialog):
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(6)
+        # the menu bar (D-46): About and update, also from AE's panel
+        menubar = QtWidgets.QMenuBar(self)
+        help_menu = menubar.addMenu(u"ヘルプ")
+        about_action = help_menu.addAction(u"SyncBridge について / 更新…")
+        about_action.triggered.connect(self.open_about)
+        layout.setMenuBar(menubar)
         layout.addLayout(head)
         layout.addWidget(state)
         layout.addLayout(_row(QtWidgets.QLabel("Origin frame"), self.origin, origin_note, None))
@@ -308,6 +314,10 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.refresh()
         self.show_stored_markers()
         self.refresh_pixel_mapping()
+
+    def open_about(self):
+        from . import about
+        about.show(self, logo=LOGO_FILE)
 
     def show_detail(self, *_args):
         opened = self.detail_btn.isChecked()

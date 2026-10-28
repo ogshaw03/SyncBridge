@@ -4,10 +4,10 @@
   linked into %APPDATA%\Adobe\CEP\extensions\com.syncbridge.panel (see docs/PHASE1_PLAN.md V-P1C).
   Unsigned during development: needs PlayerDebugMode (set by the user, never by tools).
 -->
-<ExtensionManifest Version="7.0" ExtensionBundleId="com.syncbridge" ExtensionBundleVersion="0.1.14"
+<ExtensionManifest Version="7.0" ExtensionBundleId="com.syncbridge" ExtensionBundleVersion="0.1.16"
                    ExtensionBundleName="SyncBridge" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <ExtensionList>
-    <Extension Id="com.syncbridge.panel" Version="0.1.14"/>
+    <Extension Id="com.syncbridge.panel" Version="0.1.16"/>
   </ExtensionList>
   <ExecutionEnvironment>
     <HostList>
@@ -26,6 +26,11 @@
         <Resources>
           <MainPath>./panel/index.html</MainPath>
           <ScriptPath>./jsx/syncbridge_cep_host.jsx</ScriptPath>
+          <!-- Node.js for the About / update window (panel/js/about.js, D-46, H-AE-19): it runs the
+               updater (SyncServer.exe update ...). Not mixed context: Node is reached through cep_node. -->
+          <CEFCommandLine>
+            <Parameter>--enable-nodejs</Parameter>
+          </CEFCommandLine>
         </Resources>
         <Lifecycle>
           <AutoVisible>true</AutoVisible>

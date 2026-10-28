@@ -427,6 +427,47 @@ AE → Maya
   濃さはビューアーの「枠の外」スライダーで 0〜100%（既定 50%、optionVar `syncBridgeViewerShade`、利用者の要望 2026-10-27）。
   `layer_stack.publish` が `"shade"` としてプラグインに渡す（プラグイン r10）。0% のときは暗くする帯を描かない。
 
+### D-46: Maya / AE のパネルから更新する（About）（2026-10-28、利用者の決定。**一時的な形で、今後変わりうる**）
+
+- 背景: 更新のたびに zip や EXE を手で持っていくのは手間。利用者が、ツールの中から GitHub のリリースを選んで更新したいと希望した。
+  「今後変わる可能性があるので一時的なもの」（利用者）。Phase 6 のワンクリック更新（下の「Update」）は別に残る。
+- 決定:
+  - **画面:** Maya と AE のパネルの上部にメニューバーを出し、「ヘルプ → SyncBridge について / 更新…」を置く。
+    - 開くと、GitHub のリリース（新しい順）を、版・公開日・ファイル（インストーラー / zip）・使用中 / 新しい版とともに一覧にする。
+    - 版を選んで「インストール」を押すと、確認してからダウンロードし、インストーラーを起動する。
+  - **共通の処理:** `syncbridge.updater`（標準ライブラリのみ）。
+    - `releases.py`: 公開の API（`api.github.com/repos/ogshaw03/SyncBridge/releases`）を**認証なし**で読む。
+    - `install.py`: ダウンロードし、GitHub の SHA-256（`digest`）と照合して起動する。
+      - EXE: ウィザード。
+      - zip: 展開して `Install.bat`。zip の外を指す名前は拒む。
+    - インストーラーを優先し、なければ zip を使う（0.1.14 までは zip だけ）。
+  - **ファイルは置き換えない:** 置き換えはインストーラー自身に任せる（サーバーを止める、Maya / AE の再起動を案内する）。
+    ダウンロード先は `%LOCALAPPDATA%\SyncBridge\updates`。
+  - **Maya:** パネルのプロセスの中でスレッドを使って実行する（`syncbridge_maya/about.py`）。
+  - **AE:**
+    - パネルに Node.js を有効にする（マニフェストの `--enable-nodejs`、`cep_node.require`。mixed context にはしない）。
+    - 同じ処理をコマンドラインで呼ぶ（`SyncServer.exe update list|install <tag>`、開発中はリポジトリの `.venv` で `-m syncbridge.updater`）。
+    - 結果は JSON の行で受け取る（`panel/js/about.js`）。
+    - 処理を JS に書き直さないため（D-2 の考え方）。
+  - 0.1.15 以前に戻すと、その版にはこのメニューがない（確認の文で知らせる。`has_updater`）。
+- 選ばなかった案:
+  - AE からハブ（サーバー）経由で行う案: Maya が接続していないとハブが動いていないため。
+  - ExtendScript の `system.callSystem` を使う案: AE の「スクリプトによるファイルへの書き込みとネットワークへのアクセス」の設定に左右されるため。
+- 未確認: H-AE-19（実際の AE で Node が使えるか）、H-UPD-1（Maya / AE を開いたままの更新）。
+
+### D-45: インストーラーの EXE（Inno Setup）を zip と並べて配る（2026-10-28、利用者の決定）
+
+- 背景: zip を解凍して `Install.bat` を実行する形は、解凍を忘れる・`.bat` を開くのに迷うなどの手間がある。利用者が EXE にしたいと希望した。
+- 決定: Inno Setup 6 で `SyncBridge-Setup-<version>.exe` を作る（`packaging/installer/SyncBridge.iss`、ビルドは `build_release.py`）。
+  - **入れ方の本体は `install.ps1` / `uninstall.ps1` のまま**（`-Setup` で動かす）。会社の PC で確かめた手順を作り直さないため。
+  - 利用者ごと・管理者権限なし。アンインストールは「設定 → アプリ」から。
+  - zip も引き続き作る（インストーラーが使えない環境のため）。
+- 選ばなかった案:
+  - PyInstaller で自作の Setup.exe: 画面やアンインストールの登録を自分で作る手間が大きい。
+  - IExpress（Windows 標準）: フォルダ構造を扱えず、見た目も古い。
+- 署名はしていない。SmartScreen の警告が出る（H-PKG-3、RELEASE.md）。
+- 自動テストは `/SBTest=1` で「アプリ」に登録しない（開発用の PC のレジストリに書かない）。
+
 ### D-44: ビューアーの編集中レイヤーと 2D パン・ズーム（2026-10-27、利用者の決定）
 
 - 背景: ビューアーは各レイヤーをそれぞれのカメラ（素材カメラ・専用カメラ）で描くが、Maya のクリック選択・マニピュレーターは

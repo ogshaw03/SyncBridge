@@ -2,8 +2,10 @@
 
     .venv\\Scripts\\python packaging\\build_release.py [--skip-tests] [--no-timestamp]
 
-Needs: requirements-server.txt + requirements-monitor.txt + requirements-build.txt in .venv, and
-packaging/tools/ZXPSignCmd.exe (Adobe CEP-Resources, ZXPSignCMD 4.1.3 x64).
+Needs: requirements-server.txt + requirements-monitor.txt + requirements-build.txt in .venv,
+packaging/tools/ZXPSignCmd.exe (Adobe CEP-Resources, ZXPSignCMD 4.1.3 x64), and for the setup EXE
+Inno Setup 6 (ISCC.exe: SYNCBRIDGE_ISCC, or the per-user / per-machine install folder; without it the
+EXE is not made and the build says so).
 
 Output (dist/ is not in git):
     dist/SyncBridge-<version>/
@@ -14,6 +16,7 @@ Output (dist/ is not in git):
         payload/maya/drag_to_maya_SyncBridge.py/.mel, icons/, plug-ins/, scripts/{syncbridge, syncbridge_maya}
         payload/ae/com.syncbridge.panel.zxp                 signed with a self-signed certificate
     dist/SyncBridge-<version>.zip
+    dist/SyncBridge-Setup-<version>.exe                     the same payload in an Inno Setup installer
 
 The self-signed certificate and its password are created once in packaging/local/
 (not in git; keep them to sign later versions with the same certificate).
@@ -178,6 +181,28 @@ def build_installer(release, payload, ver):
     shutil.copy2(os.path.join(ROOT, "version.json"), os.path.join(payload, "version.json"))
 
 
+def find_iscc():
+    """Inno Setup 6's compiler, or None."""
+    env = os.environ.get
+    candidates = [env("SYNCBRIDGE_ISCC", ""),
+                  os.path.join(env("LOCALAPPDATA", ""), "Programs", "Inno Setup 6", "ISCC.exe"),   # winget --scope user
+                  os.path.join(env("ProgramFiles(x86)", ""), "Inno Setup 6", "ISCC.exe"),
+                  os.path.join(env("ProgramFiles", ""), "Inno Setup 6", "ISCC.exe")]
+    return next((c for c in candidates if c and os.path.isfile(c)), None)
+
+
+def make_setup(iscc, payload, work, dist, ver, output_name=None):
+    """SyncBridge-Setup-<version>.exe from the payload (packaging/installer/SyncBridge.iss)."""
+    script = os.path.join(work, "SyncBridge.iss")
+    os.makedirs(work, exist_ok=True)
+    write_text(script, read(os.path.join(PACKAGING, "installer", "SyncBridge.iss")), bom=True, crlf=True)
+    name = output_name or "SyncBridge-Setup-%s" % ver
+    run([iscc, "/Q", "/DAppVersion=%s" % ver, "/DPayload=%s" % payload,
+         "/DIcon=%s" % os.path.join(PACKAGING, "syncbridge.ico"), "/DOutputDir=%s" % dist,
+         "/DOutputName=%s" % name, script])
+    return os.path.join(dist, name + ".exe")
+
+
 def make_zip(release):
     archive = release + ".zip"
     base = os.path.dirname(release)
@@ -198,8 +223,9 @@ def main(argv=None) -> int:
     ver = version()
     dist = os.path.join(ROOT, "dist")
     release = os.path.join(dist, "SyncBridge-%s" % ver)
+    setup = os.path.join(dist, "SyncBridge-Setup-%s.exe" % ver)
     work = os.path.join(ROOT, "build", "release")
-    for path in (release, release + ".zip", work):
+    for path in (release, release + ".zip", setup, work):
         if os.path.isdir(path):
             shutil.rmtree(path)
         elif os.path.exists(path):
@@ -215,8 +241,13 @@ def main(argv=None) -> int:
     build_ae(payload, work, timestamp=not args.no_timestamp)
     build_installer(release, payload, ver)
     archive = make_zip(release)
-    size = os.path.getsize(archive) / 1e6
-    log("done: %s (%.1f MB)" % (archive, size))
+    log("done: %s (%.1f MB)" % (archive, os.path.getsize(archive) / 1e6))
+    iscc = find_iscc()
+    if iscc is None:
+        log("Inno Setup 6 (ISCC.exe) not found: no setup EXE (see the docstring)")
+    else:
+        make_setup(iscc, payload, os.path.join(work, "setup"), dist, ver)
+        log("done: %s (%.1f MB)" % (setup, os.path.getsize(setup) / 1e6))
     return 0
 
 

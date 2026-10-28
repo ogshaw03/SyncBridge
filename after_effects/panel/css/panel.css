@@ -76,3 +76,25 @@ button:disabled { opacity: 0.4; }
   font-family: Consolas, monospace;
   font-size: 11px;
 }
+/* the menu bar and the About / update window (D-46) */
+.menubar { display: flex; margin: -8px -8px 0; padding: 0 4px; background: #2f2f2f; border-bottom: 1px solid var(--border); }
+.menu { position: relative; }
+.menu-title { border: none; background: none; padding: 3px 8px; }
+.menu-title:hover { background: #3a3a3a; }
+.menu-items { display: none; position: absolute; left: 0; top: 100%; z-index: 20; background: var(--panel);
+  border: 1px solid var(--border); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5); min-width: 200px; }
+.menu-items button { display: block; width: 100%; text-align: left; border: none; border-radius: 0; padding: 5px 10px; }
+.menu-items button:hover { background: #24537a; }
+.about-overlay { position: fixed; inset: 0; z-index: 30; background: rgba(0, 0, 0, 0.55); padding: 8px; box-sizing: border-box; overflow-y: auto; }
+.about { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.about .logo { width: 32px; height: 32px; }
+.about-list { border: 1px solid var(--border); border-radius: 3px; max-height: 190px; overflow-y: auto; background: var(--panel); }
+.about-row { display: grid; grid-template-columns: 52px 78px 1fr auto; gap: 4px; padding: 3px 6px; cursor: pointer; white-space: nowrap; }
+.about-row:hover { background: #333; }
+.about-row.selected { background: #24537a; }
+.about-row.current { font-weight: 600; }
+.about-row .r { color: var(--ok); }
+.about-notes { white-space: pre-wrap; font-size: 11px; max-height: 60px; overflow-y: auto; }
+.about-status { font-size: 11px; }
+.about-confirm:empty { display: none; }
+.about-confirm { border-left: 3px solid var(--warn); background: #2f2f2f; padding: 5px 7px; display: flex; flex-direction: column; gap: 4px; }

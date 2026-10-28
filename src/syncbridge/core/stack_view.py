@@ -13,6 +13,7 @@ Pure functions, standard library only. Perspective cameras only.
 """
 from __future__ import annotations
 
+import math
 from typing import List, Optional, Sequence, Tuple
 
 from .pixel_mapping import project
@@ -97,6 +98,27 @@ def view_affine(editing: dict, viewer: dict, view_w: float, view_h: float) -> Af
     return compose(ndc_affine(viewer, view_w, view_h), invert(ndc_affine(editing, view_w, view_h)))
 
 
+def match_view(view: Affine, camera: dict, view_w: float, view_h: float) -> Tuple[float, float, float]:
+    """(hpan, vpan, zoom) of the viewer camera that gives the view `view` (a view_affine) when `camera`
+    is the editing layer's camera. The same numbers act differently through another camera's film back,
+    film translate and scales, and the view moved a little when the editing layer changed (the user,
+    2026-10-27). The zoom scales the view (1 / zoom), the pan moves it linearly."""
+    def affine(hpan, vpan, zoom):
+        return view_affine(camera, with_view(camera, hpan, vpan, zoom), view_w, view_h)
+
+    def scale(a):
+        return math.sqrt(abs(a[0] * a[4] - a[1] * a[3]))
+    zoom = scale(affine(0.0, 0.0, 1.0)) / scale(view)
+    base, along_h, along_v = affine(0.0, 0.0, zoom), affine(1.0, 0.0, zoom), affine(0.0, 1.0, zoom)
+    a, b = along_h[2] - base[2], along_v[2] - base[2]
+    d, e = along_h[5] - base[5], along_v[5] - base[5]
+    det = a * e - b * d
+    if abs(det) < 1e-15:
+        raise ValueError("the 2D pan does not move this camera's picture")
+    dx, dy = view[2] - base[2], view[5] - base[5]
+    return (dx * e - b * dy) / det, (a * dy - d * dx) / det, zoom
+
+
 def pixel_to_ndc(x: float, y: float, view_w: float, view_h: float) -> Tuple[float, float]:
     """A point of the view widget (Qt pixels, y down) -> NDC (y up)."""
     return 2.0 * x / view_w - 1.0, 1.0 - 2.0 * y / view_h
@@ -107,6 +129,25 @@ def ray_direction(layer_affine: Affine, ndc: Sequence[float]) -> Tuple[float, fl
     `layer_affine` ((x/-z, y/-z) -> view NDC)."""
     u, v = map_point(invert(layer_affine), ndc)
     return u, v, -1.0
+
+
+def ndc_to_pixel(ndc: Sequence[float], view_w: float, view_h: float) -> Tuple[float, float]:
+    """NDC (y up) -> a point of the view widget (Qt pixels, y down); the inverse of pixel_to_ndc."""
+    return (ndc[0] + 1.0) * 0.5 * view_w, (1.0 - ndc[1]) * 0.5 * view_h
+
+
+def polyline_distance(point: Sequence[float], points: Sequence[Sequence[float]]) -> float:
+    """Shortest 2D distance from `point` to the polyline through `points` (a curve drawn in the view,
+    P-7: a click near a NURBS curve picks it). Infinite without points."""
+    px, py = point
+    best = math.inf
+    for i, (ax, ay) in enumerate(points):
+        bx, by = points[i + 1] if i + 1 < len(points) else (ax, ay)
+        dx, dy = bx - ax, by - ay
+        length2 = dx * dx + dy * dy
+        t = 0.0 if length2 == 0.0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / length2))
+        best = min(best, math.hypot(px - (ax + t * dx), py - (ay + t * dy)))
+    return best
 
 
 def apply_affine(affine: Affine, point: Sequence[float]) -> Tuple[float, float]:

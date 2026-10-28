@@ -64,6 +64,44 @@ def short_name(path: Optional[str]) -> str:
     return (path or "?").split("|")[-1]
 
 
+def related(path: str, roots: List[str]) -> bool:
+    """Is the DAG node of `path` (a full path; "path.vtx[0]" counts as its node) one of `roots` (full
+    paths), under one, or above one? The viewer keeps Maya's selection to what the editing layer draws:
+    its objects, their children, and their parents (Maya's hierarchy selection picks the top parent,
+    P-1, 2026-10-28)."""
+    node = path.split(".")[0]
+    for root in roots:
+        if node == root or node.startswith(root + "|") or root.startswith(node + "|"):
+            return True
+    return False
+
+
+def selection_layers(layer_roots: List[tuple], selection: List[str], editing: Optional[str] = None) -> dict:
+    """Which layer the viewer edits for this selection (9.5 of docs/VIEWER_CAMERA_SELECTION_AUDIT.md).
+
+    layer_roots: [(layer id, [object full paths])] of the shown layers, top first; selection: full paths.
+    Returns {"target": the layer to edit, or None to keep the editing one, "layers": the layers the
+    selection is in (top first), "unknown": the selected nodes of no shown layer}. A layer is the target
+    only when every selected node is in it (the node, under it, or above it: core related); with
+    several such layers the editing one stays, else the top one. A mixed selection, one with nodes of no
+    shown layer, or none keeps the editing layer: one camera cannot match them all (the user cannot see
+    them, or they are in other pictures)."""
+    common = None
+    touched, unknown = set(), []
+    for node in selection:
+        ids = set(lid for lid, roots in layer_roots if related(node, roots))
+        if not ids:
+            unknown.append(node)
+            continue
+        touched |= ids
+        common = ids if common is None else common & ids
+    order = [lid for lid, _ in layer_roots]
+    target = None
+    if selection and not unknown and common:
+        target = editing if editing in common else [lid for lid in order if lid in common][0]
+    return {"target": target, "layers": [lid for lid in order if lid in touched], "unknown": unknown}
+
+
 def new_maya_layer(name: str, camera_uuid: Optional[str] = None, camera: Optional[str] = None,
                    objects: Optional[List[dict]] = None, layer_camera_uuid: Optional[str] = None,
                    layer_camera: Optional[str] = None) -> dict:

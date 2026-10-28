@@ -59,24 +59,61 @@ def view_camera(store: Optional[dict] = None) -> Optional[str]:
 
 
 def frame_overlay(camera: Optional[str]) -> Optional[tuple]:
-    """(camera, {width, height, name}) of the AE comp frame (D-16) shown for this camera, which the
-    plug-in draws over the stack (Maya's resolution gate would turn the overscan to 1.3, D-27).
-    The comp guide node is only read: inside the stack its own drawing is never called (the user saw
-    no frame, 2026-10-25), so the plug-in draws the same frame with syncbridge.core.comp_guide."""
-    from . import comp_guide
-    if not camera:
+    """(camera, {"render": True}) when the viewer's frame is on: the plug-in draws the frame of Maya's
+    render resolution over the stack, reading it at every draw (Maya's resolution gate would turn the
+    overscan to 1.3, D-27). The render settings, not the AE comp: the viewer works without AE (the user,
+    2026-10-27; the comp guide nodes of the panel's "解像度の枠" were shown before, at a size typed in
+    the panel, and the viewer's button could not hide them)."""
+    shown, custom = frame_shown(), custom_frame()
+    if not camera or not (shown or custom):
         return None
-    camera_tr = cmds.listRelatives(camera, parent=True, fullPath=True)[0] if cmds.nodeType(camera) == "camera" \
-        else camera
-    guides = comp_guide.existing()
-    # the camera's own frame first; else the frame shown on another camera (the same AE comp: the layers
-    # may use different cameras, e.g. a plate camera in the source camera mode, D-39)
-    mine = [g for g in guides if comp_guide.guide_camera(g) == camera_tr]
-    if not guides:
-        return None
-    guide = (mine or guides)[0]
-    return (camera, {"width": cmds.getAttr(guide + ".compWidth"), "height": cmds.getAttr(guide + ".compHeight"),
-                     "name": cmds.getAttr(guide + ".compName") or ""})
+    return (camera, {"render": True, "show": shown, "custom": custom, "width": 0, "height": 0, "name": ""})
+
+
+CUSTOM_ON_VAR = "syncBridgeViewerCustomFrame"     # optionVar: the custom frame on / off
+CUSTOM_SIZE_VAR = "syncBridgeViewerCustomSize"    # optionVar: "1920 1080"
+DEFAULT_CUSTOM_SIZE = (1920, 1080)
+
+
+def custom_size() -> tuple:
+    """The size of the viewer's custom frame (a frame of any size, centred like the render frame: an AE
+    main comp is sometimes made a little larger than the picture, the user, 2026-10-27)."""
+    try:
+        if cmds.optionVar(exists=CUSTOM_SIZE_VAR):
+            w, h = (int(v) for v in str(cmds.optionVar(q=CUSTOM_SIZE_VAR)).split())
+            if w > 0 and h > 0:
+                return w, h
+    except (ValueError, RuntimeError):
+        pass
+    return DEFAULT_CUSTOM_SIZE
+
+
+def custom_frame() -> Optional[tuple]:
+    """(width, height) of the custom frame when it is on, else None."""
+    if cmds.optionVar(exists=CUSTOM_ON_VAR) and cmds.optionVar(q=CUSTOM_ON_VAR):
+        return custom_size()
+    return None
+
+
+def set_custom_frame(shown: bool, width: Optional[int] = None, height: Optional[int] = None) -> None:
+    if width and height:
+        cmds.optionVar(stringValue=(CUSTOM_SIZE_VAR, "%d %d" % (int(width), int(height))))
+    cmds.optionVar(intValue=(CUSTOM_ON_VAR, 1 if shown else 0))
+    publish()
+
+
+FRAME_VAR = "syncBridgeViewerFrame"            # optionVar: the viewer's resolution frame on / off
+
+
+def frame_shown() -> bool:
+    if cmds.optionVar(exists=FRAME_VAR):
+        return bool(cmds.optionVar(q=FRAME_VAR))
+    return True
+
+
+def set_frame_shown(shown: bool) -> None:
+    cmds.optionVar(intValue=(FRAME_VAR, 1 if shown else 0))
+    publish()
 
 
 def publish() -> List[tuple]:

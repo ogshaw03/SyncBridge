@@ -97,6 +97,21 @@ class ViewerPanZoomTest(unittest.TestCase):
         layer_affine = sv.compose(va, sv.ndc_affine(other, *self.VIEW))
         self.assertIsNotNone(layer_affine)
 
+    def test_the_view_stays_when_the_editing_layer_changes(self):
+        # the pan / zoom for another camera that keeps the same view (the user saw it move, 2026-10-27)
+        for before, after in ((self.CAMS[1], self.CAMS[2]), (self.CAMS[2], self.CAMS[0]),
+                              (self.CAMS[0], self.CAMS[1])):
+            view = sv.view_affine(before, sv.with_view(before, 0.03, -0.02, 0.6), *self.VIEW)
+            hpan, vpan, zoom = sv.match_view(view, after, *self.VIEW)
+            got = sv.view_affine(after, sv.with_view(after, hpan, vpan, zoom), *self.VIEW)
+            for g, w in zip(got, view):
+                self.assertAlmostEqual(g, w, places=9)
+        # the same camera: the same numbers back
+        camera = self.CAMS[2]
+        view = sv.view_affine(camera, sv.with_view(camera, 0.05, 0.01, 1.3), *self.VIEW)
+        for g, w in zip(sv.match_view(view, camera, *self.VIEW), (0.05, 0.01, 1.3)):
+            self.assertAlmostEqual(g, w, places=9)
+
     def test_the_ray_goes_through_the_clicked_point(self):
         camera = self.CAMS[2]
         affine = sv.compose(sv.view_affine(camera, sv.with_view(camera, 0.02, 0.0, 0.7), *self.VIEW),
@@ -109,6 +124,19 @@ class ViewerPanZoomTest(unittest.TestCase):
             self.assertEqual(w, -1.0)
         self.assertEqual(sv.pixel_to_ndc(600, 350, *self.VIEW), (0.0, 0.0))
         self.assertEqual(sv.pixel_to_ndc(0, 0, *self.VIEW), (-1.0, 1.0))
+        for x, y in ((0, 0), (600, 350), (123.5, 700)):
+            nx, ny = sv.pixel_to_ndc(x, y, *self.VIEW)
+            gx, gy = sv.ndc_to_pixel((nx, ny), *self.VIEW)
+            self.assertAlmostEqual(gx, x)
+            self.assertAlmostEqual(gy, y)
+
+    def test_distance_to_a_drawn_curve(self):
+        square = [(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]
+        self.assertAlmostEqual(sv.polyline_distance((5, -3), square), 3.0)       # off an edge
+        self.assertAlmostEqual(sv.polyline_distance((13, 14), square), 5.0)      # off a corner
+        self.assertAlmostEqual(sv.polyline_distance((5, 4), square), 4.0)        # inside: to the nearest edge
+        self.assertAlmostEqual(sv.polyline_distance((7, 8), [(7, 8)]), 0.0)      # one point
+        self.assertEqual(sv.polyline_distance((0, 0), []), float("inf"))
 
 
 if __name__ == "__main__":

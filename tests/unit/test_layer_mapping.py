@@ -194,6 +194,45 @@ class LayerMappingTest(unittest.TestCase):
         self.assertEqual(len(warnings), 1)
 
 
+class RelatedTest(unittest.TestCase):
+    """P-1: what the viewer lets Maya select in the editing layer."""
+    ROOTS = ["|RIG|geo|body", "|BOOK"]
+
+    def test_the_object_its_children_and_parents(self):
+        for path in ("|RIG|geo|body", "|RIG|geo|body|bodyShape", "|RIG|geo|body.vtx[3]", "|RIG|geo", "|RIG",
+                     "|BOOK", "|BOOK|BOOK_CTRL"):
+            self.assertTrue(lm.related(path, self.ROOTS), path)
+
+    def test_not_a_sibling_nor_a_similar_name(self):
+        for path in ("|RIG|geo|body2", "|RIG|ctrl", "|BOOKS", "|UNREG", "|BOOK_CAM|SB_VIEWER_CAM"):
+            self.assertFalse(lm.related(path, self.ROOTS), path)
+        self.assertFalse(lm.related("|BOOK", []))
+
+
+class SelectionLayersTest(unittest.TestCase):
+    """9.5: the viewer follows a selection that is all in one shown layer."""
+    ROOTS = [("char", ["|RIG|geo"]), ("book", ["|BOOK", "|BOOK_CTRL"]), ("both", ["|BOOK"])]
+
+    def sel(self, selection, editing=None):
+        return lm.selection_layers(self.ROOTS, selection, editing)
+
+    def test_one_layer(self):
+        got = self.sel(["|RIG|geo|body", "|RIG|geo|body.vtx[1]", "|RIG"], editing="book")
+        self.assertEqual(got, {"target": "char", "layers": ["char"], "unknown": []})
+
+    def test_mixed_unknown_and_empty_keep_the_editing_layer(self):
+        self.assertEqual(self.sel(["|RIG|geo", "|BOOK_CTRL"]),
+                         {"target": None, "layers": ["char", "book"], "unknown": []})
+        self.assertEqual(self.sel(["|RIG|geo", "|UNREG"]),
+                         {"target": None, "layers": ["char"], "unknown": ["|UNREG"]})
+        self.assertEqual(self.sel([]), {"target": None, "layers": [], "unknown": []})
+
+    def test_a_node_of_two_layers(self):
+        self.assertEqual(self.sel(["|BOOK"])["target"], "book")                  # the top one
+        self.assertEqual(self.sel(["|BOOK"], editing="both")["target"], "both")  # the editing one stays
+        self.assertEqual(self.sel(["|BOOK", "|BOOK_CTRL"], editing="both")["target"], "book")
+
+
 class AeOnTheMapTest(unittest.TestCase):
     """D-40: the layer map shows the AE layers put on it (from the selection in AE) and the linked ones."""
 

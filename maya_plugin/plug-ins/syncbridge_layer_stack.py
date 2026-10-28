@@ -3,7 +3,8 @@ SyncBridge Maya layers on top of each other in one view, like AE layers.
 
 Each Maya layer is one scene pass with its own camera (its dedicated camera, D-29) and only its own
 objects. The first pass clears the view; the others clear only the depth, so a layer is drawn over the
-layers below it whatever their depth (AE's stacking). Then the HUD and the present.
+layers below it whatever their depth (AE's stacking). The layer passes leave the manipulators out
+(objectTypeExclusions); one more pass draws only them, once, through the camera Maya picks with (H-MY-42). Then the HUD and the present.
 
     hypotheses (GUI only, mayapy has no viewport): H-MY-33
       MSceneRender.cameraOverride() draws the pass through that camera (film offset / pan / zoom too),
@@ -42,10 +43,11 @@ import maya.api.OpenMayaRender as omr
 import maya.api.OpenMayaUI as omui
 
 OVERRIDE_NAME = "SyncBridgeLayerStack"
-REVISION = 11                                      # shown in uiName: is the plug-in really reloaded?
+REVISION = 14                                   # shown in uiName: is the plug-in really reloaded?
 UI_NAME = "SyncBridge Layer Stack r%d" % REVISION
 STATE_KEY = "_syncbridge_layer_stack"
 FRAME_COLOR = om.MColor((1.0, 0.55, 0.1, 1.0))       # the comp guide's colour (D-16)
+CUSTOM_COLOR = om.MColor((0.35, 0.85, 1.0, 1.0))     # the viewer's frame of a size typed in it
 DEFAULT_SHADE = 0.5                                  # outside the frame, like the resolution gate's shade
 
 
@@ -156,6 +158,13 @@ class LayerPass(omr.MSceneRender):
         self._objects.merge(objects)
         self._first = first
 
+    def objectTypeExclusions(self):
+        """The layer without the manipulators: every pass drew them through its own camera, and the user saw
+        several, of which only one could be dragged (2026-10-27). ManipulatorPass draws them once (H-MY-42).
+        (r12 tried renderFilterOverride(kRenderShadedItems | kRenderNonShadedItems): kRenderNonShadedItems is
+        kRenderUIItems (9), so that was every item and nothing changed.)"""
+        return omr.MFrameContext.kExcludeManipulators
+
     def set_projection(self, rows):
         """The margin's projection (16 numbers, D-35), or None for the camera's own."""
         if rows is None:
@@ -177,6 +186,59 @@ class LayerPass(omr.MSceneRender):
         else:
             op.setMask(omr.MClearOperation.kClearDepth | omr.MClearOperation.kClearStencil)
         return op
+
+
+class ManipulatorPass(omr.MSceneRender):
+    """Maya's UI (the manipulators) once, through the viewer camera the panel looks through and on top of
+    every layer, so it is where Maya's own clicks find it (D-44, H-MY-42)."""
+
+    def __init__(self, name):
+        super().__init__(name)
+        self._camera = omr.MCameraOverride()
+        self._objects = om.MSelectionList()
+        self._has_camera = False
+
+    def set_camera(self, camera, objects):
+        """camera None: the panel's own (no layer is edited, e.g. the stack in an ordinary view)."""
+        self._has_camera = camera is not None
+        if camera is not None:
+            self._camera.mCameraPath = camera
+        self._objects.clear()
+        self._objects.merge(objects)
+
+    def cameraOverride(self):
+        return self._camera if self._has_camera else None
+
+    def objectSetOverride(self):
+        return self._objects
+
+    def objectTypeExclusions(self):
+        return ONLY_MANIPULATORS
+
+    def clearOperation(self):
+        op = self.mClearOperation
+        op.setMask(omr.MClearOperation.kClearDepth | omr.MClearOperation.kClearStencil)
+        return op
+
+
+LONG_MAX = 0x7FFFFFFF      # Maya takes objectTypeExclusions() as a C long: 32 bits on Windows
+
+
+def _only_manipulators():
+    """Every exclusion but the manipulators', OR-ed from the named flags (kExcludeAll is -1 in Python and
+    would not stay -1 once the manipulators' bit is taken out). Only the flags that fit in a C long: with the
+    higher ones (plug-in shapes, HUD, ...) Maya raised "Python int too large to convert to C long" and the
+    whole view stayed empty (Maya 2023 GUI, 2026-10-27). The layer set keeps other objects out anyway."""
+    flags = 0
+    for name in dir(omr.MFrameContext):
+        if name.startswith("kExclude") and name not in ("kExcludeNone", "kExcludeAll", "kExcludeManipulators"):
+            value = getattr(omr.MFrameContext, name)
+            if isinstance(value, int) and 0 < value <= LONG_MAX:
+                flags |= value
+    return flags
+
+
+ONLY_MANIPULATORS = _only_manipulators()
 
 
 def _camera_values(cam_fn):
@@ -207,6 +269,10 @@ def frame_screen_points(camera_path, comp, viewport, margin=1.0, view=None):
     the picture, not the frame (core.view_frame, D-34). The margin shrinks it like the layers (D-35);
     `view` (the viewer's 2D pan / zoom, an NDC affine map, D-44) moves it like the layers instead."""
     render = _render_values()
+    shown = None if comp.get("bare") else render      # the custom frame: "Custom 1920x1080" only
+    if comp.get("render"):                  # the viewer's frame: Maya's render resolution, read now
+        comp = {"width": render["width"], "height": render["height"], "name": "Maya"}
+        shown = None                        # the label says it once: "Maya 1920x1080"
     cam = dict(_camera_values(om.MFnCamera(camera_path)), overscan=1.0 if view else float(margin))
     left, bottom, right, top = core_frame.frame_rect(tuple(viewport), cam, render, comp)
     corners = [(left, top), (right, top), (right, bottom), (left, bottom)]
@@ -215,7 +281,7 @@ def frame_screen_points(camera_path, comp, viewport, margin=1.0, view=None):
         corners = [core_view.map_point(view, ((x - x0) / w * 2.0 - 1.0, (y - y0) / h * 2.0 - 1.0)) for x, y in corners]
         corners = [(x0 + (nx + 1.0) * 0.5 * w, y0 + (ny + 1.0) * 0.5 * h) for nx, ny in corners]
     points = [om.MPoint(x, y) for x, y in corners]
-    return points, core_guide.label(comp, render)
+    return points, core_guide.label(comp, shown)
 
 
 def mask_bands(points, viewport):
@@ -244,6 +310,18 @@ def label_point(points, viewport):
     y = top + LABEL_GAP
     if y + LABEL_HEIGHT > y0 + height:
         y = top - LABEL_GAP - LABEL_HEIGHT
+    return om.MPoint(left, y)
+
+
+def label_point_below(points, viewport):
+    """The custom frame's label: below its bottom-left corner (the render frame's label is above its own
+    top-left, and the two frames may be the same size); inside that corner at the bottom of the view."""
+    x0, y0, width, height = viewport
+    left = max(min(p.x for p in points), x0 + LABEL_GAP)
+    bottom = min(p.y for p in points)
+    y = bottom - LABEL_GAP - LABEL_HEIGHT
+    if y < y0:
+        y = bottom + LABEL_GAP
     return om.MPoint(left, y)
 
 
@@ -278,21 +356,33 @@ class FrameHUD(omr.MHUDRender):
         try:
             camera, comp = self.frame
             viewport = frame_context.getViewportDimensions()
-            points, text = frame_screen_points(camera, comp, viewport, self.margin, self.view)
+            # the render frame (unless hidden) and the custom frame (D-44); the first one shades the outside
+            frames = []
+            if comp.get("show", True):
+                frames.append((comp, FRAME_COLOR, label_point))
+            custom = comp.get("custom")
+            if custom:
+                frames.append(({"width": custom[0], "height": custom[1], "name": "Custom", "bare": True},
+                               CUSTOM_COLOR, label_point_below))
+            if not frames:
+                return
+            drawn = [(frame_screen_points(camera, c, viewport, self.margin, self.view), color, where)
+                     for c, color, where in frames]
             _debug("frame points", "viewport=%s points=%s" % (
-                tuple(viewport), [(round(p.x, 1), round(p.y, 1)) for p in points]))
+                tuple(viewport), [(round(p.x, 1), round(p.y, 1)) for p in drawn[0][0][0]]))
             draw_manager.beginDrawable()
             shade = shade_color(_state().get("shade", DEFAULT_SHADE))
             if shade.a > 0.0:
                 draw_manager.setColor(shade)
-                for left, bottom, right, top in mask_bands(points, viewport):
+                for left, bottom, right, top in mask_bands(drawn[0][0][0], viewport):
                     draw_manager.rect2d(om.MPoint((left + right) / 2.0, (bottom + top) / 2.0),
                                         om.MVector(0.0, 1.0, 0.0), (right - left) / 2.0, (top - bottom) / 2.0, True)
-            draw_manager.setColor(FRAME_COLOR)
             draw_manager.setLineWidth(1.5)
-            for i in range(4):
-                draw_manager.line2d(points[i], points[(i + 1) % 4])
-            draw_manager.text2d(label_point(points, viewport), text, omr.MUIDrawManager.kLeft)
+            for (points, text), color, where in drawn:
+                draw_manager.setColor(color)
+                for i in range(4):
+                    draw_manager.line2d(points[i], points[(i + 1) % 4])
+                draw_manager.text2d(where(points, viewport), text, omr.MUIDrawManager.kLeft)
             draw_manager.endDrawable()
         except Exception as exc:                # never break the view
             _warn_once("SyncBridge layer stack: cannot draw the comp frame: %s" % exc)
@@ -307,6 +397,7 @@ class LayerStackOverride(omr.MRenderOverride):
         super().__init__(name)
         self._pool = []                                    # LayerPass, never freed
         self._scene = omr.MSceneRender("SyncBridgeLayerStack_scene")
+        self._manipulators = ManipulatorPass("SyncBridgeLayerStack_manipulators")
         self._hud = FrameHUD()
         self._present = omr.MPresentTarget("SyncBridgeLayerStack_present")
         self._ops = [self._scene, self._hud, self._present]
@@ -337,6 +428,7 @@ class LayerStackOverride(omr.MRenderOverride):
             if dedicated is not None and viewer is not None:
                 self._editing = (dedicated, viewer)
         ops = []
+        everything = om.MSelectionList()
         for name, camera_name, object_names in state["layers"]:
             camera = _dag_path(camera_name)
             if camera is not None and self._editing is not None and camera == self._editing[0]:
@@ -352,8 +444,12 @@ class LayerStackOverride(omr.MRenderOverride):
             layer_pass = self._pass(len(ops))
             layer_pass.set_layer(camera, objects, first=not ops)
             ops.append(layer_pass)
+            everything.merge(objects)
         if not ops:                            # nothing to stack: draw the view as usual
             ops.append(self._scene)
+        else:                                  # the manipulators once, over every layer (H-MY-42)
+            self._manipulators.set_camera(self._editing[1] if self._editing else None, everything)
+            ops.append(self._manipulators)
         overlay = state.get("overlay")
         camera = _dag_path(overlay[0]) if overlay else None
         self._hud.frame = (camera, dict(overlay[1])) if camera is not None else None

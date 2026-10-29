@@ -144,7 +144,7 @@ def _block_gates() -> None:
 def _unwatch() -> None:
     while _JOBS:
         job = _JOBS.pop()
-        if cmds.scriptJob(exists=job):
+        if job is not None and cmds.scriptJob(exists=job):       # scriptJob gives None in mayapy
             cmds.scriptJob(kill=job, force=True)
 
 

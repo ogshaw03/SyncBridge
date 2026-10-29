@@ -42,7 +42,29 @@
 | AE の代役 | `tools/fake_ae.py` | ✅ 本物のサーバーと実データで両方向を確認 |
 | AE の CEP パネル（manifest、画面、通信、ExtendScript の窓口） | `after_effects/CSXS`, `panel/`, `jsx/syncbridge_cep_host.jsx` | ✅ AE 26.5 で V-P1C 合格（両方向、取り消し、日本語の警告、切断）。通信部分は Node のテストも |
 
+| 納品用のクリーンアップ（D-47） | `syncbridge_maya/cleanup.py`, `cleanup_dialog.py`, パネルの「その他」 | ✅ mayapy 2023 / 2024（`tools/maya_cleanup_check.py`）と GUI の Maya 2023 / 2024 で確認。接続中・リアルタイム同期中の実行は未確認 |
+
 ## テスト結果
+
+### 2026-10-29（Windows 11, Python 3.10.6）
+
+- **納品用のクリーンアップ（D-47、利用者の要望）:** Maya のパネルの「その他 → 納品 → 納品用のクリーンアップ…」。
+  - 消すもの: レイヤーマップ、キーのマーカー（ブックマーク）、Origin frame の記録、ビューアー・解像度の枠などの表示用のノード。
+  - 専用カメラは確認画面でその都度選ぶ（既定は「普通のカメラとして残す」= 目印の属性とロックを外し、キーと接続は保つ）。
+  - Scene Time Warp は残す（利用者の決定）。JSON バックアップ、シーンのデータは 1 回の undo で戻る。ビューアーとレイヤーマップは閉じ、
+    リアルタイム同期はオフにする。
+  - `tools/maya_cleanup_check.py`: mayapy 2023 / 2024 で 13 項目すべて PASS。
+    - 保存した .ma に SyncBridge のノードが残らない。`requires` は Maya だけ（利用者のブックマークがあれば `timeSliderBookmark` は残る）。
+    - 残したカメラはキー 2 個と元のカメラからの接続を保つ。タイムワープと利用者のブックマークは残る。
+  - モック（mayapy、offscreen）: パネルの「その他」タブと確認画面（カメラあり・なし）。
+  - **GUI の Maya 2023 / 2024**（スクラッチの `gui_cleanup_check.py`、確認画面だけ差し替え）: パネル・ビューアー・レイヤーマップを開いた
+    状態でボタンから実行 → 両方のウィンドウが閉じ、ビューアーのノード 0、取り消し 1 回で専用カメラの目印とデータが戻り、ビューアーを
+    開き直せた。カメラを消す方も、取り消し 1 回で戻った。
+    - 最初は 1 回目の取り消しが Maya の `selectionMaskResetAll` に使われた。ビューアーを閉じると Maya が少し後に積むため（H-MY-46）。
+      ウィンドウを先に閉じ、本体を `evalDeferred`（lowestPriority）で後に回して直した。
+  - ついでの修正: `viewer_camera._unwatch` が mayapy で落ちた（scriptJob が None を返す）。None を飛ばす。
+  - テスト: 408 件 OK（`.venv` / `py -3`、106 件スキップ）。
+  - **未確認:** SyncBridge のサーバーに接続中・リアルタイム同期中の実行（同期をオフにする処理）。
 
 ### 2026-10-27（Windows 11, Python 3.10.6）
 

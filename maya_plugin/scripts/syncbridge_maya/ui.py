@@ -241,6 +241,10 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.clear_markers_btn = QtWidgets.QPushButton(u"マーカーを消す")
         self.clear_markers_btn.setToolTip(u"AE から送ったキーのマーカー（ブックマークとビューの表示）を、このシーンから消します")
         self.clear_markers_btn.clicked.connect(self.clear_markers)
+        self.cleanup_btn = QtWidgets.QPushButton(u"納品用のクリーンアップ…")
+        self.cleanup_btn.setToolTip(u"SyncBridge がこのシーンに作ったノード（専用カメラ・レイヤーマップ・マーカーなど）を消します"
+                                    u"（確認してから。Scene Time Warp は残します）")
+        self.cleanup_btn.clicked.connect(self.cleanup_scene)
 
         self.log = QtWidgets.QPlainTextEdit()
         self.log.setReadOnly(True)
@@ -289,7 +293,9 @@ class SyncBridgePanel(QtWidgets.QDialog):
                         self.guide_preset),
                    _row(None, self.show_guide_btn, self.clear_guide_btn),
                    _note(u"AE のパネルの「解像度の枠」でも出せます")),
-            _group(u"AE のキーのマーカー", _row(self.markers_label, self.clear_markers_btn))), u"その他")
+            _group(u"AE のキーのマーカー", _row(self.markers_label, self.clear_markers_btn)),
+            _group(u"納品", _row(self.cleanup_btn, None),
+                   _note(u"SyncBridge のノードを消して、ツールなしで開けるシーンにします"))), u"その他")
         if cmds.optionVar(exists=TAB_VAR):
             self.tabs.setCurrentIndex(int(cmds.optionVar(q=TAB_VAR)))
         self.tabs.currentChanged.connect(lambda index: cmds.optionVar(intValue=(TAB_VAR, index)))
@@ -554,6 +560,37 @@ class SyncBridgePanel(QtWidgets.QDialog):
             return
         self.write(u"キーのマーカー %d 個を消しました（Ctrl+Z で戻せます）。" % count)
         self.show_stored_markers()
+
+    def cleanup_scene(self):
+        from . import cleanup, cleanup_dialog
+        try:
+            found = cleanup.inventory()
+            if not found["any"]:
+                self.write(u"このシーンには SyncBridge のノードはありません。")
+                return
+            keep = cleanup_dialog.ask(found, self)
+            if keep is None:
+                return
+            live_stopped = cleanup.close_tools()
+        except Exception as exc:
+            self.write(u"クリーンアップできませんでした: %s" % exc)
+            return
+        # after the commands Maya defers when the viewer's panel goes (H-MY-46): one undo restores the scene.
+        # A method, not a lambda: Maya names the undo step after the callable.
+        self._cleanup_args = (keep, live_stopped)
+        cmds.evalDeferred(self.syncbridge_delivery_cleanup, lowestPriority=True)
+
+    def syncbridge_delivery_cleanup(self):
+        from . import cleanup
+        keep, live_stopped = self._cleanup_args
+        try:
+            result = cleanup.run(keep_cameras=keep, live_stopped=live_stopped)
+        except Exception as exc:
+            self.write(u"クリーンアップできませんでした: %s" % exc)
+            return
+        self.write(cleanup.result_text(result))
+        self.show_stored_markers()
+        self.refresh_pixel_mapping()
 
     def clear_guide(self):
         try:

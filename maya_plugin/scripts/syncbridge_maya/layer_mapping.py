@@ -361,6 +361,15 @@ def add_ae_layers(aes: List[dict]):
     return _edit("SyncBridge add AE layers", fn)
 
 
+def update_ae_sizes(info: dict) -> int:
+    """Take the AE sizes of the linked layers from layersInfo() (D-49). One undo, only when a size changed
+    (every read of AE would otherwise leave an undo step). Returns how many links changed."""
+    data = store()
+    if core.update_sizes(data, info) == 0:
+        return 0
+    return _edit("SyncBridge AE sizes", lambda fresh: core.update_sizes(fresh, info))
+
+
 def set_main_comp(comp: dict) -> None:
     """The AE comp the layer map is built on (D-40)."""
     _edit("SyncBridge main comp", lambda data: core.set_main_comp(data, comp))

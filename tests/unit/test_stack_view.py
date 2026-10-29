@@ -180,5 +180,36 @@ class SteadyViewTest(unittest.TestCase):
         self.assertAlmostEqual(same[1], -0.1)
 
 
+class SourceRangeTest(unittest.TestCase):
+    """D-49: the source's frame, drawn through the dedicated camera, is where AE puts the source."""
+
+    def test_range_is_the_ae_layer_in_the_comp(self):
+        from tests.unit.test_pixel_mapping import COMP, HFA, H, RENDER, W, camera
+        plate = camera(hfa=HFA * 3, vfa=HFA * 3 * H / W, pan_zoom_enabled=False, render_pan_zoom=False,
+                       ft_h=0.02, film_roll=0.0)
+        size = (5760, 3240)
+        cases = [{"position": [1360.0, 290.0], "anchorPoint": [2880.0, 1620.0], "scale": [100.0, 100.0], "rotation": 0.0},
+                 {"position": [700.0, 600.0], "anchorPoint": [1000.0, 900.0], "scale": [40.0, 40.0], "rotation": 15.0}]
+        for layer in cases:
+            m, _ = pm.ae_layer_matrix(layer)
+            solved = dict(plate, **pm.solve_source("film_roll", plate, RENDER, size, m, COMP)["values"])
+            for margin in (1.0, 1.2):
+                corners = sv.source_range(plate, size, sv.ndc_affine(solved, W, H, margin))
+                for (nx, ny), (sx, sy) in zip(corners, ((0, 0), (size[0], 0), size, (0, size[1]))):
+                    cx, cy = pm.apply(m, sx, sy)          # AE: the source corner in the comp
+                    want = ((cx - W / 2.0) / margin + W / 2.0, (cy - H / 2.0) / margin + H / 2.0)
+                    self.assertAlmostEqual((nx + 1.0) * 0.5 * W, want[0], places=5)
+                    self.assertAlmostEqual((1.0 - ny) * 0.5 * H, want[1], places=5)
+
+    def test_corners_top_left_first(self):
+        corners = sv.source_corners(cam(), (1920, 1080))
+        self.assertLess(corners[0][0], corners[1][0])          # left, right
+        self.assertGreater(corners[0][1], corners[3][1])       # top is up (v > 0)
+
+    def test_orthographic_is_refused(self):
+        with self.assertRaises(ValueError):
+            sv.source_corners(cam(orthographic=True, ortho_width=10.0), (1920, 1080))
+
+
 if __name__ == "__main__":
     unittest.main()

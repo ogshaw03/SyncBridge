@@ -47,12 +47,34 @@ class LayerStackListTest(unittest.TestCase):
         self.assertEqual(got, [self.bg["id"]])
 
     def test_rows_top_first(self):
+        from syncbridge_maya.layer_stack_view import CAMERA, NAME
         tree = self.list.tree
-        self.assertEqual([tree.topLevelItem(i).text(2) for i in range(3)], ["CHAR", "BG", "FX"])
-        self.assertEqual(tree.topLevelItem(1).text(3), "SB_BG_CAM")
-        self.assertIn(u"描きません", tree.topLevelItem(2).toolTip(2))           # no camera, no objects
+        self.assertEqual([tree.topLevelItem(i).text(NAME) for i in range(3)], ["CHAR", "BG", "FX"])
+        self.assertEqual(tree.topLevelItem(1).text(CAMERA), "SB_BG_CAM")
+        self.assertIn(u"描きません", tree.topLevelItem(2).toolTip(NAME))           # no camera, no objects
+
+    def test_resolution_and_solo(self):
+        # D-49: the AE size of each layer, and the solo button right of the eye
+        from syncbridge_maya.layer_stack_view import RESOLUTION, SOLO
+        lm.connect(self.store, {"comp_id": 1, "comp": "c", "layer_id": 5, "layer": "BG", "source_width": 3000,
+                                "source_height": 1688, "source_kind": "still"}, self.bg["id"], mode="source")
+        self.list.set_data(self.store)
+        tree = self.list.tree
+        self.assertEqual([tree.topLevelItem(i).text(RESOLUTION) for i in range(3)], [u"―", u"3000×1688（素材）", u"―"])
+        got = []
+        self.list.solo_requested.connect(got.append)
+        bg_button = tree.itemWidget(tree.topLevelItem(1), SOLO)
+        self.assertFalse(tree.itemWidget(tree.topLevelItem(2), SOLO).isEnabled())   # FX cannot be drawn
+        bg_button.click()
+        bg_button.click()
+        self.assertEqual(got, [self.bg["id"], None])
+        self.list.set_solo(self.bg["id"])                      # the viewer says which row is solo
+        self.assertTrue(bg_button.isChecked())
+        self.assertEqual(len(got), 2)                          # showing it does not ask again
+        self.assertEqual(tree.topLevelItem(0).foreground(RESOLUTION).color().name(), "#7a7a7a")
 
     def test_reorder_emits_the_new_order(self):
+        from syncbridge_maya.layer_stack_view import NUMBER, SOLO
         got = []
         self.list.order_changed.connect(got.append)
         tree = self.list.tree
@@ -60,7 +82,8 @@ class LayerStackListTest(unittest.TestCase):
         tree.insertTopLevelItem(0, item)
         self.list._on_drop()
         self.assertEqual(got, [[self.bg["id"], self.char["id"], self.fx["id"]]])
-        self.assertEqual(tree.topLevelItem(0).text(1), "1")
+        self.assertEqual(tree.topLevelItem(0).text(NUMBER), "1")
+        self.assertIsNotNone(tree.itemWidget(tree.topLevelItem(0), SOLO))     # the moved row keeps its button
 
     def test_eye(self):
         got = []

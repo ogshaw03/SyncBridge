@@ -16,7 +16,7 @@ from __future__ import annotations
 import math
 from typing import List, Optional, Sequence, Tuple
 
-from .pixel_mapping import effective_width, project
+from .pixel_mapping import camera_affine, effective_width, project
 
 Affine = Tuple[float, float, float, float, float, float]     # x' = a*u + b*v + c,  y' = d*u + e*v + f
 
@@ -158,6 +158,27 @@ def match_view(view: Affine, camera: dict, view_w: float, view_h: float) -> Tupl
         raise ValueError("the 2D pan does not move this camera's picture")
     dx, dy = view[2] - base[2], view[5] - base[5]
     return (dx * e - b * dy) / det, (a * dy - d * dx) / det, zoom
+
+
+# -- the range of a layer (D-49) -------------------------------------------------------------------------
+# In the source camera mode (D-39) the AE source is a render of the layer's camera at the source's size,
+# and the dedicated camera shows each source pixel where AE puts it in the comp. So the source's frame, as
+# camera-space directions of the layer's camera at that size, drawn like the layer (its NDC map), is where
+# the AE layer's picture is: what of the scene reaches AE.
+def source_corners(source_camera: dict, size: Sequence[float]) -> List[Tuple[float, float]]:
+    """(x / -z, y / -z) of the 4 corners of the source (top-left first, clockwise on screen) rendered by
+    `source_camera` at `size` (width, height). Perspective cameras only."""
+    if source_camera.get("orthographic"):
+        raise ValueError("perspective cameras only")
+    w, h = float(size[0]), float(size[1])
+    m = camera_affine(source_camera, {"width": w, "height": h, "pixel_aspect": 1.0})
+    to_uv = invert((m[0][0], m[0][1], m[0][2], m[1][0], m[1][1], m[1][2]))
+    return [map_point(to_uv, p) for p in ((0.0, 0.0), (w, 0.0), (w, h), (0.0, h))]
+
+
+def source_range(source_camera: dict, size: Sequence[float], layer_affine: Affine) -> List[Tuple[float, float]]:
+    """The source's 4 corners in view NDC, for a layer drawn with `layer_affine` ((x/-z, y/-z) -> NDC)."""
+    return [map_point(layer_affine, uv) for uv in source_corners(source_camera, size)]
 
 
 def pixel_to_ndc(x: float, y: float, view_w: float, view_h: float) -> Tuple[float, float]:

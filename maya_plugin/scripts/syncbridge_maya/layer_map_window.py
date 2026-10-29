@@ -178,6 +178,11 @@ class LayerMapWindow(QtWidgets.QWidget):
                          % (asked.get("name"), (data.get("comp") or {}).get("name")), error=True)
                 return
             _last_ae = {"comp": data["comp"], "layers": data["layers"]}
+            try:                                    # the sizes of the viewer's layers (D-49)
+                if layer_mapping.update_ae_sizes(data):
+                    service.announce("layer_map")
+            except Exception as exc:                # a convenience: never stop reading AE
+                print("SyncBridge: AE sizes: %s" % exc)
             done(dict(data))
         try:
             service.request_ae_layers(reply_to, asked)

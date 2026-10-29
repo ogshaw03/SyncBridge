@@ -463,6 +463,7 @@ var SBCep = (function () {
             out.push({
                 id: (layer.id !== undefined) ? layer.id : null, index: i, name: layer.name,
                 kind: kind, enabled: layer.enabled, comp_id: comp.id, comp: comp.name, via: via,
+                comp_width: comp.width, comp_height: comp.height,       // the comp it is in (D-49)
                 source: src ? src.name : null, source_id: src ? src.id : null,
                 width: (src && src.width) ? src.width : null, height: (src && src.height) ? src.height : null,
                 inPoint: layer.inPoint, outPoint: layer.outPoint, threeD: !!layer.threeDLayer,

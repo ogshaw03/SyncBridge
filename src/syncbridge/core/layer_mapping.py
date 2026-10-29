@@ -26,7 +26,8 @@ kept in step with the Maya layer):
       "id": "vl-3f2a...",                 unique, never reused
       "name": "BG Slide",
       "ae": {"comp_id": 12, "comp": "c010", "layer_id": 345, "layer": "BG", "source": "bg_c010.psd",
-             "source_width": 6000, "source_height": 4000},
+             "source_width": 6000, "source_height": 4000, "source_kind": "still",
+             "comp_width": 1920, "comp_height": 1080},  the sizes (D-49): links made before have the source's only
       "maya": {"camera_uuid": "...", "camera": "|BG_CAM|BG_CAMShape", "bg_uuid": "...", "bg": "|bgPlane"},
       "enabled": true,
       "direction": "ae2maya",             only direction so far
@@ -57,6 +58,8 @@ MODES = ("relative", "absolute", "source")
 # source (D-39): the AE source is a render of the Maya layer's camera; no reference, no BG plane
 MODE_LABELS = {"relative": u"相対", "absolute": u"絶対", "source": u"素材カメラ"}
 SCHEMA_VERSION = 2
+# what a link keeps of the AE layer's sizes (D-49): its source, the source's kind, the comp it is in
+SIZE_KEYS = ("source_width", "source_height", "source_kind", "comp_width", "comp_height")
 
 
 # -- Maya layers (D-28) -------------------------------------------------------------------------------
@@ -156,11 +159,19 @@ def set_layer_camera(store: dict, layer_id: str, camera_uuid: Optional[str], cam
     return layer
 
 
-def stack(store: dict) -> List[dict]:
+def stack(store: dict, solo: Optional[str] = None) -> List[dict]:
     """The Maya layers to draw on top of each other in the layer stack view (D-32), bottom first:
     the layer listed first in the layer map is on top (like AE). Layers without a camera or without
     objects are left out. [{id, name, camera_uuid (the camera it is drawn with), original_camera_uuid
-    (the layer's camera, for the comp frame), object_uuids}]"""
+    (the layer's camera, for the comp frame), object_uuids}]
+
+    solo (D-49): that layer only, shown or hidden (AE's solo); ignored when it cannot be drawn (a layer
+    removed, a scene opened), so the viewer never goes empty because of it."""
+    if solo is not None:
+        only = stack(dict(store, maya_layers=[dict(layer, visible=True) for layer in store["maya_layers"]
+                                              if layer["id"] == solo]))
+        if only:
+            return only
     out = []
     for layer in reversed(store["maya_layers"]):
         if not layer.get("visible", True):
@@ -309,8 +320,8 @@ def new_mapping(ae: dict, maya: dict, method: str = "film_offset", name: Optiona
     return {
         "id": "vl-" + uuid.uuid4().hex[:12],
         "name": name or ae.get("layer") or "BG",
-        "ae": dict({k: ae.get(k) for k in ("comp_id", "comp", "layer_id", "layer", "source", "source_width",
-                                           "source_height")}, via=list(ae.get("via") or [])),
+        "ae": dict({k: ae.get(k) for k in ("comp_id", "comp", "layer_id", "layer", "source") + SIZE_KEYS},
+                   via=list(ae.get("via") or [])),
         "maya": {k: maya.get(k) for k in ("camera_uuid", "camera", "bg_uuid", "bg")},
         "enabled": True,
         "direction": "ae2maya",
@@ -559,11 +570,59 @@ def selected_in_ae(info: dict) -> List[dict]:
 
 def ae_from_layers_info(comp: dict, layer: dict) -> dict:
     """The `ae` of a link from SBCep.layersInfo() (its comp and one of its layers). A layer inside a
-    precomp names its own comp and the precomp layers above it (`via`, D-37)."""
+    precomp names its own comp and the precomp layers above it (`via`, D-37). The sizes (D-49): the
+    source's, its kind (footage / comp / ...), and the size of the comp the layer is in (an AE panel
+    older than 0.1.20 does not send it: the main comp's size for a layer not in a precomp)."""
+    inside = bool(layer.get("via"))
     return {"comp_id": layer.get("comp_id", comp.get("id")), "comp": layer.get("comp", comp.get("name")),
             "layer_id": layer.get("id"), "layer": layer.get("name"), "source": layer.get("source"),
             "source_width": layer.get("width"), "source_height": layer.get("height"),
+            "source_kind": layer.get("kind"),
+            "comp_width": layer.get("comp_width", None if inside else comp.get("width")),
+            "comp_height": layer.get("comp_height", None if inside else comp.get("height")),
             "via": list(layer.get("via") or [])}
+
+
+# -- the AE resolution of a Maya layer (D-49) -------------------------------------------------------------
+def layer_resolution(store: dict, layer_id: str) -> Optional[dict]:
+    """{width, height, kind} of the picture AE takes for this Maya layer: the size of its linked AE layer's
+    source (kind "source": footage, "comp": a precomp), else the size of the comp that layer is in (a
+    text or shape layer has no source: kind "comp"). None when no link has a size."""
+    for m in links_of(store, layer_id):
+        ae = m.get("ae") or {}
+        if ae.get("source_width") and ae.get("source_height"):
+            return {"width": int(ae["source_width"]), "height": int(ae["source_height"]),
+                    "kind": "comp" if ae.get("source_kind") == "comp" else "source"}
+    for m in links_of(store, layer_id):
+        ae = m.get("ae") or {}
+        if ae.get("comp_width") and ae.get("comp_height"):
+            return {"width": int(ae["comp_width"]), "height": int(ae["comp_height"]), "kind": "comp"}
+    return None
+
+
+RESOLUTION_KINDS = {"source": u"素材", "comp": u"コンポ"}
+
+
+def resolution_text(resolution: Optional[dict]) -> str:
+    """'3000×1688（素材）', or '―' without a size."""
+    if not resolution:
+        return u"―"
+    return u"%d×%d（%s）" % (resolution["width"], resolution["height"], RESOLUTION_KINDS[resolution["kind"]])
+
+
+def update_sizes(store: dict, info: dict) -> int:
+    """Take the sizes of the linked AE layers from layersInfo() (a source rendered again at another size);
+    links are found as `matches` does. Returns how many links changed."""
+    comp = info.get("comp") or {}
+    changed = 0
+    for layer in info.get("layers") or []:
+        ae = ae_from_layers_info(comp, layer)
+        sizes = {k: ae.get(k) for k in SIZE_KEYS}
+        for m in store["mappings"]:
+            if matches(m, ae) and any(m["ae"].get(k) != v for k, v in sizes.items() if v is not None):
+                m["ae"] = dict(m["ae"], **{k: v for k, v in sizes.items() if v is not None})
+                changed += 1
+    return changed
 
 
 def ae_layer_from_export(data: dict):

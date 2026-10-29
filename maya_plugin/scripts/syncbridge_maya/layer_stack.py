@@ -40,7 +40,67 @@ def ensure_plugin() -> None:
 
 def layers() -> List[tuple]:
     """[(name, camera path, [object paths])] bottom first, nodes that are gone left out."""
-    return _resolve(core_lm.stack(layer_mapping.store()))
+    return _resolve(core_lm.stack(layer_mapping.store(), _solo))
+
+
+# The viewer's solo (D-49): one layer alone, with the range of its AE picture. A view setting like the
+# eye of AE's solo, not scene data: kept for this Maya session only, never in the scene or the undo queue.
+_solo: Optional[str] = None
+
+
+def solo() -> Optional[str]:
+    return _solo
+
+
+def set_solo(layer_id: Optional[str]) -> None:
+    global _solo
+    _solo = layer_id
+    publish()
+
+
+def soloed(store: dict) -> bool:
+    """Is the solo layer drawn alone now (core stack ignores a solo layer that cannot be drawn)?"""
+    drawn = core_lm.stack(store, _solo) if _solo else []
+    return len(drawn) == 1 and drawn[0]["id"] == _solo
+
+
+def solo_range(store: dict) -> Optional[tuple]:
+    """(source camera, dedicated camera, width, height, label) of the solo layer for the plug-in to draw the
+    range of its AE picture, or None. Only a layer whose link is in the source camera mode (D-39): there
+    the source is a render of the layer's camera at the source's size, so the range is exact."""
+    layer = core_lm.maya_layer(store, _solo)
+    if layer is None or not soloed(store):
+        return None
+    size = core_lm.layer_resolution(store, _solo)
+    links = core_lm.links_of(store, _solo)
+    if size is None or not links or core_lm.mode_of(links[0]) != "source" or not layer.get("layer_camera_uuid"):
+        return None
+    source = layer_mapping.node_by_uuid(layer.get("camera_uuid"))
+    dedicated = layer_mapping.node_by_uuid(layer.get("layer_camera_uuid"))
+    if not source or not dedicated:
+        return None
+    # ASCII: the HUD's font may have no Japanese (like the frame's "Maya 1920x1080")
+    label = "%s  %dx%d (%s)" % (layer["name"], size["width"], size["height"], size["kind"])
+    return (source, dedicated, size["width"], size["height"], label)
+
+
+def range_note(store: dict) -> Optional[str]:
+    """Why the solo layer has no range drawn (for the viewer's status line), or None."""
+    layer = core_lm.maya_layer(store, _solo)
+    if layer is None or solo_range(store) is not None:
+        return None
+    if not soloed(store):
+        return u"「%s」はカメラか表示するオブジェクトがないので、単独で表示できません。" % layer["name"]
+    links = core_lm.links_of(store, _solo)
+    if not links:
+        return u"「%s」は AE のレイヤーにつながっていないので、映る範囲を出せません。" % layer["name"]
+    if core_lm.layer_resolution(store, _solo) is None:
+        return (u"「%s」の AE の解像度がまだありません。レイヤーマップで「AE のレイヤーを読み込む」を押すと受け取ります。"
+                % layer["name"])
+    if core_lm.mode_of(links[0]) != "source":
+        return (u"「%s」の接続は素材カメラのモードではないので、映る範囲を出せません（素材を書き出したカメラが"
+                u"分からないため）。" % layer["name"])
+    return u"「%s」の素材カメラか専用カメラが見つからないので、映る範囲を出せません。" % layer["name"]
 
 
 def _resolve(stack):
@@ -123,13 +183,13 @@ def publish() -> List[tuple]:
     import maya.api.OpenMayaUI as omui2
     old = getattr(__main__, STATE_KEY, None) or {"version": 0, "layers": None}
     store = layer_mapping.store()
-    stack = _resolve(core_lm.stack(store))
+    stack = _resolve(core_lm.stack(store, _solo))
     overlay = frame_overlay(view_camera(store))
-    m, s, e = margin(), shade(), editing()
+    m, s, e, r = margin(), shade(), editing(), solo_range(store)
     if stack != old.get("layers") or overlay != old.get("overlay") or m != old.get("margin") \
-            or s != old.get("shade") or e != old.get("editing"):
+            or s != old.get("shade") or e != old.get("editing") or r != old.get("range"):
         setattr(__main__, STATE_KEY, {"version": old["version"] + 1, "layers": stack, "overlay": overlay,
-                                      "margin": m, "shade": s, "editing": e})
+                                      "margin": m, "shade": s, "editing": e, "range": r})
         omui2.M3dView.scheduleRefreshAllViews()
     return stack
 

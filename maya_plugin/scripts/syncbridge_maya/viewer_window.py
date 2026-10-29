@@ -163,6 +163,7 @@ class ViewerWindow(QtWidgets.QWidget):
         self.layers.visible_changed.connect(self._on_visible)
         self.layers.motion_requested.connect(self.motion.layer)
         self.layers.editing_requested.connect(self.set_editing)
+        self.layers.solo_requested.connect(self.set_solo)
         self._editing: Optional[str] = None               # the editing Maya layer's id (D-44)
         self._view_widget = None
         self._press = None                                # a left press that may become a click on a layer
@@ -326,7 +327,12 @@ class ViewerWindow(QtWidgets.QWidget):
             self.say(u"Maya レイヤー「%s」にはカメラがないので、編集中にできません（レイヤーマップでカメラを設定してください）。"
                      % layer["name"], error=True)
             return
-        if layer is not None and not layer.get("visible", True):
+        if layer is not None and layer_stack.solo() is not None and layer_stack.solo() != layer_id \
+                and layer_stack.soloed(store):
+            self.say(u"「%s」を単独で表示中です。ほかのレイヤーを編集するには、「単独」を切ってください。"
+                     % core_lm.maya_layer(store, layer_stack.solo())["name"], error=True)
+            return
+        if layer is not None and not layer.get("visible", True) and layer_stack.solo() != layer_id:
             # a hidden layer is not drawn: Maya would select and move its unseen objects (P-5, 2026-10-28)
             self.say(u"「%s」は非表示なので、編集中にできません。左のチェックで表示してから選んでください。" % layer["name"],
                      error=True)
@@ -341,6 +347,25 @@ class ViewerWindow(QtWidgets.QWidget):
             self._note_selection(store)
         self.refresh()
 
+    def set_solo(self, layer_id: Optional[str]):
+        """Show this layer alone with the range of its AE picture (D-49), or all layers again (None). The
+        solo layer becomes the editing one: the viewer's selection and moves are its own."""
+        store = layer_mapping.store()
+        layer = core_lm.maya_layer(store, layer_id)
+        layer_stack.set_solo(layer_id if layer is not None else None)
+        if layer is None:
+            self.say(u"単独表示を切りました。")
+        elif not layer_stack.soloed(store):
+            self.say(layer_stack.range_note(store), error=True)
+            layer_stack.set_solo(None)
+        else:
+            self._editing = layer_id
+            note = layer_stack.range_note(store)
+            self.say(note or u"「%s」を単独で表示し、AE で映る範囲を枠で示しています（%s）。" % (
+                layer["name"], core_lm.resolution_text(core_lm.layer_resolution(store, layer_id))), warn=bool(note))
+        self._sync_view(layer_mapping.store())
+        self.refresh()
+
     # -- the selection (9.5 of docs/VIEWER_CAMERA_SELECTION_AUDIT.md) ---------------------------------------
     @staticmethod
     def _selection() -> list:
@@ -350,7 +375,7 @@ class ViewerWindow(QtWidgets.QWidget):
     def _layer_roots(store: dict) -> list:
         """[(layer id, [object paths])] of the shown layers, top first."""
         out = []
-        for item in reversed(core_lm.stack(store)):
+        for item in reversed(core_lm.stack(store, layer_stack.solo())):
             layer = core_lm.maya_layer(store, item["id"])
             out.append((item["id"], [p for p in (layer_mapping.node_by_uuid(o.get("uuid"))
                                                  for o in layer.get("objects") or []) if p]))
@@ -403,7 +428,7 @@ class ViewerWindow(QtWidgets.QWidget):
     def _apply_editing(self, store: dict) -> Optional[str]:
         """Make / move / remove the viewer camera for the editing layer; returns the camera to look through.
         Only a shown layer is edited: a hidden one goes to the top shown layer (P-5, 2026-10-28)."""
-        ids = [item["id"] for item in reversed(core_lm.stack(store))]               # shown and drawable, top first
+        ids = [item["id"] for item in reversed(core_lm.stack(store, layer_stack.solo()))]  # drawn, top first
         if self._editing not in ids:
             self._editing = ids[0] if ids else None
         self.layers.set_editing(self._editing)
@@ -506,8 +531,9 @@ class ViewerWindow(QtWidgets.QWidget):
             if not now or not cmds.objExists(now) or _uuid(now) != _uuid(camera):
                 cmds.modelEditor(self.panel, e=True, camera=camera)
         editing = core_lm.maya_layer(store, self._editing)
-        self.camera_label.setText(u"編集中: %s（重ねて表示: %d レイヤー）" % (editing["name"], len(stack)) if editing
-                                  else u"重ねて表示: %d レイヤー" % len(stack))
+        shown = u"単独で表示中" if layer_stack.soloed(store) else u"重ねて表示: %d レイヤー" % len(stack)
+        self.camera_label.setText(u"編集中: %s（%s）" % (editing["name"], shown) if editing else shown)
+        self.layers.set_solo(layer_stack.solo() if layer_stack.soloed(store) else None)
 
     def _repair_cameras(self, store: dict):
         """Dedicated cameras made by an earlier version: link what they lack from the original and put

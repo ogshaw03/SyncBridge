@@ -39,7 +39,7 @@ def layer_affines(store: dict, view_w: float, view_h: float) -> List[Tuple[dict,
         view = core_view.view_affine(pixel_mapping.camera_data(editing[0]), pixel_mapping.camera_data(editing[1]),
                                      view_w, view_h)
     out = []
-    for item in reversed(core_lm.stack(store)):          # stack() is bottom first
+    for item in reversed(core_lm.stack(store, layer_stack.solo())):          # stack() is bottom first
         camera = layer_mapping.node_by_uuid(item["camera_uuid"])
         if not camera:
             continue

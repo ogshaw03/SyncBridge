@@ -154,6 +154,42 @@ class LayerMappingTest(unittest.TestCase):
         lm.set_layer_visible(store, top["id"], False)
         self.assertEqual([s["name"] for s in lm.stack(store)], ["BG"])
         self.assertFalse(lm.load_store(lm.dump_store(store))["maya_layers"][1]["visible"])
+        # D-49: solo draws that layer only, hidden or not; a layer that cannot be drawn is ignored
+        self.assertEqual([s["name"] for s in lm.stack(store, solo=top["id"])], ["CHAR"])
+        self.assertEqual([s["name"] for s in lm.stack(store, solo=bottom["id"])], ["BG"])
+        self.assertEqual([s["name"] for s in lm.stack(store, solo=none["id"])], ["BG"])
+        self.assertEqual([s["name"] for s in lm.stack(store, solo="ml-gone")], ["BG"])
+
+    def test_resolution(self):
+        # D-49: the source's size, a precomp's as "comp", else the size of the comp the layer is in
+        store = lm.empty_store()
+        info = {"comp": {"id": 1, "name": "c010", "width": 1920, "height": 1080},
+                "layers": [{"id": 5, "name": "BG", "kind": "still", "width": 3000, "height": 1688},
+                           {"id": 6, "name": "BOOK", "kind": "comp", "width": 2400, "height": 1350},
+                           {"id": 7, "name": "TXT", "kind": "text", "width": None, "height": None},
+                           {"id": 9, "name": "IN", "kind": "still", "width": None, "height": None, "comp_id": 3,
+                            "comp": "pre", "via": [{"comp_id": 1, "comp": "c010", "layer_id": 6, "layer": "BOOK"}]}]}
+        links = [lm.add_linked_layer(store, lm.ae_from_layers_info(info["comp"], layer)) for layer in info["layers"]]
+        got = [lm.layer_resolution(store, m["maya_layer"]) for m in links]
+        self.assertEqual(got[:3], [{"width": 3000, "height": 1688, "kind": "source"},
+                                   {"width": 2400, "height": 1350, "kind": "comp"},
+                                   {"width": 1920, "height": 1080, "kind": "comp"}])
+        self.assertIsNone(got[3])                    # inside a precomp, an old AE panel: the size is unknown
+        self.assertEqual(lm.resolution_text(got[0]), u"3000×1688（素材）")
+        self.assertEqual(lm.resolution_text(None), u"―")
+        # a link made before D-49 has the source size only
+        old = lm.load_store(lm.dump_store(store))
+        for key in ("source_kind", "comp_width", "comp_height"):
+            del old["mappings"][0]["ae"][key]
+        self.assertEqual(lm.layer_resolution(old, links[0]["maya_layer"])["kind"], "source")
+        # the source rendered again at another size: reading AE updates the links
+        info["layers"][0].update(width=3840, height=2160)
+        info["layers"][3].update(comp_width=2400, comp_height=1350)
+        self.assertEqual(lm.update_sizes(store, info), 2)
+        self.assertEqual(lm.layer_resolution(store, links[0]["maya_layer"])["width"], 3840)
+        self.assertEqual(lm.layer_resolution(store, links[3]["maya_layer"]),
+                         {"width": 2400, "height": 1350, "kind": "comp"})
+        self.assertEqual(lm.update_sizes(store, info), 0)
 
     def test_layer_for_camera(self):
         store = lm.empty_store()
@@ -164,7 +200,8 @@ class LayerMappingTest(unittest.TestCase):
     def test_layers_info_and_mode(self):
         comp = {"id": 12, "name": "c010"}
         layer = {"id": 345, "name": "BG", "source": "bg.png", "width": 6000, "height": 4000, "kind": "still"}
-        self.assertEqual(lm.ae_from_layers_info(comp, layer), dict(AE, via=[]))
+        self.assertEqual(lm.ae_from_layers_info(comp, layer),
+                         dict(AE, via=[], source_kind="still", comp_width=None, comp_height=None))
         # D-37: a layer inside a precomp names its own comp and the precomp layer above it
         inner = dict(layer, id=9, comp_id=40, comp="SC_PRE", via=[{"comp_id": 12, "comp": "c010", "layer_id": 7,
                                                                    "layer": "SC_PRE"}])

@@ -65,6 +65,8 @@
   - ついでの修正: `viewer_camera._unwatch` が mayapy で落ちた（scriptJob が None を返す）。None を飛ばす。
   - テスト: 408 件 OK（`.venv` / `py -3`、106 件スキップ）。
   - **未確認:** SyncBridge のサーバーに接続中・リアルタイム同期中の実行（同期をオフにする処理）。
+- **0.1.17 をリリース**（利用者の指示）: 版を 4 か所で 0.1.17 に、`build_release.py`（テスト込み）で zip と EXE を作り、
+  GitHub Releases にプレリリースとして公開。記録は `docs/RELEASE.md` の 6 章、リリースノートは `docs/release_notes/0.1.17.md`。
 
 ### 2026-10-27（Windows 11, Python 3.10.6）
 

@@ -237,7 +237,9 @@ class ViewerWindow(QtWidgets.QWidget):
         if obj is not self._view_widget:
             return False
         kind = event.type()
-        if kind == QtCore.QEvent.Type.MouseButtonPress:
+        if kind == QtCore.QEvent.Type.Resize:
+            self._set_view_aspect()
+        elif kind == QtCore.QEvent.Type.MouseButtonPress:
             self._press = None
             mode = _click_mode(event.modifiers())
             if event.button() == QtCore.Qt.MouseButton.LeftButton and mode:
@@ -412,6 +414,7 @@ class ViewerWindow(QtWidgets.QWidget):
         dedicated = layer_mapping.node_by_uuid(core_lm.driven_camera(layer)["camera_uuid"])
         before = self._current_view(dedicated)
         shape = viewer_camera.ensure(dedicated, initial_zoom=layer_stack.margin())
+        self._set_view_aspect(shape)
         if before is not None:
             self._keep_view(shape, dedicated, before)
         return cmds.listRelatives(shape, parent=True, fullPath=True)[0]
@@ -421,6 +424,15 @@ class ViewerWindow(QtWidgets.QWidget):
         if widget is None or widget.width() < 2 or widget.height() < 2:
             return None
         return float(widget.width()), float(widget.height())
+
+    def _set_view_aspect(self, shape=None):
+        """The steady view's pan depends on the view's width / height (D-48)."""
+        size = self._view_size()
+        if size is not None:
+            try:
+                viewer_camera.set_view_aspect(size[0] / size[1], shape)
+            except Exception as exc:                 # never break the view's resize
+                print("SyncBridge: the viewer's aspect was not set: %s" % exc)
 
     def _current_view(self, dedicated: str):
         """The view (core view_affine) while another layer is edited, to keep it when this one becomes the
@@ -443,8 +455,10 @@ class ViewerWindow(QtWidgets.QWidget):
         from . import layer_camera, pixel_mapping
         from syncbridge.core import stack_view as core_view
         try:
-            hpan, vpan, zoom = core_view.match_view(view, pixel_mapping.camera_data(layer_camera._shape(dedicated)),
-                                                    *self._view_size())
+            # the steady view (D-48): the pan / zoom is a view of the camera without its film translate,
+            # roll and post-scale
+            camera = core_view.unmoved(pixel_mapping.camera_data(layer_camera._shape(dedicated)))
+            hpan, vpan, zoom = core_view.match_view(view, camera, *self._view_size())
         except (ValueError, TypeError, ZeroDivisionError):
             return
         viewer_camera.set_view(shape, hpan, vpan, zoom)

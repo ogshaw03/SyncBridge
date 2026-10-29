@@ -43,6 +43,7 @@
 | AE の CEP パネル（manifest、画面、通信、ExtendScript の窓口） | `after_effects/CSXS`, `panel/`, `jsx/syncbridge_cep_host.jsx` | ✅ AE 26.5 で V-P1C 合格（両方向、取り消し、日本語の警告、切断）。通信部分は Node のテストも |
 
 | 納品用のクリーンアップ（D-47） | `syncbridge_maya/cleanup.py`, `cleanup_dialog.py`, パネルの「その他」 | ✅ mayapy 2023 / 2024（`tools/maya_cleanup_check.py`）と GUI の Maya 2023 / 2024 で確認。接続中・リアルタイム同期中の実行は未確認 |
+| ビューアーのビューをレイヤーの動きで動かさない（D-48） | `core/stack_view.py`（`steady_translate`）, `syncbridge_maya/viewer_camera.py` | ✅ テスト、mayapy 2023 / 2024（`tools/maya_viewer_steady_check.py`）、GUI の Maya 2023 / 2024。利用者のシーンでは未確認 |
 
 ## テスト結果
 
@@ -81,6 +82,20 @@
   - テスト: 409 件 OK（`.venv` / `py -3`、106 件スキップ）。**会社の PC での確認は未実施**。
 - **0.1.18 をリリース**（利用者の指示）: 上の修正だけの版。記録は `docs/RELEASE.md` の 6 章、リリースノートは `docs/release_notes/0.1.18.md`。
   0.1.16 / 0.1.17 の PC は、Maya のパネルの「ヘルプ → SyncBridge について / 更新…」か EXE で更新する。
+  - **会社の PC で 0.1.18 に更新すると AE が接続できた**（利用者の報告、H-AE-35 ✅）。AE の版は未記録。
+- **ビューアーでレイヤーの動きを転送すると枠ごと画面が動く（利用者の報告）→ D-48 で修正:**
+  - 原因: Maya は 2D パン・ズームを Film Translate・Roll・Post Scale より前にかける（H-PM-8）。ビューアーのカメラが専用カメラの
+    Film Translate などをそのまま受け取るため、余白のズームやパンがそれを中心にかかり、見ている窓が動いていた。重なりは正しかった。
+  - 修正: ビューアーのカメラの Film Translate を補正する（`core.stack_view.steady_translate`、Maya ではエクスプレッション、H-MY-47）。
+    ついでに、プラグイン（r15）が Film Roll をラジアンのまま度として使っていたのも直した。
+  - テスト: `SteadyViewTest`（ランダムなカメラ 300 通り）。412 件 OK（`.venv`）。
+  - mayapy 2023 / 2024（`tools/maya_viewer_steady_check.py`）: 12 項目 PASS。Roll の順番 2 種類、Film Fit 4 種類、レイヤーの切り替え、
+    保存したファイルにビューアーのノードが残らない、`remove` で残らない。`tools/maya_cleanup_check.py` も PASS。
+  - GUI の Maya 2023 / 2024（スクラッチの `gui_steady_check.py`）: ズーム 1.2 のビューアーで BG の専用カメラに Film Translate・Post Scale・
+    Roll のキー。1・5・10 フレームで枠と CHAR が動かない（補正を外すと 10 フレームで NDC 0.06 / 0.05 ずれる）。窓の大きさを変えると
+    `viewAspect` が追従した。
+  - **未確認:** 利用者の実際のシーン（相対モード・素材カメラのモードの動き）、再生中の見た目、2D Pan/Zoom ツールでの操作中。
+- **0.1.19 をリリース**（利用者の指示）: D-48 の修正の版。記録は `docs/RELEASE.md` の 6 章、リリースノートは `docs/release_notes/0.1.19.md`。
 
 ### 2026-10-27（Windows 11, Python 3.10.6）
 

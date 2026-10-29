@@ -43,7 +43,7 @@ import maya.api.OpenMayaRender as omr
 import maya.api.OpenMayaUI as omui
 
 OVERRIDE_NAME = "SyncBridgeLayerStack"
-REVISION = 14                                   # shown in uiName: is the plug-in really reloaded?
+REVISION = 15                                  # shown in uiName: is the plug-in really reloaded?
 UI_NAME = "SyncBridge Layer Stack r%d" % REVISION
 STATE_KEY = "_syncbridge_layer_stack"
 FRAME_COLOR = om.MColor((1.0, 0.55, 0.1, 1.0))       # the comp guide's colour (D-16)
@@ -93,6 +93,8 @@ def model_camera(camera_path) -> dict:
     fn = om.MFnCamera(camera_path)
     dep = om.MFnDependencyNode(fn.object())
     out = {key: dep.findPlug(attr, False).asDouble() for attr, key in MODEL_ATTRS}
+    # an angle: asDouble() gives radians, the model takes degrees (as cmds.getAttr gives them)
+    out["film_roll"] = dep.findPlug("filmRollValue", False).asMAngle().asDegrees()
     out.update(film_fit=dep.findPlug("filmFit", False).asInt(),
                film_roll_order=dep.findPlug("filmRollOrder", False).asInt(),
                pan_zoom_enabled=dep.findPlug("panZoomEnabled", False).asBool(),

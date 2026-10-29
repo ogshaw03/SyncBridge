@@ -16,7 +16,7 @@ from __future__ import annotations
 import math
 from typing import List, Optional, Sequence, Tuple
 
-from .pixel_mapping import project
+from .pixel_mapping import effective_width, project
 
 Affine = Tuple[float, float, float, float, float, float]     # x' = a*u + b*v + c,  y' = d*u + e*v + f
 
@@ -91,6 +91,47 @@ def with_view(camera: dict, hpan: float, vpan: float, zoom: float) -> dict:
     out = fold_pan_zoom(camera)
     out.update(hpan=float(hpan), vpan=float(vpan), zoom=float(zoom), pan_zoom_enabled=True)
     return out
+
+
+def unmoved(camera: dict) -> dict:
+    """The camera without the film translate, roll and post-scale: what the viewer's 2D pan / zoom is a view
+    of once steady_translate keeps it still (H-PM-8)."""
+    out = dict(camera)
+    out.update(ft_h=0.0, ft_v=0.0, film_roll=0.0, post_scale=1.0)
+    return out
+
+
+def steady_translate(viewer: dict, view_aspect: float) -> Tuple[float, float]:
+    """The viewer camera's film translate (ft_h, ft_v) that keeps its 2D pan / zoom a fixed view.
+
+    Maya applies the 2D pan / zoom before the film translate, roll and post-scale (H-PM-8), so with the
+    dedicated camera's own film translate the view (core view_affine) moved with every key of the editing
+    layer's motion, and the comp frame and the other layers with it (the user, 2026-10-29). `viewer` is the
+    viewer camera with the dedicated camera's film translate, roll, pivots and post-scale; the result makes
+    view_affine(editing, viewer) == view_affine(unmoved(editing), unmoved(viewer)) whatever those are.
+    viewer_camera.STEADY_EXPRESSION is the same formula, evaluated by Maya every frame."""
+    ft = (float(viewer.get("ft_h", 0.0)), float(viewer.get("ft_v", 0.0)))
+    if not viewer.get("pan_zoom_enabled"):
+        return ft
+    k = 1.0 / float(viewer.get("zoom", 1.0) or 1.0)
+    qh = qv = 0.0
+    if not viewer.get("orthographic"):            # the pan in the units of the film translate
+        half = effective_width(viewer, {"width": float(view_aspect), "height": 1.0}) / 2.0
+        pre = float(viewer.get("pre_scale", 1.0))
+        qh, qv = float(viewer.get("hpan", 0.0)) * pre / half, float(viewer.get("vpan", 0.0)) * pre / half
+    post = float(viewer.get("post_scale", 1.0)) or 1.0
+    a = math.radians(-float(viewer.get("film_roll", 0.0)))
+    c, s = math.cos(a), math.sin(a)
+    ph, pv = float(viewer.get("roll_pivot_h", 0.0)), float(viewer.get("roll_pivot_v", 0.0))
+    if int(viewer.get("film_roll_order", 0)) == 1:            # Translate-Rotate
+        ih, iv = c * ph + s * pv, -s * ph + c * pv           # the pivot turned back
+        rh, rv = c * qh + s * qv, -s * qh + c * qv
+        return ((1.0 - k) * (ih - ph) + k * ft[0] - k * qh + k * rh / post,
+                (1.0 - k) * (iv - pv) + k * ft[1] - k * qv + k * rv / post)
+    rh, rv = c * ph - s * pv, s * ph + c * pv                # Rotate-Translate (Maya's default)
+    th, tv = c * qh - s * qv, s * qh + c * qv
+    return ((1.0 - k) * (ph - rh) + k * ft[0] - k * th + k * qh / post,
+            (1.0 - k) * (pv - rv) + k * ft[1] - k * tv + k * qv / post)
 
 
 def view_affine(editing: dict, viewer: dict, view_w: float, view_h: float) -> Affine:

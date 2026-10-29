@@ -139,5 +139,46 @@ class ViewerPanZoomTest(unittest.TestCase):
         self.assertEqual(sv.polyline_distance((0, 0), []), float("inf"))
 
 
+class SteadyViewTest(unittest.TestCase):
+    """The viewer's view does not move with the editing layer's film translate / roll / post-scale keys
+    (the user, 2026-10-29: the frame moved when the layer's motion was transferred)."""
+
+    @staticmethod
+    def editing(rng):
+        return dict(focal_length=rng.uniform(20, 80), hfa=rng.uniform(0.8, 1.6), vfa=rng.uniform(0.5, 1.2),
+                    film_fit=rng.choice([0, 1, 2, 3]), hfo=rng.uniform(-0.2, 0.2), vfo=rng.uniform(-0.2, 0.2),
+                    pre_scale=rng.uniform(0.7, 1.4), post_scale=rng.uniform(0.6, 1.6), ft_h=rng.uniform(-0.5, 0.5),
+                    ft_v=rng.uniform(-0.5, 0.5), film_roll=rng.uniform(-40, 40), roll_pivot_h=rng.uniform(-0.3, 0.3),
+                    roll_pivot_v=rng.uniform(-0.3, 0.3), film_roll_order=rng.choice([0, 1]), overscan=1.0,
+                    pan_zoom_enabled=rng.choice([False, True]), hpan=rng.uniform(-0.1, 0.1),
+                    vpan=rng.uniform(-0.1, 0.1), zoom=rng.uniform(0.6, 1.5))
+
+    def test_the_moving_view_before(self):
+        # zoomed out (the margin), the frame's center moved by (1 - 1 / zoom) of the film translate
+        ed = dict(base_cam(), ft_h=0.3)
+        view = sv.view_affine(ed, sv.with_view(ed, 0.0, 0.0, 1.2), 1920, 1080)
+        self.assertAlmostEqual(sv.map_point(view, (0.0, 0.0))[0], -0.05)
+
+    def test_view_does_not_depend_on_the_motion(self):
+        import random
+        rng = random.Random(7)
+        for _ in range(300):
+            ed = self.editing(rng)
+            w, h = rng.choice([(1920, 1080), (800, 900), (1200, 500)])
+            viewer = sv.with_view(ed, rng.uniform(-0.3, 0.3), rng.uniform(-0.3, 0.3), rng.uniform(0.5, 2.0))
+            viewer["ft_h"], viewer["ft_v"] = sv.steady_translate(viewer, w / float(h))
+            got = sv.view_affine(ed, viewer, w, h)
+            want = sv.view_affine(sv.unmoved(ed), sv.unmoved(viewer), w, h)
+            for a, b in zip(got, want):
+                self.assertAlmostEqual(a, b, places=9)
+
+    def test_no_view_no_change(self):
+        ed = dict(base_cam(), ft_h=0.3, ft_v=-0.1, post_scale=1.3, film_roll=12.0)
+        self.assertEqual(sv.steady_translate(sv.fold_pan_zoom(ed), 16 / 9.0), (0.3, -0.1))
+        same = sv.steady_translate(sv.with_view(ed, 0.0, 0.0, 1.0), 16 / 9.0)
+        self.assertAlmostEqual(same[0], 0.3)
+        self.assertAlmostEqual(same[1], -0.1)
+
+
 if __name__ == "__main__":
     unittest.main()

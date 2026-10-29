@@ -1,11 +1,13 @@
 """The viewer camera (D-44): what the SyncBridge viewer's panel looks through while a layer is edited.
 
 It is a child of the editing layer's dedicated camera (D-29), at its origin and locked, so it follows the
-camera work. The lens, film back, film translate, post-scale and roll are connected from the dedicated
-camera; its film offset and pre-scale take the dedicated camera's 2D pan / zoom folded in
-(core.stack_view.fold_pan_zoom, by utility nodes, so animated values follow). Its own 2D pan / zoom
-belong to the view: Maya's 2D Pan/Zoom tool changes them (the user, 2026-10-27), and the viewer draws
-the other layers and the comp frame with the same pan / zoom.
+camera work. The lens, film back, post-scale and roll are connected from the dedicated camera; its film
+offset and pre-scale take the dedicated camera's 2D pan / zoom folded in (core.stack_view.fold_pan_zoom, by
+utility nodes, so animated values follow). Its own 2D pan / zoom belong to the view: Maya's 2D Pan/Zoom tool
+changes them (the user, 2026-10-27), and the viewer draws the other layers and the comp frame with the same
+pan / zoom. Its film translate is the dedicated camera's, changed by an expression so that the 2D pan / zoom
+stays a fixed view while the layer's film translate / roll / post-scale are animated
+(core.stack_view.steady_translate, D-48): Maya applies the 2D pan / zoom before them (H-PM-8).
 
 Because the panel looks through this camera, Maya's own selection and manipulators work in the editing
 layer's picture (H-MY-38). The nodes are not saved with the scene (doNotWrite) and not in the undo queue;
@@ -17,6 +19,7 @@ the viewer deletes them when it closes.
 """
 from __future__ import annotations
 
+import re
 from typing import List, Optional, Tuple
 
 import maya.api.OpenMaya as om2
@@ -30,8 +33,61 @@ MARK_ATTR = "syncBridgeViewer"          # on every node made here
 # re-read it while its camera was being set, and Maya 2024 crashed (TmodelPane::cameraOrthographicModified,
 # 2026-10-27). The stack draws perspective cameras only; the value is copied instead.
 DIRECT_ATTRS = tuple(a for a in layer_camera.LINKED_ATTRS if a != "orthographic") + (
-    "filmTranslateH", "filmTranslateV", "postScale", "filmRollValue", "horizontalRollPivot",
-    "verticalRollPivot", "filmRollOrder")
+    "postScale", "filmRollValue", "horizontalRollPivot", "verticalRollPivot", "filmRollOrder")
+
+# The steady view (D-48): the inputs of core.stack_view.steady_translate on one node (a DG node, so the
+# expression names it without a DAG path), from the dedicated camera and from the viewer camera.
+STEADY_FROM_DEDICATED = (("filmTranslateH", "ftH"), ("filmTranslateV", "ftV"), ("filmRollValue", "roll"),
+                         ("horizontalRollPivot", "pivotH"), ("verticalRollPivot", "pivotV"),
+                         ("filmRollOrder", "order"), ("postScale", "post"))
+STEADY_FROM_VIEWER = (("horizontalPan", "panH"), ("verticalPan", "panV"), ("zoom", "zoom"),
+                      ("panZoomEnabled", "enabled"), ("preScale", "pre"), ("horizontalFilmAperture", "hfa"),
+                      ("verticalFilmAperture", "vfa"), ("filmFit", "fit"), ("orthographic", "ortho"))
+# The same formula as core.stack_view.steady_translate (tests/unit/test_stack_view.py; tools/maya_viewer_
+# steady_check.py compares the two in mayapy). Made with unitConversion "none": the roll is read in radians.
+# viewAspect is the view's width / height (set_view_aspect), which the pan's units depend on unless the film
+# fit is horizontal.
+STEADY_EXPRESSION = """
+float $k = 1.0;
+float $qh = 0.0;
+float $qv = 0.0;
+if (N.enabled) {
+    float $z = N.zoom;
+    if ($z == 0) $z = 1.0;
+    $k = 1.0 / $z;
+    if (!N.ortho) {
+        float $device = N.viewAspect;
+        float $film = N.hfa / N.vfa;
+        int $fit = N.fit;
+        float $half = N.vfa * $device / 2.0;
+        if ($fit == 1 || ($fit == 0 && $film <= $device) || ($fit == 3 && $film > $device))
+            $half = N.hfa / 2.0;
+        $qh = N.panH * N.pre / $half;
+        $qv = N.panV * N.pre / $half;
+    }
+}
+float $post = N.post;
+if ($post == 0) $post = 1.0;
+float $c = cos(-N.roll);
+float $s = sin(-N.roll);
+float $ph = N.pivotH;
+float $pv = N.pivotV;
+if (N.order == 1) {
+    float $ih = $c * $ph + $s * $pv;
+    float $iv = -$s * $ph + $c * $pv;
+    float $rh = $c * $qh + $s * $qv;
+    float $rv = -$s * $qh + $c * $qv;
+    N.outH = (1 - $k) * ($ih - $ph) + $k * N.ftH - $k * $qh + $k * $rh / $post;
+    N.outV = (1 - $k) * ($iv - $pv) + $k * N.ftV - $k * $qv + $k * $rv / $post;
+} else {
+    float $rh = $c * $ph - $s * $pv;
+    float $rv = $s * $ph + $c * $pv;
+    float $th = $c * $qh - $s * $qv;
+    float $tv = $s * $qh + $c * $qv;
+    N.outH = (1 - $k) * ($ph - $rh) + $k * N.ftH - $k * $th + $k * $qh / $post;
+    N.outV = (1 - $k) * ($pv - $rv) + $k * N.ftV - $k * $tv + $k * $qv / $post;
+}
+"""
 
 
 def _mark(node: str) -> None:
@@ -198,6 +254,9 @@ def ensure(dedicated: str, initial_zoom: float = 1.0) -> str:
 def _ensure(dedicated: str, initial_zoom: float) -> str:
     dedicated = layer_camera._shape(dedicated)
     old = current()
+    if old is not None and _steady_node(old) is None:          # made by a version without the steady view
+        remove()
+        old = None
     if old is None:
         with _no_undo():
             shape = _create(dedicated)
@@ -243,7 +302,27 @@ def _fold_nodes(shape: str) -> dict:
     offset = _source(shape + ".horizontalFilmOffset")
     scale = _source(shape + ".preScale")
     return {"pan": _source(offset + ".input2D[1].input2Dx"), "offset": offset,
-            "zoom": _source(scale + ".input2X"), "scale": scale}
+            "zoom": _source(scale + ".input2X"), "scale": scale, "steady": _steady_node(shape)}
+
+
+def _steady_node(shape: str) -> Optional[str]:
+    """The node of the steady view (D-48), or None (a viewer camera of an earlier version)."""
+    sources = cmds.listConnections(shape + ".filmTranslateH", source=True, destination=False,
+                                   skipConversionNodes=True) or []
+    if sources and cmds.attributeQuery("viewAspect", node=sources[0], exists=True):
+        return sources[0]
+    return None
+
+
+def set_view_aspect(aspect: float, shape: Optional[str] = None) -> None:
+    """The view's width / height, for the steady view's pan (D-48). Unchanged values are not set again."""
+    shape = shape or current()
+    node = _steady_node(shape) if shape else None
+    if node is None or aspect <= 0:
+        return
+    if abs(cmds.getAttr(node + ".viewAspect") - float(aspect)) > 1e-9:
+        with _no_undo():
+            cmds.setAttr(node + ".viewAspect", float(aspect))
 
 
 def _create(dedicated: str) -> str:
@@ -286,7 +365,31 @@ def _fold(shape: str) -> dict:
     cmds.setAttr(scale + ".operation", 2)                                      # divide
     cmds.connectAttr(zoom + ".outColorR", scale + ".input2X")
     cmds.connectAttr(scale + ".outputX", shape + ".preScale")
-    return {"pan": pan, "offset": offset, "zoom": zoom, "scale": scale}
+    return {"pan": pan, "offset": offset, "zoom": zoom, "scale": scale, "steady": _steady(shape)}
+
+
+def _steady(shape: str) -> str:
+    """The steady view (D-48): a node holding steady_translate's inputs and an expression that sets its
+    outputs, which drive the viewer camera's film translate. _link connects the dedicated camera's side."""
+    node = cmds.createNode("network", name="SB_VIEWER_steady", skipSelect=True)
+    _mark(node)
+    for _, attr in STEADY_FROM_DEDICATED + STEADY_FROM_VIEWER:
+        if attr == "roll":
+            cmds.addAttr(node, longName=attr, attributeType="doubleAngle")
+        else:
+            cmds.addAttr(node, longName=attr, attributeType="double")
+    for attr in ("viewAspect", "outH", "outV"):
+        cmds.addAttr(node, longName=attr, attributeType="double")
+    cmds.setAttr(node + ".viewAspect", 16.0 / 9.0)               # set_view_aspect puts the view's own
+    for source, attr in STEADY_FROM_VIEWER:
+        cmds.connectAttr("%s.%s" % (shape, source), "%s.%s" % (node, attr))
+    text = re.sub(r"\bN\.", node + ".", STEADY_EXPRESSION)
+    expression = cmds.expression(name="SB_VIEWER_steadyExpression", string=text, unitConversion="none",
+                                 alwaysEvaluate=True)
+    _mark(expression)
+    cmds.connectAttr(node + ".outH", shape + ".filmTranslateH", force=True)
+    cmds.connectAttr(node + ".outV", shape + ".filmTranslateV", force=True)
+    return node
 
 
 def _link(dedicated: str, shape: str, nodes: dict) -> None:
@@ -306,6 +409,8 @@ def _link(dedicated: str, shape: str, nodes: dict) -> None:
                            ("panZoomEnabled", zoom + ".firstTerm"), ("zoom", zoom + ".colorIfTrueR"),
                            ("preScale", scale + ".input1X")):
         cmds.connectAttr(src + source, target, force=True)
+    for source, attr in STEADY_FROM_DEDICATED:
+        cmds.connectAttr(src + source, "%s.%s" % (nodes["steady"], attr), force=True)
 
 
 def remove() -> None:

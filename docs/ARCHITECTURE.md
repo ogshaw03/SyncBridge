@@ -427,6 +427,28 @@ AE → Maya
   濃さはビューアーの「枠の外」スライダーで 0〜100%（既定 50%、optionVar `syncBridgeViewerShade`、利用者の要望 2026-10-27）。
   `layer_stack.publish` が `"shade"` としてプラグインに渡す（プラグイン r10）。0% のときは暗くする帯を描かない。
 
+### D-48: ビューアーのビューをレイヤーの動きで動かさない（2026-10-29、利用者の報告）
+
+- 背景: レイヤーの動きを転送すると（専用カメラの Film Translate・Post Scale・Roll にキー）、ビューアーで枠ごと画面が動いた。
+  Maya は 2D パン・ズームを Film Translate・Roll・Post Scale より前にかける（H-PM-8）。ビューアーのカメラ（D-44）は専用カメラの値を
+  そのまま受け取るため、余白のズーム（1.2 など）やパンが、そのフレームの Film Translate などを中心にかかっていた。枠とほかのレイヤーは
+  同じ変換（`view_affine`）で描くので、重なりは正しいまま、見ている窓だけが動いていた（ズーム 1.2 で Film Translate 0.3 なら NDC で 0.05）。
+- 決定: ビューアーのカメラの Film Translate だけを補正する（`core.stack_view.steady_translate`）。ビューアーの 2D パン・ズームは、
+  Film Translate・Roll・Post Scale のないカメラ（`unmoved`）に対するビューの意味になり、動きのキーに関係なく決まる。
+  - Maya の中では、入力をまとめた `network` ノード（`SB_VIEWER_steady`、DG なので名前で指せる）とエクスプレッション
+    （`unitConversion "none"`、Roll はラジアンで読む、H-MY-47）で毎フレーム計算する。式は core と同じ（mayapy で比べる）。
+  - パンの単位はビューの縦横比で変わる（Film Fit が横合わせ以外）。ビューアーがウィジェットの大きさの変化を見て `viewAspect` に入れる。
+  - 編集するレイヤーを切り替えたときにビューを保つ計算（`match_view`）も、`unmoved` のカメラで解く。
+  - 古い版のビューアーのカメラ（補正のノードがない）は作り直す。
+- 選ばなかった案:
+  - プラグインのノードで計算する案: ビューアーを開いたまま保存すると `requires` が書かれる（解像度の枠と同じ問題、D-16）。
+  - 時間の変化のたびに Python で値を入れる案: 再生中に 1 フレーム遅れうる。
+  - 編集中のレイヤーも投影の上書きで描く案: Maya の選択とマニピュレーターがビューアーのカメラで動くため（H-MY-38）、絵とずれる。
+- ついでの修正: レイヤースタックのプラグイン（r15）の `model_camera` が Film Roll を内部の単位（ラジアン）で読み、度として使っていた。
+  Roll があるときの枠とほかのレイヤーの位置がずれていた。
+- 確認: core のテスト（ランダムなカメラ 300 通りで `view_affine` が動きによらない）、mayapy 2023 / 2024
+  （`tools/maya_viewer_steady_check.py`）、GUI の Maya 2023 / 2024 で 1・5・10 フレームの枠が動かないこと。
+
 ### D-47: 納品用のクリーンアップ（2026-10-29、利用者の要望）
 
 - 背景: 納品するシーンに、SyncBridge が作ったカメラやノードを残したくない。
@@ -480,7 +502,7 @@ AE → Maya
   - ExtendScript の `system.callSystem` を使う案: AE の「スクリプトによるファイルへの書き込みとネットワークへのアクセス」の設定に左右されるため。
 - 未確認: H-AE-19（実際の AE で Node が使えるか）、H-UPD-1（Maya / AE を開いたままの更新）。
 - 0.1.18 で追加: Node を有効にすると、CEP の版によってはページに `module` ができる。`sbclient.js` はページの中では
-  `module` があっても `window.SBPanelClient` を作る（会社の PC で 0.1.16 / 0.1.17 のパネルが動かなかった、H-AE-35）。
+  `module` があっても `window.SBPanelClient` を作る（会社の PC で 0.1.16 / 0.1.17 のパネルが動かなかった。0.1.18 で接続できた、H-AE-35 ✅）。
   パネルの JS は、Node のグローバルがあるページでも画面向けのグローバルを作ること（テスト `test_panel_scripts_with_node_globals`）。
 
 ### D-45: インストーラーの EXE（Inno Setup）を zip と並べて配る（2026-10-28、利用者の決定）

@@ -43,7 +43,7 @@
 | AE の CEP パネル（manifest、画面、通信、ExtendScript の窓口） | `after_effects/CSXS`, `panel/`, `jsx/syncbridge_cep_host.jsx` | ✅ AE 26.5 で V-P1C 合格（両方向、取り消し、日本語の警告、切断）。通信部分は Node のテストも |
 
 | 納品用のクリーンアップ（D-47） | `syncbridge_maya/cleanup.py`, `cleanup_dialog.py`, パネルの「その他」 | ✅ mayapy 2023 / 2024（`tools/maya_cleanup_check.py`）と GUI の Maya 2023 / 2024 で確認。接続中・リアルタイム同期中の実行は未確認 |
-| ビューアーのビューをレイヤーの動きで動かさない（D-48） | `core/stack_view.py`（`steady_translate`）, `syncbridge_maya/viewer_camera.py` | ✅ テスト、mayapy 2023 / 2024（`tools/maya_viewer_steady_check.py`）、GUI の Maya 2023 / 2024。利用者のシーンでは未確認 |
+| ビューアーのビューをレイヤーの動きで動かさない（D-48） | `core/stack_view.py`（`steady_translate`）, `syncbridge_maya/viewer_camera.py` | ✅ テスト、mayapy 2023 / 2024（`tools/maya_viewer_steady_check.py`）、GUI の Maya 2023 / 2024。利用者の作業シーンで確認（0.1.19） |
 
 ## テスト結果
 
@@ -96,6 +96,7 @@
     `viewAspect` が追従した。
   - **未確認:** 利用者の実際のシーン（相対モード・素材カメラのモードの動き）、再生中の見た目、2D Pan/Zoom ツールでの操作中。
 - **0.1.19 をリリース**（利用者の指示）: D-48 の修正の版。記録は `docs/RELEASE.md` の 6 章、リリースノートは `docs/release_notes/0.1.19.md`。
+  - **利用者の作業シーンで直ったことを確認**（利用者の報告、2026-10-29）。
 
 ### 2026-10-27（Windows 11, Python 3.10.6）
 

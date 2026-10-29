@@ -479,6 +479,9 @@ AE → Maya
   - AE からハブ（サーバー）経由で行う案: Maya が接続していないとハブが動いていないため。
   - ExtendScript の `system.callSystem` を使う案: AE の「スクリプトによるファイルへの書き込みとネットワークへのアクセス」の設定に左右されるため。
 - 未確認: H-AE-19（実際の AE で Node が使えるか）、H-UPD-1（Maya / AE を開いたままの更新）。
+- 0.1.18 で追加: Node を有効にすると、CEP の版によってはページに `module` ができる。`sbclient.js` はページの中では
+  `module` があっても `window.SBPanelClient` を作る（会社の PC で 0.1.16 / 0.1.17 のパネルが動かなかった、H-AE-35）。
+  パネルの JS は、Node のグローバルがあるページでも画面向けのグローバルを作ること（テスト `test_panel_scripts_with_node_globals`）。
 
 ### D-45: インストーラーの EXE（Inno Setup）を zip と並べて配る（2026-10-28、利用者の決定）
 

@@ -67,6 +67,20 @@
   - **未確認:** SyncBridge のサーバーに接続中・リアルタイム同期中の実行（同期をオフにする処理）。
 - **0.1.17 をリリース**（利用者の指示）: 版を 4 か所で 0.1.17 に、`build_release.py`（テスト込み）で zip と EXE を作り、
   GitHub Releases にプレリリースとして公開。記録は `docs/RELEASE.md` の 6 章、リリースノートは `docs/release_notes/0.1.17.md`。
+- **会社の PC で 0.1.17 の AE パネルがサーバーにつながらない（利用者の報告）→ 0.1.18 で修正（H-AE-35）:**
+  - 症状: パネルの見た目は出るが、「接続」を押してもログに何も出ず、「選択中」も更新されない。Maya は接続できる。
+    AE を再起動しても同じ。同じ PC で 0.1.10 はつながる。
+  - 原因（推定）: 0.1.16 でマニフェストに `--enable-nodejs` を足した（D-46）。その CEP ではページに Node の `module` があり、
+    `sbclient.js` の UMD が `module.exports` にだけ書き出して `window.SBPanelClient` を作らない。`main.js` は画面を組み立てたあと
+    `new SBPanelClient`（215 行目）で ReferenceError になり、ボタンの処理と「選択中」の更新が登録されない。家の AE 26.5 では起きない。
+    0.1.10 から 0.1.17 で jsx は一行も変わっていない。
+  - 再現: ブラウザでページに `window.module` と偽の `__adobe_cep__` を置いて読み込むと、直す前の版は同じ症状
+    （`SBPanelClient is not defined`、選択中 `-`、ログなし）。直した版は「選択中 BG」、接続を試みる。
+  - 修正: `sbclient.js` はページの中（`root.document` がある）では必ず `window.SBPanelClient` を作る。Node 向けの `module.exports` も残す。
+    テスト `test_panel_scripts_with_node_globals`（`module` のあるページで sbclient.js と about.js を読み、グローバルを確認）。
+  - テスト: 409 件 OK（`.venv` / `py -3`、106 件スキップ）。**会社の PC での確認は未実施**。
+- **0.1.18 をリリース**（利用者の指示）: 上の修正だけの版。記録は `docs/RELEASE.md` の 6 章、リリースノートは `docs/release_notes/0.1.18.md`。
+  0.1.16 / 0.1.17 の PC は、Maya のパネルの「ヘルプ → SyncBridge について / 更新…」か EXE で更新する。
 
 ### 2026-10-27（Windows 11, Python 3.10.6）
 

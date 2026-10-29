@@ -8,11 +8,11 @@
  * Protocol: docs/API.md (same envelopes as syncbridge/protocol.py).
  */
 (function (root, factory) {
-    if (typeof module === 'object' && module.exports) {
-        module.exports = factory();
-    } else {
-        root.SBPanelClient = factory();
-    }
+    var api = factory();
+    if (typeof module === 'object' && module.exports) { module.exports = api; }
+    // Always a global in the panel: with --enable-nodejs (D-46) some CEP versions also define
+    // `module` in the page, and main.js stopped at `new SBPanelClient` (H-AE-35).
+    if (root && typeof root.document === 'object') { root.SBPanelClient = api; }
 }(this, function () {
     'use strict';
 

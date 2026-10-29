@@ -159,6 +159,22 @@ class ExtendScriptJsonTest(unittest.TestCase):
                                      capture_output=True, encoding="utf-8", timeout=60)
                 self.assertEqual(out.returncode, 0, "%s: %s" % (name, out.stderr))
 
+    def test_panel_scripts_with_node_globals(self):
+        """index.html's scripts in one page that also has Node's `module` (--enable-nodejs, H-AE-35):
+        SBPanelClient and SBAbout must still be globals for main.js."""
+        panel_js = os.path.join(REPO, "after_effects", "panel", "js")
+        body = (
+            "const vm = require('vm'), fs = require('fs'), path = require('path');"
+            "const page = {document: {}, navigator: {platform: 'Win32'}, module: {exports: {}}, require: require};"
+            "page.window = page; vm.createContext(page);"
+            "for (const name of ['sbclient.js', 'about.js']) {"
+            "  vm.runInContext(fs.readFileSync(path.join(%s, name), 'utf8'), page, {filename: name}); }"
+            "process.stdout.write(JSON.stringify([typeof page.SBPanelClient, typeof page.SBAbout,"
+            "  typeof page.SBPanelClient.jsxCall]));" % json.dumps(panel_js))
+        out = subprocess.run(["node", "-e", body], capture_output=True, encoding="utf-8", timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(json.loads(out.stdout), ["function", "object", "function"])
+
     def test_rejects_non_json(self):
         out = self.run_js("try { SBJSON.parse('alert(1)'); process.stdout.write('accepted'); }"
                           " catch (e) { process.stdout.write('rejected'); }")

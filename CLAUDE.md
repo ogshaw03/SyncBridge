@@ -25,6 +25,7 @@ Maya の Scene Time Warp と After Effects の Time Remap を双方向に転送�
 1. `docs/PROGRESS.md` — 現在のフェーズ、実装済み、未検証、次の作業
 2. `docs/PHASE0_RESEARCH.md` — 仮説（H-*）とその検証状態、リスク、検証手順
 3. 必要に応じて `docs/SPEC.md`（ルールとデータ形式）、`docs/ARCHITECTURE.md`（構成と設計判断 D-*）、`docs/API.md`
+4. 実機（mayapy、Maya の GUI、モック、AE）で確かめるときは `docs/VERIFICATION.md`（手順・守ること・つまずき）
 
 ## 構成
 
@@ -44,6 +45,7 @@ Maya の Scene Time Warp と After Effects の Time Remap を双方向に転送�
 | `src/syncbridge/core/layer_mapping.py` | Virtual Layer Mapping の記録（D-24。Maya のシーンに保存） |
 | `src/syncbridge/pixelcheck/` | B Lite: PNG・テスト用 BG・目印の測定（標準ライブラリのみ。同期と独立） |
 | `tools/pixel_mapping/` | Pixel Mapping の検証ツール（mayapy の通し確認、AE の参照フレームの確認） |
+| `tools/maya_gui_check_template.py` | Maya の GUI を自動で操作して撮る確認のひな形（`docs/VERIFICATION.md` 3 章） |
 | `src/syncbridge/updater/` | Phase 6（未実装） |
 | `maya_plugin/scripts/syncbridge_maya/` | Maya アダプタ。`maya/` という名前は使わない（D-1） |
 | `maya_plugin/plug-ins/` | Maya のプラグイン（Python API 2.0）。`syncbridge_guide.py` = AE の解像度の枠（D-16）、`syncbridge_layer_stack.py` = レイヤーを重ねて描くビュー（D-32） |

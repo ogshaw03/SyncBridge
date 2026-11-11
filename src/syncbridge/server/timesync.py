@@ -49,6 +49,17 @@ class TimeSync:
             await self._relay(client, msg["data"])
         elif msg["kind"] == "timing.set":
             await self._set_origin(client, msg["data"])
+        elif msg["kind"] in protocol.ALIGN_KINDS:
+            await self._to_peer(client, protocol.message(msg["kind"], msg["data"]))
+
+    async def _to_peer(self, client: Client, msg: dict) -> None:
+        peer_app = PEER_APP.get(client.app)
+        for other in list(self.manager.clients.values()):
+            if other.app == peer_app:
+                try:
+                    await self.manager.send(other, msg)
+                except Exception:          # a closing socket must not stop the others
+                    pass
 
     async def _set_origin(self, client: Client, data: dict) -> None:
         self.origin = float(data["origin"])
@@ -78,10 +89,4 @@ class TimeSync:
         out = {"t": float(data["t"]), "source": client.app}
         if isinstance(data.get("sent_at"), (int, float)):
             out["sent_at"] = data["sent_at"]          # the receiver measures the delay (D-22)
-        msg = protocol.message("time.set", out)
-        for other in list(self.manager.clients.values()):
-            if other.app == peer_app:
-                try:
-                    await self.manager.send(other, msg)
-                except Exception:          # a closing socket must not stop the others
-                    pass
+        await self._to_peer(client, protocol.message("time.set", out))

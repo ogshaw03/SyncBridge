@@ -97,6 +97,15 @@ Select-String -Path "$out\script_editor.txt" -Pattern "SyncBridge"      # プラ
 - スクラッチの出力フォルダの中身は消せないことがある（保護される）。撮り直しは新しいフォルダに出す。
 - HUD（`MUIDrawManager.text2d`）の文字は ASCII にしておく。`kDashed` の線は細かい点になって見えにくい。
 - `maya_plugin/plug-ins` のプラグインは、新しい Maya のプロセスで読み込まれるので、毎回最新になる。
+- **描画エンジンでも試す。** 新しい設定の Maya は OpenGL。ビューの表示やクリックの確認は `MAYA_VP2_DEVICE_OVERRIDE=VirtualDeviceDx11` でも行う
+  （H-MY-48: DirectX 11 だけで起きる問題を、OpenGL の確認では見つけられなかった）。
+- **「Untrusted Plugin Loading - Security Warning」で止まる。** 新しい `MAYA_APP_DIR` で `syncbridge_layer_stack.py` を読むと出る。
+  QTimer で `QApplication.activeModalWidget()` を見て `accept()` すると進む。**確認用の Maya（別の `MAYA_APP_DIR`）で、このリポジトリのプラグインに限る。**
+- **利用者の設定で起きる問題は、設定のコピーで調べる。** `Documents\maya\<版>\prefs` だけをスクラッチの `MAYA_APP_DIR\<版>\prefs` へコピーする。
+  `Documents\maya\scripts`（`userSetup.py` や他のツール）は持ち込まない。
+- **利用者の Maya で調べるときは `tools/viewer_click_probe.py`。** ビューアーで 6 回クリックすると、状態とクリックの行き先を
+  `probe_results/viewer_click_probe.txt` に書く。シーンは変更しない。
+- **実際のマウスで試す。** `QCursor.setPos` と `user32.mouse_event` で動かす。`WindowFromPoint` の窓が自分のプロセスのものか確かめてからクリックする。
 
 ## 4. 画面のモック（見た目を変える前に利用者に見せる）
 

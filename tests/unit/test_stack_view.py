@@ -211,5 +211,74 @@ class SourceRangeTest(unittest.TestCase):
             sv.source_corners(cam(orthographic=True, ortho_width=10.0), (1920, 1080))
 
 
+class CompFrameOnSourceTest(unittest.TestCase):
+    """D-54: the comp's frame on the source, from the dedicated camera, is the AE layer's transform inverted."""
+
+    def test_corners_and_numbers_are_the_ae_layers(self):
+        from tests.unit.test_pixel_mapping import COMP, HFA, H, RENDER, W, camera
+        plate = camera(hfa=HFA * 3, vfa=HFA * 3 * H / W, pan_zoom_enabled=False, render_pan_zoom=False,
+                       ft_h=0.02, film_roll=0.0)
+        size = (5760, 3240)
+        cases = [{"position": [1360.0, 290.0], "anchorPoint": [2880.0, 1620.0], "scale": [100.0, 100.0], "rotation": 0.0},
+                 {"position": [700.0, 600.0], "anchorPoint": [1000.0, 900.0], "scale": [40.0, 40.0], "rotation": 15.0},
+                 {"position": [900.0, 500.0], "anchorPoint": [3000.0, 1000.0], "scale": [150.0, 150.0], "rotation": -30.0}]
+        for layer in cases:
+            m, _ = pm.ae_layer_matrix(layer)
+            solved = dict(plate, **pm.solve_source("film_roll", plate, RENDER, size, m, COMP)["values"])
+            got = sv.comp_frame_on_source(solved, plate, size, RENDER, (W, H))
+            to_source = pm.invert(m)
+            s = pm.camera_affine(plate, {"width": size[0], "height": size[1], "pixel_aspect": 1.0})
+            for uv, corner in zip(got["corners"], ((0, 0), (W, 0), (W, H), (0, H))):
+                want = pm.apply(to_source, *corner)
+                self.assertAlmostEqual(s[0][0] * uv[0] + s[0][1] * uv[1] + s[0][2], want[0], places=5)
+                self.assertAlmostEqual(s[1][0] * uv[0] + s[1][1] * uv[1] + s[1][2], want[1], places=5)
+            center = pm.apply(to_source, W / 2.0, H / 2.0)
+            self.assertAlmostEqual(got["center"][0], center[0], places=5)
+            self.assertAlmostEqual(got["center"][1], center[1], places=5)
+            self.assertAlmostEqual(got["rotation"], layer["rotation"], places=5)
+            self.assertAlmostEqual(got["scale"][0], layer["scale"][0], places=5)
+            self.assertAlmostEqual(got["scale"][1], layer["scale"][1], places=5)
+
+    def test_a_comp_smaller_than_the_render_is_centred(self):
+        from tests.unit.test_pixel_mapping import COMP, HFA, H, RENDER, W, camera
+        plate = camera(hfa=HFA, vfa=HFA * H / W, pan_zoom_enabled=False, render_pan_zoom=False, ft_h=0.0, film_roll=0.0)
+        got = sv.comp_frame_on_source(plate, plate, (W, H), RENDER, (W / 2.0, H / 2.0))
+        self.assertAlmostEqual(got["center"][0], W / 2.0, places=5)
+        self.assertAlmostEqual(got["center"][1], H / 2.0, places=5)
+        self.assertAlmostEqual(got["scale"][0], 100.0, places=5)
+
+
+class FitSourceViewTest(unittest.TestCase):
+    """D-52: the solo view shows the whole source, centred, at the source's aspect."""
+
+    CASES = (((5760, 1080), 1274.0, 755.0, 1.0, {}),
+             ((5760, 1080), 1274.0, 755.0, 1.2, {}),
+             ((1080, 1920), 1274.0, 755.0, 1.2, {}),
+             ((3000, 1688), 800.0, 900.0, 1.1, dict(hfo=0.2, vfo=-0.1, ft_h=0.05, ft_v=-0.02, post_scale=1.2,
+                                                    film_roll=0.0, overscan=1.3)),
+             ((1920, 1080), 1000.0, 500.0, 1.3, dict(pan_zoom_enabled=True, render_pan_zoom=True, hpan=0.1,
+                                                     vpan=0.05, zoom=0.8)))
+
+    def frame(self, source, size, w, h, fit):
+        """The frame's corners in view pixels, as the plug-in draws them through the viewer camera."""
+        flat = dict(source, overscan=1.0)
+        viewer = sv.with_view(flat, *fit)
+        viewer["ft_h"], viewer["ft_v"] = sv.steady_translate(viewer, w / h)
+        affine = sv.compose(sv.view_affine(flat, viewer, w, h), sv.ndc_affine(flat, w, h))
+        return [((x + 1.0) * 0.5 * w, (1.0 - y) * 0.5 * h) for x, y in sv.source_range(flat, size, affine)]
+
+    def test_whole_centred_at_the_source_aspect(self):
+        for size, w, h, margin, extra in self.CASES:
+            source = cam(**extra)
+            pts = self.frame(source, size, w, h, sv.fit_source_view(source, size, w, h, margin))
+            xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+            width, height = max(xs) - min(xs), max(ys) - min(ys)
+            self.assertAlmostEqual((min(xs) + max(xs)) / 2.0, w / 2.0, places=5)
+            self.assertAlmostEqual((min(ys) + max(ys)) / 2.0, h / 2.0, places=5)
+            self.assertAlmostEqual(width / height, size[0] / float(size[1]), places=5)
+            # as large as the margin lets it be, on the side that limits it
+            self.assertAlmostEqual(max(width / w, height / h), 1.0 / margin, places=5)
+
+
 if __name__ == "__main__":
     unittest.main()

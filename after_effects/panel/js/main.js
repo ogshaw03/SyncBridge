@@ -66,6 +66,9 @@
         origin: el('input', { type: 'number', step: '1', value: '1',
                               title: 'このコンポの 0 秒にあたる Maya のフレーム（ふつうはレンダーの開始フレーム）。' +
                                      'Maya のシーンに保存され、Maya のパネルと共通です（どちらで変えても両方に反映）' }),
+        alignOrigin: el('button', { text: '今の位置で合わせる',
+                                    title: 'このコンポの今の時間と Maya の今のフレームが同じ瞬間になるように、Origin frame を計算して入れます' +
+                                           '（タイムスライダーの同期を切ってから、それぞれ合わせたい位置に置いて押してください）' }),
         tolerance: el('input', { type: 'number', step: '0.05', min: '0.001', value: '0.1' }),
         detail: el('details', { 'class': 'fold' }),
         detailSummary: el('summary'),
@@ -135,7 +138,8 @@
             el('div', { 'class': 'grow' }, [el('span', { text: '選択中 ' }), ui.targetName, el('br'), ui.targetNote]),
             ui.refresh]),
         field('Origin frame', ui.origin),
-        el('div', { 'class': 'muted note', text: '＝ このコンポの 0 秒（Maya と共通）' }),
+        el('div', { 'class': 'row' }, [el('div', { 'class': 'muted grow', text: '＝ コンポの 0 秒（Maya と共通）' }),
+                                       ui.alignOrigin]),
         section('タイムワープ（選択中のレイヤーのタイムリマップ）', [
             el('div', { 'class': 'row' }, [ui.toAe, ui.toMaya]),
             ui.detail]),
@@ -224,6 +228,18 @@
                 log('Origin frame を ' + origin + ' にしました（Maya のシーンと共通）');
             }
         },
+        onAligned: function (d) {                 // D-50: Maya worked it out from both current times
+            var place = 'Maya のフレーム ' + d.frame + ' と このコンポの ' + d.t.toFixed(3) + ' 秒';
+            if (Math.abs(d.origin - d.before) < 1e-9) {
+                log(place + ' は、すでに合っています（Origin frame ' + d.origin + '）' + (client.timeSync.enabled
+                    ? '。別の位置で合わせるときは、タイムスライダーの同期を切ってから動かしてください' : ''));
+                return;
+            }
+            ui.origin.value = String(d.origin);
+            saveOptions();
+            log(place + ' を合わせました: Origin frame ' + d.before + ' → ' + d.origin +
+                '。転送済みのタイムワープや動きのキーはそのままなので、必要なら転送し直してください');
+        },
         onTimeSync: function (state) {
             log('タイムスライダーの同期: ' + (state.enabled ? 'オン' + (state.follow_playback ? '（Maya の再生中も追従）' : '') : 'オフ'));
             refresh();
@@ -252,6 +268,7 @@
         var enabled = connected && maya.length > 0 && layerOk && !busy;
         ui.toAe.disabled = !enabled;
         ui.toMaya.disabled = !enabled;
+        ui.alignOrigin.disabled = !(connected && maya.length > 0 && compOk);
         ui.guide.disabled = !(connected && maya.length > 0 && compOk && !busy);
         ui.markers.disabled = !enabled;
         ui.pixelMap.disabled = !(connected && maya.length > 0 && layerSelected && !busy);
@@ -453,6 +470,13 @@
         }
     }
 
+    ui.alignOrigin.addEventListener('click', function () {
+        try {
+            client.alignOrigin();
+        } catch (e) {
+            log('Origin frame を合わせられませんでした: ' + e.message);
+        }
+    });
     ui.pixelMap.addEventListener('click', sendPixelMap);
     ui.settingsToAe.addEventListener('click', function () { sendSettings('maya2ae'); });
     ui.settingsToMaya.addEventListener('click', function () { sendSettings('ae2maya'); });

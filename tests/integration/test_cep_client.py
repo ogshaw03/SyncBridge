@@ -236,6 +236,20 @@ class CepClientTest(ServerFixture):
         self.assertTrue(self.wait(lambda: any(e["event"] == "origin" and e["origin"] == 1001 for e in events)), events)
         self.assertTrue(self.wait(lambda: any(o["origin"] == 1009 for o in self.origins)), self.origins)
 
+    def test_panel_answers_with_its_time_to_align_the_origin(self):
+        # D-50: the panel's button and Maya's request both send the active comp's time; Maya's result is reported
+        aligns = []
+        self.maya.notices["timing.align"] = lambda msg: aligns.append(msg["data"])
+        p, events = self.driver("align")
+        self.assertTrue(self.wait(lambda: aligns), events)                  # the panel's button
+        self.assertEqual(aligns[0]["comp"], "Comp 1", aligns)
+        self.maya.send("timing.align.request", {})
+        self.assertTrue(self.wait(lambda: len(aligns) == 2), aligns)        # Maya's button
+        self.assertEqual(aligns[1], aligns[0])
+        result = {"frame": 1010.0, "t": aligns[0]["t"], "comp": "Comp 1", "origin": 926.0, "before": 1001.0}
+        self.maya.send("timing.aligned", result)
+        self.assertTrue(self.wait(lambda: any(e["event"] == "aligned" and e["data"] == result for e in events)), events)
+
     def test_panel_requests_scene_settings_to_maya(self):
         p, events = self.driver("settings", "ae2maya")
         self.assertEqual(p.wait(30), 0, events)

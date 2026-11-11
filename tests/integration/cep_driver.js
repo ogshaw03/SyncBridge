@@ -105,6 +105,7 @@ const client = new SBPanelClient({
         if (mode === 'request' && text.startsWith('connection closed')) { process.exit(3); }
     },
     onOrigin: (origin) => out({ event: 'origin', origin }),
+    onAligned: (data) => out({ event: 'aligned', data }),
     onState: () => {
         if (client.connected()) {
             out({ event: 'peers', peers: client.peers.map((p) => p.app) });
@@ -128,6 +129,10 @@ if (mode === 'origin') {
             if (client.setOrigin(1009)) { clearInterval(timer); out({ event: 'sent' }); }
         }, 300);
     });
+    process.stdin.on('data', () => {});
+    process.stdin.on('end', () => { client.disconnect(); setTimeout(() => process.exit(0), 100); });
+} else if (mode === 'align') {
+    whenMaya(() => client.alignOrigin());
     process.stdin.on('data', () => {});
     process.stdin.on('end', () => { client.disconnect(); setTimeout(() => process.exit(0), 100); });
 } else if (mode === 'pixelmap') {

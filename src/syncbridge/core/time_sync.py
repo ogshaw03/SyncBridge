@@ -29,6 +29,13 @@ def time_to_maya_frame(t: float, maya_fps, origin: float) -> float:
     return float(rounded) if abs(frame - rounded) < FRAME_SNAP else frame
 
 
+def origin_for(frame: float, t: float, maya_fps) -> float:
+    """The Origin frame that makes this Maya frame and this AE comp time the same moment (D-50)."""
+    origin = float(frame) - float(t) * FrameRate(maya_fps).fps
+    rounded = round(origin)
+    return float(rounded) if abs(origin - rounded) < FRAME_SNAP else origin
+
+
 class Throttle:
     """At most one send per `interval` seconds; the last value is sent once the interval is over.
 

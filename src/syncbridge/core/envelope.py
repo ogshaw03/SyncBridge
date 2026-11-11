@@ -70,6 +70,10 @@ KINDS = (
     # one Origin frame for every panel (D-38)
     "timing.set",
     "timing.state",
+    # the Origin frame from where both time sliders are now (D-50)
+    "timing.align.request",
+    "timing.align",
+    "timing.aligned",
     "live.sync",
     "live.sync.state",
     "live.watch",

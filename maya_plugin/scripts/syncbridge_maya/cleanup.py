@@ -25,7 +25,7 @@ from typing import List, Optional
 
 from maya import cmds
 
-from . import comp_guide, key_markers, layer_camera, layer_mapping, timing, viewer_camera
+from . import comp_guide, key_markers, layer_camera, layer_mapping, maya_markers, timing, viewer_camera
 
 PREFIXES = ("syncBridge", "SB_")
 
@@ -63,10 +63,12 @@ def inventory() -> dict:
         "layer_map": cmds.objExists(layer_mapping.DATA_NODE),
         "markers": len(markers.get("markers") or []),
         "bookmarks": len(key_markers.our_bookmarks()),
+        "maya_markers": maya_markers.frames() if maya_markers.exists() else None,   # D-55: None without the node
         "origin": timing.origin() if timing.is_set() else None,
         "display": len(_display_nodes()),
     }
-    out["any"] = bool(out["cameras"] or _data_nodes() or out["bookmarks"] or out["display"])
+    out["any"] = bool(out["cameras"] or _data_nodes() or out["bookmarks"] or out["display"]
+                      or out["maya_markers"] is not None or maya_markers.our_bookmarks())
     return out
 
 
@@ -77,7 +79,8 @@ def _backup(found: dict) -> str:
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"syncbridge": "delivery cleanup backup", "scene": cmds.file(q=True, sn=True),
                    "layer_map": layer_mapping.store() if found["layer_map"] else None,
-                   "key_markers": key_markers.stored(), "origin_frame": found["origin"],
+                   "key_markers": key_markers.stored(), "maya_markers": found["maya_markers"],
+                   "origin_frame": found["origin"],
                    "cameras": found["cameras"]}, f, indent=2, ensure_ascii=False)
     return path
 
@@ -133,6 +136,7 @@ def run(keep_cameras: bool = True, backup: bool = True, live_stopped: bool = Fal
     viewer_camera.remove()
     comp_guide.clear()
     key_markers.remove_overlay()
+    maya_markers.unwatch()
     cameras = dedicated_cameras()
     cmds.undoInfo(openChunk=True, chunkName="SyncBridge delivery cleanup")
     try:
@@ -141,13 +145,16 @@ def run(keep_cameras: bool = True, backup: bool = True, live_stopped: bool = Fal
                 _plain_camera(camera)
         elif cameras:
             cmds.delete(cameras)
-        nodes = key_markers.our_bookmarks() + _data_nodes()
+        nodes = key_markers.our_bookmarks() + maya_markers.our_bookmarks() + _data_nodes()
+        if maya_markers.exists():
+            nodes.append(maya_markers.NODE)
         if nodes:
             cmds.delete(nodes)
     finally:
         cmds.undoInfo(closeChunk=True)
     return {"cameras": [c["name"] for c in found["cameras"]], "cameras_kept": bool(keep_cameras),
             "layer_map": found["layer_map"], "markers": found["bookmarks"], "origin": found["origin"],
+            "maya_markers": found["maya_markers"],
             "display": found["display"], "live_stopped": live_stopped, "backup": path,
             "leftovers": [n.split("|")[-1] for n in leftovers(cameras if keep_cameras else None)]}
 
@@ -159,6 +166,8 @@ def summary_lines(found: dict) -> List[str]:
         lines.append(u"レイヤーマップ（Maya レイヤー %d、接続 %d）" % (found["layers"], found["links"]))
     if found["bookmarks"] or found["markers"]:
         lines.append(u"AE のキーのマーカー（ブックマーク %d）" % found["bookmarks"])
+    if found.get("maya_markers") is not None:
+        lines.append(u"Maya のマーカー（SB_MARKERS、キー %d）" % len(found["maya_markers"]))
     if found["origin"] is not None:
         lines.append(u"Origin frame の記録（%g）" % found["origin"])
     if found["display"]:
@@ -175,6 +184,8 @@ def result_text(result: dict) -> str:
         parts.append(u"レイヤーマップを消しました")
     if result["markers"]:
         parts.append(u"キーのマーカー %d 個を消しました" % result["markers"])
+    if result.get("maya_markers") is not None:
+        parts.append(u"Maya のマーカー（SB_MARKERS）を消しました")
     if result["origin"] is not None:
         parts.append(u"Origin frame の記録を消しました")
     if result["display"]:

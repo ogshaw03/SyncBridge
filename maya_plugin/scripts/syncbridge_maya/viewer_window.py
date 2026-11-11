@@ -32,6 +32,7 @@ from .layer_stack_view import LayerStackList
 
 WINDOW_NAME = "SyncBridgeViewer"
 CLICK_SLOP_PX = 4               # a press and release this close is a click, not a drag (manipulator, marquee)
+VIEW_WIDGET_CHECK_MS = 300      # how often the panel's view widget is checked (H-MY-48)
 _window = None
 
 
@@ -164,9 +165,16 @@ class ViewerWindow(QtWidgets.QWidget):
         self.layers.motion_requested.connect(self.motion.layer)
         self.layers.editing_requested.connect(self.set_editing)
         self.layers.solo_requested.connect(self.set_solo)
+        self.layers.plan_requested.connect(layer_stack.set_plan_shown)    # D-54
         self._editing: Optional[str] = None               # the editing Maya layer's id (D-44)
         self._view_widget = None
+        self._widget_timer = None
+        self._widget_failed = False
         self._press = None                                # a left press that may become a click on a layer
+        self._solo_source = None                          # the source camera the view shows whole (D-52)
+        self._solo_fit = None                             # the pan / zoom that fits it, while not changed by hand
+        self._view_before_solo = None                     # the view to go back to (core view_affine)
+        self._dedicated = []                              # the layers' dedicated cameras, for _keep_gates_off
         self.status = QtWidgets.QLabel()
         self.status.setWordWrap(True)
         split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
@@ -221,15 +229,53 @@ class ViewerWindow(QtWidgets.QWidget):
         self._watch_clicks()
 
     def _watch_clicks(self):
-        """Clicks on another layer's mesh make it the editing layer (D-44, H-MY-40)."""
+        """Clicks on another layer's mesh make it the editing layer (D-44, H-MY-40). Maya replaces the panel's
+        view widget after the panel is made (DirectX 11, H-MY-48), so the widget is checked again and again."""
+        self._follow_view_widget()
+        self._widget_timer = QtCore.QTimer(self)
+        self._widget_timer.setInterval(VIEW_WIDGET_CHECK_MS)
+        self._widget_timer.timeout.connect(self._follow_view_widget)
+        self._widget_timer.timeout.connect(self._keep_gates_off)
+        self._widget_timer.timeout.connect(self._follow_plan)
+        self._widget_timer.start()
+
+    def _follow_plan(self):
+        """The layout drawing's frames follow the motion's keys, however they change (D-54)."""
+        try:
+            if self._solo_source and layer_stack.plan_shown() and not cmds.play(q=True, state=True):
+                layer_stack.publish()
+        except Exception as exc:                 # never break the viewer
+            print("SyncBridge: the layout drawing's frames: %s" % exc)
+
+    def _keep_gates_off(self):
+        """Maya's gates of the dedicated cameras stay off while the viewer is open (H-MY-49)."""
+        try:
+            if viewer_camera.gates_off(self._dedicated):
+                self.say(viewer_camera.GATE_MESSAGE, warn=True)
+        except Exception as exc:                 # never break the viewer
+            print("SyncBridge: the dedicated cameras' gates: %s" % exc)
+
+    def _follow_view_widget(self):
+        """Watch the panel's view widget of now; the sizes for the clicks and the view's aspect are its own."""
         try:
             import maya.api.OpenMayaUI as omui2
             view = omui2.M3dView.getM3dViewFromModelPanel(self.panel)
-            self._view_widget = wrapInstance(int(view.widget()), QtWidgets.QWidget)
-            self._view_widget.installEventFilter(self)
+            widget = wrapInstance(int(view.widget()), QtWidgets.QWidget)
+            if widget is self._view_widget:
+                return
+            if self._view_widget is not None:
+                try:
+                    self._view_widget.removeEventFilter(self)
+                except RuntimeError:             # the old widget is gone already
+                    pass
+            self._view_widget = widget
+            self._press = None
+            widget.installEventFilter(self)
+            self._set_view_aspect()
         except Exception as exc:                 # the viewer works without it (choose layers in the list)
-            self._view_widget = None
-            print("SyncBridge: viewer clicks are not watched: %s" % exc)
+            if not self._widget_failed:
+                self._widget_failed = True
+                print("SyncBridge: viewer clicks are not watched: %s" % exc)
 
     def eventFilter(self, obj, event):
         """Maya always gets the mouse; a click (press and release in place) on another layer's mesh is
@@ -299,8 +345,14 @@ class ViewerWindow(QtWidgets.QWidget):
             if mode == "deselect":
                 return
             hit = viewer_pick.pick(store, pos.x(), pos.y(), w, h)
-            if hit is None or hit["layer"] == self._editing:
-                return                           # Maya picked in the editing layer's picture
+            if hit is None:
+                return
+            if hit["layer"] == self._editing:
+                # Maya picked in the editing layer's picture, unless what it found was not drawn there and
+                # _keep_to_drawn took it out: then the click on a drawn object would select nothing
+                if mode in ("replace", "add") and not cmds.ls(selection=True):
+                    cmds.select(hit["node"], replace=True)
+                return
             if mode == "toggle" and hit["node"] in selected_before:
                 # Maya toggled where the viewer camera sees, not this mesh: take it out, keep the editing layer
                 cmds.select(hit["node"], deselect=True)
@@ -329,7 +381,7 @@ class ViewerWindow(QtWidgets.QWidget):
             return
         if layer is not None and layer_stack.solo() is not None and layer_stack.solo() != layer_id \
                 and layer_stack.soloed(store):
-            self.say(u"「%s」を単独で表示中です。ほかのレイヤーを編集するには、「単独」を切ってください。"
+            self.say(u"「%s」を単独で表示中です。ほかのレイヤーを編集するには、丸のボタンで単独を切ってください。"
                      % core_lm.maya_layer(store, layer_stack.solo())["name"], error=True)
             return
         if layer is not None and not layer.get("visible", True) and layer_stack.solo() != layer_id:
@@ -348,8 +400,8 @@ class ViewerWindow(QtWidgets.QWidget):
         self.refresh()
 
     def set_solo(self, layer_id: Optional[str]):
-        """Show this layer alone with the range of its AE picture (D-49), or all layers again (None). The
-        solo layer becomes the editing one: the viewer's selection and moves are its own."""
+        """Show this layer alone, its whole source inside a frame of the source's size (D-52), or all layers
+        again (None). The solo layer becomes the editing one: the viewer's selection and moves are its own."""
         store = layer_mapping.store()
         layer = core_lm.maya_layer(store, layer_id)
         layer_stack.set_solo(layer_id if layer is not None else None)
@@ -361,7 +413,7 @@ class ViewerWindow(QtWidgets.QWidget):
         else:
             self._editing = layer_id
             note = layer_stack.range_note(store)
-            self.say(note or u"「%s」を単独で表示し、AE で映る範囲を枠で示しています（%s）。" % (
+            self.say(note or u"「%s」を単独で表示しています。素材の全体を、AE のパン・ズームなしで枠の中に出しています（%s）。" % (
                 layer["name"], core_lm.resolution_text(core_lm.layer_resolution(store, layer_id))), warn=bool(note))
         self._sync_view(layer_mapping.store())
         self.refresh()
@@ -436,13 +488,55 @@ class ViewerWindow(QtWidgets.QWidget):
             viewer_camera.remove()
             return None
         layer = core_lm.maya_layer(store, self._editing)
-        dedicated = layer_mapping.node_by_uuid(core_lm.driven_camera(layer)["camera_uuid"])
-        before = self._current_view(dedicated)
-        shape = viewer_camera.ensure(dedicated, initial_zoom=layer_stack.margin())
+        solo = layer_stack.solo_range(store)
+        source = solo[0] if solo else None
+        followed = source or layer_mapping.node_by_uuid(core_lm.driven_camera(layer)["camera_uuid"])
+        was_source = self._solo_source
+        if source and not was_source:
+            self._view_before_solo = self._view_now()
+        before = self._current_view(followed)
+        shape = viewer_camera.ensure(followed, initial_zoom=layer_stack.margin())
+        self._solo_source = source
         self._set_view_aspect(shape)
-        if before is not None:
-            self._keep_view(shape, dedicated, before)
+        if source:
+            if source != was_source:
+                self._fit_solo(shape, solo)
+        else:
+            self._solo_fit = None
+            if was_source and self._view_before_solo is not None:
+                before, self._view_before_solo = self._view_before_solo, None
+            if before is not None:
+                self._keep_view(shape, followed, before)
         return cmds.listRelatives(shape, parent=True, fullPath=True)[0]
+
+    def _fit_solo(self, shape: str, solo: tuple):
+        """The view that shows the solo layer's whole source, with the viewer's margin around it (D-52)."""
+        from . import pixel_mapping
+        from syncbridge.core import stack_view as core_view
+        size = self._view_size()
+        if size is None:
+            return
+        try:
+            fit = core_view.fit_source_view(pixel_mapping.camera_data(solo[0]), solo[1:3], size[0], size[1],
+                                            layer_stack.margin())
+        except (ValueError, TypeError, ZeroDivisionError) as exc:    # an orthographic camera
+            print("SyncBridge: the solo layer's source was not fitted: %s" % exc)
+            return
+        viewer_camera.set_view(shape, *fit)
+        self._solo_fit = fit
+
+    def _refit_solo(self, shape=None):
+        """The view changed its size (or Maya replaced its widget, H-MY-48): fit again, unless the user moved
+        the view with the 2D Pan/Zoom tool."""
+        shape = shape or viewer_camera.current()
+        if self._solo_fit is None or not shape:
+            return
+        if max(abs(a - b) for a, b in zip(viewer_camera.view(shape), self._solo_fit)) > 1e-6:
+            self._solo_fit = None
+            return
+        solo = layer_stack.solo_range(layer_mapping.store())
+        if solo:
+            self._fit_solo(shape, solo)
 
     def _view_size(self):
         widget = self._view_widget
@@ -456,19 +550,26 @@ class ViewerWindow(QtWidgets.QWidget):
         if size is not None:
             try:
                 viewer_camera.set_view_aspect(size[0] / size[1], shape)
+                self._refit_solo(shape)
             except Exception as exc:                 # never break the view's resize
                 print("SyncBridge: the viewer's aspect was not set: %s" % exc)
 
     def _current_view(self, dedicated: str):
         """The view (core view_affine) while another layer is edited, to keep it when this one becomes the
         editing layer; None when nothing changes."""
-        from . import layer_camera, pixel_mapping
+        from . import layer_camera
+        old = viewer_camera.current()
+        if not old or viewer_camera.followed(old) == layer_camera._shape(dedicated):
+            return None
+        return self._view_now()
+
+    def _view_now(self):
+        """The view (core view_affine) the viewer camera gives now, or None."""
+        from . import pixel_mapping
         from syncbridge.core import stack_view as core_view
         old, size = viewer_camera.current(), self._view_size()
-        if not old or size is None:
-            return None
-        followed = viewer_camera.followed(old)
-        if not followed or followed == layer_camera._shape(dedicated):
+        followed = viewer_camera.followed(old) if old else None
+        if not followed or size is None:
             return None
         try:
             return core_view.view_affine(pixel_mapping.camera_data(followed), pixel_mapping.camera_data(old), *size)
@@ -494,7 +595,12 @@ class ViewerWindow(QtWidgets.QWidget):
 
     def _reset_zoom(self):
         shape = viewer_camera.current()
-        if shape:
+        if not shape:
+            return
+        solo = layer_stack.solo_range(layer_mapping.store())
+        if solo:
+            self._fit_solo(shape, solo)
+        else:
             viewer_camera.set_view(shape, 0.0, 0.0, layer_stack.margin())
 
     # -- data ----------------------------------------------------------------------------------------------
@@ -533,15 +639,20 @@ class ViewerWindow(QtWidgets.QWidget):
         editing = core_lm.maya_layer(store, self._editing)
         shown = u"単独で表示中" if layer_stack.soloed(store) else u"重ねて表示: %d レイヤー" % len(stack)
         self.camera_label.setText(u"編集中: %s（%s）" % (editing["name"], shown) if editing else shown)
+        self.layers.set_plan(layer_stack.plan_shown(), self._solo_source is not None)    # before set_solo: its rows
         self.layers.set_solo(layer_stack.solo() if layer_stack.soloed(store) else None)
+        for button in (self.frame_btn, self.custom_btn):      # the source's frame replaces them (D-52)
+            button.setEnabled(self._solo_source is None)
 
     def _repair_cameras(self, store: dict):
         """Dedicated cameras made by an earlier version: link what they lack from the original and put
         the overscan back to 1.0 (other overscans slide the layers off the frame, D-34). One undo."""
         from . import layer_camera
         fixed = []
-        for layer in store["maya_layers"]:
-            own = layer_mapping.node_by_uuid(layer.get("layer_camera_uuid"))
+        cameras = [layer_mapping.node_by_uuid(layer.get("layer_camera_uuid")) for layer in store["maya_layers"]]
+        self._dedicated = [layer_camera._shape(own) for own in cameras if own]
+        self._keep_gates_off()
+        for own in cameras:
             if own and layer_camera.needs_repair(own):
                 fixed.append(own)
         if not fixed:
@@ -644,6 +755,8 @@ class ViewerWindow(QtWidgets.QWidget):
     def closeEvent(self, event):
         self._timer.stop()
         self._sel_timer.stop()
+        if self._widget_timer is not None:
+            self._widget_timer.stop()
         service.remove_listener(self.on_event)
         if self._on_gate in viewer_camera.gate_listeners:
             viewer_camera.gate_listeners.remove(self._on_gate)

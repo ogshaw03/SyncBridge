@@ -196,7 +196,8 @@ class SyncClient:
         elif kind in self.notices:
             notice = self.notices[kind]
             self.dispatch(lambda: self._safe(lambda: notice(msg)))
-        elif kind in ("time.sync.state", "time.set", "timing.state", "live.sync.state", "live.changed"):
+        elif kind in ("time.sync.state", "time.set", "timing.state", "live.sync.state", "live.changed") \
+                or kind in protocol.ALIGN_KINDS:
             pass                      # this client does not take part in the time slider sync
         elif kind == "error":
             self._emit(EV_ERROR, msg["data"])

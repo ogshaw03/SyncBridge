@@ -197,6 +197,19 @@ def _block_gates() -> None:
         pass
 
 
+def gates_off(shapes: List[str]) -> List[str]:
+    """The dedicated cameras with a gate on: turned off, outside the undo queue; returns them. Their layer pass
+    draws the gate in the viewer, with the camera's own view and not the viewer's (H-MY-49, the user, 2026-11-02),
+    and kExcludeCameras does not keep it out."""
+    found = [s for s in shapes if cmds.objExists(s) and any(cmds.getAttr(s + "." + a) for a in GATE_ATTRS)]
+    with _no_undo():
+        for shape in found:
+            for attr in GATE_ATTRS:
+                cmds.setAttr(shape + "." + attr, False)
+            cmds.setAttr(shape + ".overscan", 1.0)            # Maya's button makes it 1.3 (D-34)
+    return found
+
+
 def _unwatch() -> None:
     while _JOBS:
         job = _JOBS.pop()

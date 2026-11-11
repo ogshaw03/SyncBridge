@@ -157,6 +157,34 @@ class TimeSyncTest(ServerFixture):
         client("ae", "late")
         self.assertEqual(origins["late"].get(timeout=5)["origin"], 1009.0)
 
+    def test_align_messages_go_to_the_other_app(self):
+        # D-50: Maya asks, AE answers with its time (null without a comp), Maya reports; even with the sync off
+        got = {"request": queue.Queue(), "align": queue.Queue(), "aligned": queue.Queue()}
+        maya = SyncClient("maya", {}, notices={"timing.align": lambda m: got["align"].put(m["data"]),
+                                               "timing.align.request": lambda m: got["request"].put("maya")})
+        ae = SyncClient("ae", {}, notices={"timing.align.request": lambda m: got["request"].put("ae"),
+                                           "timing.aligned": lambda m: got["aligned"].put(m["data"])})
+        for c in (maya, ae):
+            c.connect(port=self.port, token=TOKEN)
+            self.addCleanup(c.disconnect)
+        maya.send("timing.align.request", {})
+        self.assertEqual(got["request"].get(timeout=5), "ae")
+        ae.send("timing.align", {"t": 3.5, "comp": "c010"})
+        self.assertEqual(got["align"].get(timeout=5), {"t": 3.5, "comp": "c010"})
+        ae.send("timing.align", {"t": None, "comp": None})
+        self.assertIsNone(got["align"].get(timeout=5)["t"])
+        result = {"frame": 1010.0, "t": 3.5, "comp": "c010", "origin": 926.0, "before": 1001.0}
+        maya.send("timing.aligned", result)
+        self.assertEqual(got["aligned"].get(timeout=5), result)
+        self.assertTrue(got["request"].empty())                  # never back to the sender
+
+    def test_bad_align_time_is_an_error(self):
+        maya, _ = self.connect("maya")
+        errors = queue.Queue()
+        maya.on_event = lambda name, payload: errors.put(payload) if name == "error" else None
+        maya.send("timing.align", {"t": "soon"})
+        self.assertIn("t must be a number", errors.get(timeout=5)["message"])
+
     def test_bad_time_is_an_error(self):
         maya, _ = self.connect("maya")
         errors = queue.Queue()

@@ -181,6 +181,47 @@ def source_range(source_camera: dict, size: Sequence[float], layer_affine: Affin
     return [map_point(layer_affine, uv) for uv in source_corners(source_camera, size)]
 
 
+def comp_frame_on_source(dedicated: dict, source_camera: dict, size: Sequence[float], render: dict,
+                         comp_size: Sequence[float]) -> dict:
+    """Where the AE comp's frame lies on the source at one time, like the pan's frame on a layout drawing (D-54).
+
+    `dedicated` is the layer's dedicated camera at that time: it shows each source pixel where AE puts it in the
+    comp, with the comp centred in the render (core.pixel_mapping.to_render_space), and looks from the place of
+    `source_camera`. Returns {"corners": 4 (x/-z, y/-z), top-left first, for source_range's map; "center": the
+    comp's centre in source pixels; "rotation": the AE layer's rotation (degrees); "scale": the AE layer's scale
+    (percent, x and y)}."""
+    w, h = float(render["width"]), float(render["height"])
+    ox, oy = (w - float(comp_size[0])) / 2.0, (h - float(comp_size[1])) / 2.0
+    points = ((ox, oy), (w - ox, oy), (w - ox, h - oy), (ox, h - oy))
+    m = camera_affine(dedicated, render)
+    to_uv = invert((m[0][0], m[0][1], m[0][2], m[1][0], m[1][1], m[1][2]))
+    corners = [map_point(to_uv, p) for p in points]
+    s = camera_affine(source_camera, {"width": float(size[0]), "height": float(size[1]), "pixel_aspect": 1.0})
+    to_source = (s[0][0], s[0][1], s[0][2], s[1][0], s[1][1], s[1][2])
+    px = [map_point(to_source, c) for c in corners]
+    across = (px[1][0] - px[0][0], px[1][1] - px[0][1])
+    down = (px[3][0] - px[0][0], px[3][1] - px[0][1])
+    return {"corners": corners, "center": ((px[0][0] + px[2][0]) / 2.0, (px[0][1] + px[2][1]) / 2.0),
+            "rotation": -math.degrees(math.atan2(across[1], across[0])),
+            "scale": (100.0 * float(comp_size[0]) / math.hypot(*across), 100.0 * float(comp_size[1]) / math.hypot(*down))}
+
+
+def fit_source_view(source_camera: dict, size: Sequence[float], view_w: float, view_h: float,
+                    margin: float = 1.0) -> Tuple[float, float, float]:
+    """(hpan, vpan, zoom) of a viewer camera following `source_camera` that shows the whole source of `size`,
+    centred in the view, with `margin` around it (D-52). The viewer camera's overscan is 1.0, whatever the
+    source camera's is, and steady_translate makes its pan / zoom a view of the unmoved camera."""
+    camera = dict(source_camera, overscan=1.0)
+    corners = source_range(camera, size, ndc_affine(camera, view_w, view_h))
+    xs, ys = [c[0] for c in corners], [c[1] for c in corners]
+    half = max(max(xs) - min(xs), max(ys) - min(ys)) / 2.0
+    if half < 1e-12:
+        raise ValueError("the source has no size in the view")
+    scale = 1.0 / (half * max(1.0, float(margin)))
+    view = (scale, 0.0, -scale * (min(xs) + max(xs)) / 2.0, 0.0, scale, -scale * (min(ys) + max(ys)) / 2.0)
+    return match_view(view, unmoved(camera), view_w, view_h)
+
+
 def pixel_to_ndc(x: float, y: float, view_w: float, view_h: float) -> Tuple[float, float]:
     """A point of the view widget (Qt pixels, y down) -> NDC (y up)."""
     return 2.0 * x / view_w - 1.0, 1.0 - 2.0 * y / view_h

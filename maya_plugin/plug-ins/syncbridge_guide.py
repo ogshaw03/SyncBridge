@@ -578,10 +578,12 @@ def _after_save(*_args):
 
 
 def _after_open(*_args):
-    """A scene with stored key markers shows them again while this plug-in is loaded."""
+    """A scene with stored key markers shows them again while this plug-in is loaded; the markers made in
+    Maya (D-55) follow their keys again."""
     try:
-        from syncbridge_maya import key_markers
+        from syncbridge_maya import key_markers, maya_markers
         key_markers.restore_overlay()
+        maya_markers.watch()
     except Exception as exc:
         om.MGlobal.displayWarning("SyncBridge key markers: %s" % exc)
 

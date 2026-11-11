@@ -141,6 +141,19 @@ class TimeSyncTest(unittest.TestCase):
         self.assertEqual(time_sync.time_to_maya_frame(1 / 30.0 * 7, [30, 1], 1001), 1008.0)
         self.assertAlmostEqual(time_sync.time_to_maya_frame(0.5 / 24, [24, 1], 1), 1.5)
 
+    def test_origin_from_both_current_times(self):
+        # D-50: Maya frame 1010 and AE 3.5 s are the same moment
+        self.assertEqual(time_sync.origin_for(1010, 3.5, [24, 1]), 926.0)
+        self.assertEqual(time_sync.origin_for(1, 0, [24, 1]), 1.0)
+        self.assertEqual(time_sync.origin_for(10, 5.0, [24, 1]), -110.0)     # before frame 0 is fine
+        # 23.976: the rounding error of the rate does not leave a fraction
+        self.assertEqual(time_sync.origin_for(1007, 7 * 1001 / 24000.0, [24000, 1001]), 1000.0)
+        # another AE rate: the comp frame falls between Maya frames, kept exactly
+        self.assertAlmostEqual(time_sync.origin_for(100, 1 / 30.0, [24, 1]), 99.2)
+        # the sync's own conversion gives back the frame
+        origin = time_sync.origin_for(1010, 3.5, [24, 1])
+        self.assertEqual(time_sync.time_to_maya_frame(3.5, [24, 1], origin), 1010.0)
+
     def test_throttle(self):
         now = [0.0]
         th = time_sync.Throttle(0.1, clock=lambda: now[0])

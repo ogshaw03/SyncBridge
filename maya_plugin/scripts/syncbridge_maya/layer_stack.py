@@ -40,11 +40,12 @@ def ensure_plugin() -> None:
 
 def layers() -> List[tuple]:
     """[(name, camera path, [object paths])] bottom first, nodes that are gone left out."""
-    return _resolve(core_lm.stack(layer_mapping.store(), _solo))
+    return _resolve(drawn_stack(layer_mapping.store()))
 
 
-# The viewer's solo (D-49): one layer alone, with the range of its AE picture. A view setting like the
-# eye of AE's solo, not scene data: kept for this Maya session only, never in the scene or the undo queue.
+# The viewer's solo (D-49, D-52): one layer alone, its whole source inside a frame of the source's size. A
+# view setting like the eye of AE's solo, not scene data: kept for this Maya session only, never in the scene
+# or the undo queue.
 _solo: Optional[str] = None
 
 
@@ -65,27 +66,101 @@ def soloed(store: dict) -> bool:
 
 
 def solo_range(store: dict) -> Optional[tuple]:
-    """(source camera, dedicated camera, width, height, label) of the solo layer for the plug-in to draw the
-    range of its AE picture, or None. Only a layer whose link is in the source camera mode (D-39): there
-    the source is a render of the layer's camera at the source's size, so the range is exact."""
+    """(source camera, width, height, label) of the solo layer when its whole source can be shown, or None:
+    the view looks through the source camera without the AE layer's pan / zoom, and the plug-in draws the
+    frame of the source's size (D-52). Only a layer whose link is in the source camera mode (D-39): there the
+    source is a render of the layer's camera at the source's size, so the frame is exact."""
     layer = core_lm.maya_layer(store, _solo)
     if layer is None or not soloed(store):
         return None
     size = core_lm.layer_resolution(store, _solo)
     links = core_lm.links_of(store, _solo)
-    if size is None or not links or core_lm.mode_of(links[0]) != "source" or not layer.get("layer_camera_uuid"):
+    if size is None or not links or core_lm.mode_of(links[0]) != "source":
         return None
     source = layer_mapping.node_by_uuid(layer.get("camera_uuid"))
-    dedicated = layer_mapping.node_by_uuid(layer.get("layer_camera_uuid"))
-    if not source or not dedicated:
+    if not source:
         return None
     # ASCII: the HUD's font may have no Japanese (like the frame's "Maya 1920x1080")
     label = "%s  %dx%d (%s)" % (layer["name"], size["width"], size["height"], size["kind"])
-    return (source, dedicated, size["width"], size["height"], label)
+    return (source, size["width"], size["height"], label)
+
+
+PLAN_VAR = "syncBridgeViewerPlanFrames"        # optionVar: the layout drawing's frames on / off (D-54)
+
+
+def plan_shown() -> bool:
+    if cmds.optionVar(exists=PLAN_VAR):
+        return bool(cmds.optionVar(q=PLAN_VAR))
+    return True
+
+
+def set_plan_shown(shown: bool) -> None:
+    cmds.optionVar(intValue=(PLAN_VAR, 1 if shown else 0))
+    publish()
+
+
+def _motion_range(dedicated: str) -> Optional[tuple]:
+    """(first key, last key) of the layer's motion on its dedicated camera, or None without keys."""
+    from . import pixel_mapping
+    times = []
+    for attr in pixel_mapping.CAMERA_ATTRS.values():
+        times += cmds.keyframe("%s.%s" % (dedicated, attr), q=True, timeChange=True) or []
+    return (min(times), max(times)) if times else None
+
+
+def _plan_label(tag: str, frame: dict) -> str:
+    """ASCII, like the frame's label. The numbers are the AE layer's rotation and scale, and where the comp's
+    centre is on the source."""
+    sx, sy = frame["scale"]
+    scale = "%.1f%%" % sx if abs(sx - sy) < 0.05 else "%.1f%% x %.1f%%" % (sx, sy)
+    return "%s  center %.0f, %.0f  rot %.2f  scale %s" % (tag, frame["center"][0], frame["center"][1],
+                                                         round(frame["rotation"], 2) + 0.0, scale)   # no "-0.00"
+
+
+def solo_plan(store: dict) -> List[tuple]:
+    """[(4 corners (x/-z, y/-z), label)] of the comp's frame on the solo layer's source, at the first and the
+    last key of its motion (one when they are the same place, or at the current time without keys), for the
+    plug-in to draw like the pan's frames on a layout drawing (D-54)."""
+    from . import layer_camera, pixel_mapping
+    from syncbridge.core import stack_view as core_view
+    solo = solo_range(store)
+    if solo is None or not plan_shown():
+        return []
+    layer = core_lm.maya_layer(store, _solo)
+    own = layer_mapping.node_by_uuid(layer.get("layer_camera_uuid"))
+    if not own:
+        return []
+    dedicated = layer_camera._shape(own)
+    render = pixel_mapping.render_data()
+    ae = core_lm.links_of(store, _solo)[0].get("ae") or {}
+    comp = (ae.get("comp_width") or render["width"], ae.get("comp_height") or render["height"])
+    source = pixel_mapping.camera_data(solo[0])
+    span = _motion_range(dedicated)
+    times = [span[0], span[1]] if span and span[1] > span[0] else [cmds.currentTime(q=True)]
+    try:
+        frames = [core_view.comp_frame_on_source(pixel_mapping.camera_data(dedicated, t), source, solo[1:3], render, comp)
+                  for t in times]
+    except (ValueError, ZeroDivisionError):      # an orthographic camera, a scale of zero
+        return []
+    moved = len(frames) == 2 and max(abs(a - b) for p, q in zip(frames[0]["corners"], frames[1]["corners"])
+                                     for a, b in zip(p, q)) > 1e-9
+    if not moved:
+        return [(frames[0]["corners"], _plan_label("f%g" % times[0], frames[0]))]
+    return [(frames[0]["corners"], _plan_label("START f%g" % times[0], frames[0])),
+            (frames[1]["corners"], _plan_label("END f%g" % times[1], frames[1]))]
+
+
+def drawn_stack(store: dict) -> List[dict]:
+    """core stack as the viewer draws it: the solo layer whose whole source is shown goes through its source
+    camera, not its dedicated camera (D-52)."""
+    items = core_lm.stack(store, _solo)
+    if solo_range(store) is None:
+        return items
+    return [dict(item, camera_uuid=item["original_camera_uuid"]) for item in items]
 
 
 def range_note(store: dict) -> Optional[str]:
-    """Why the solo layer has no range drawn (for the viewer's status line), or None."""
+    """Why the solo layer's whole source is not shown (for the viewer's status line), or None."""
     layer = core_lm.maya_layer(store, _solo)
     if layer is None or solo_range(store) is not None:
         return None
@@ -93,14 +168,14 @@ def range_note(store: dict) -> Optional[str]:
         return u"「%s」はカメラか表示するオブジェクトがないので、単独で表示できません。" % layer["name"]
     links = core_lm.links_of(store, _solo)
     if not links:
-        return u"「%s」は AE のレイヤーにつながっていないので、映る範囲を出せません。" % layer["name"]
+        return u"「%s」は AE のレイヤーにつながっていないので、素材の全体を出せません。" % layer["name"]
     if core_lm.layer_resolution(store, _solo) is None:
         return (u"「%s」の AE の解像度がまだありません。レイヤーマップで「AE のレイヤーを読み込む」を押すと受け取ります。"
                 % layer["name"])
     if core_lm.mode_of(links[0]) != "source":
-        return (u"「%s」の接続は素材カメラのモードではないので、映る範囲を出せません（素材を書き出したカメラが"
+        return (u"「%s」の接続は素材カメラのモードではないので、素材の全体を出せません（素材を書き出したカメラが"
                 u"分からないため）。" % layer["name"])
-    return u"「%s」の素材カメラか専用カメラが見つからないので、映る範囲を出せません。" % layer["name"]
+    return u"「%s」の素材カメラが見つからないので、素材の全体を出せません。" % layer["name"]
 
 
 def _resolve(stack):
@@ -183,13 +258,15 @@ def publish() -> List[tuple]:
     import maya.api.OpenMayaUI as omui2
     old = getattr(__main__, STATE_KEY, None) or {"version": 0, "layers": None}
     store = layer_mapping.store()
-    stack = _resolve(core_lm.stack(store, _solo))
-    overlay = frame_overlay(view_camera(store))
+    stack = _resolve(drawn_stack(store))
     m, s, e, r = margin(), shade(), editing(), solo_range(store)
+    # the source's frame replaces the render's and the custom one: they are placed for the dedicated cameras
+    overlay = None if r else frame_overlay(view_camera(store))
+    plan = solo_plan(store)
     if stack != old.get("layers") or overlay != old.get("overlay") or m != old.get("margin") \
-            or s != old.get("shade") or e != old.get("editing") or r != old.get("range"):
+            or s != old.get("shade") or e != old.get("editing") or r != old.get("range") or plan != old.get("plan"):
         setattr(__main__, STATE_KEY, {"version": old["version"] + 1, "layers": stack, "overlay": overlay,
-                                      "margin": m, "shade": s, "editing": e, "range": r})
+                                      "margin": m, "shade": s, "editing": e, "range": r, "plan": plan})
         omui2.M3dView.scheduleRefreshAllViews()
     return stack
 

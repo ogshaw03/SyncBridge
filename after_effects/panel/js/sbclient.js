@@ -120,6 +120,7 @@
         this.onLog = opts.onLog || function () {};
         this.onTimeSync = opts.onTimeSync || function () {};
         this.onOrigin = opts.onOrigin || function () {};      // the shared Origin frame changed (D-38)
+        this.onAligned = opts.onAligned || function () {};    // Maya worked out the Origin frame (D-50)
         this.onSettingsApplied = opts.onSettingsApplied || function () {};
         this.onLiveSync = opts.onLiveSync || function () {};   // live sync switched / layers changed (D-41)
         this.setInterval = opts.setInterval || function (fn, ms) { return setInterval(fn, ms); };
@@ -292,6 +293,18 @@
         if (!this.connected() || !isFinite(origin)) { return false; }
         this._send(message('timing.set', { origin: Number(origin) }));
         return true;
+    };
+
+    // The Origin frame from where both time sliders are now (D-50): send the active comp's time to Maya,
+    // which knows its frame and rate. Also when Maya asks (timing.align.request); t = null without a comp.
+    SBPanelClient.prototype.alignOrigin = function () {
+        var self = this;
+        if (!this.connected()) { throw new Error('not connected'); }
+        this.host.call('compTime', [], function (r) {
+            var t = r.error || r.time === null || r.time === undefined ? null : r.time;
+            if (t === null) { self.onLog(r.error ? userMessage(r) : 'Origin frame を合わせられませんでした: コンポジションを開いてください'); }
+            self._send(message('timing.align', { t: t, comp: r.comp || null }));
+        });
     };
 
     // Live sync (D-41): one switch shared with Maya through the hub (Maya says which layers to watch).
@@ -522,6 +535,12 @@
             break;
         case 'timing.state':
             if (msg.data.by !== this.clientId) { this.onOrigin(Number(msg.data.origin)); }
+            break;
+        case 'timing.align.request':
+            this.alignOrigin();
+            break;
+        case 'timing.aligned':
+            this.onAligned(msg.data);
             break;
         case 'time.set':
             this._applyTime(msg.data.t, msg.data.sent_at);

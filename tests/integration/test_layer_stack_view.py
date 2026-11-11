@@ -64,6 +64,9 @@ class LayerStackListTest(unittest.TestCase):
         got = []
         self.list.solo_requested.connect(got.append)
         bg_button = tree.itemWidget(tree.topLevelItem(1), SOLO)
+        self.assertEqual(bg_button.text(), "")                 # a mark, not the word
+        self.assertFalse(bg_button.icon().isNull())
+        self.assertFalse(tree.headerItem().icon(SOLO).isNull())
         self.assertFalse(tree.itemWidget(tree.topLevelItem(2), SOLO).isEnabled())   # FX cannot be drawn
         bg_button.click()
         bg_button.click()
@@ -71,6 +74,24 @@ class LayerStackListTest(unittest.TestCase):
         self.list.set_solo(self.bg["id"])                      # the viewer says which row is solo
         self.assertTrue(bg_button.isChecked())
         self.assertEqual(len(got), 2)                          # showing it does not ask again
+        # D-54: the layout drawing's button, only with its row's solo on
+        from syncbridge_maya.layer_stack_view import PLAN
+        wanted = []
+        self.list.plan_requested.connect(wanted.append)
+        plans = [tree.itemWidget(tree.topLevelItem(i), PLAN) for i in range(3)]
+        self.assertFalse(any(p.isEnabled() for p in plans))    # the viewer has not said it is possible
+        self.list.set_plan(True, True)
+        self.list.set_solo(self.bg["id"])
+        self.assertEqual([p.isEnabled() for p in plans], [False, True, False])
+        self.assertEqual([p.isChecked() for p in plans], [False, True, False])
+        plans[1].click()
+        self.assertEqual(wanted, [False])
+        self.list.set_solo(None)
+        self.assertFalse(any(p.isEnabled() or p.isChecked() for p in plans))
+        self.assertEqual(wanted, [False])                      # showing it does not ask again
+        self.list.set_solo(self.bg["id"])
+        self.assertFalse(plans[1].isChecked())                 # the choice is kept
+        self.assertTrue(plans[1].isEnabled())
         self.assertEqual(tree.topLevelItem(0).foreground(RESOLUTION).color().name(), "#7a7a7a")
 
     def test_reorder_emits_the_new_order(self):

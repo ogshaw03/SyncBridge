@@ -43,6 +43,10 @@ Time slider sync (D-22), no replies:
     client -> server  time.sync {enabled, follow_playback}   server -> all  time.sync.state {...}
     client -> server  time.update {t}    server -> the other app  time.set {t, source}
     client -> server  timing.set {origin}   server -> all  timing.state {origin, by}  (one Origin frame, D-38)
+    maya -> server    timing.align.request {}   server -> ae  (same)      (D-50: the Origin frame from where
+    ae -> server      timing.align {t, comp}    server -> maya  (same)     both time sliders are now; t is null
+    maya -> server    timing.aligned {frame, t, comp, origin, before}      when AE has no comp open)
+                      server -> ae  (same)
     (t = AE comp time in seconds; Maya converts with its origin frame, core.time_sync)
 Live sync of AE layers to Maya (D-41), no replies:
     client -> server  live.sync {enabled}       server -> all  live.sync.state {enabled, layers, by}
@@ -143,6 +147,9 @@ REQUIRED = {
     "time.set": ("t",),
     "timing.set": ("origin",),
     "timing.state": ("origin",),
+    "timing.align.request": (),
+    "timing.align": ("t",),
+    "timing.aligned": ("frame", "t", "origin", "before"),
     "live.sync": ("enabled",),
     "live.sync.state": ("enabled", "layers"),
     "live.watch": ("layers",),
@@ -159,7 +166,8 @@ STATUSES = (APPLIED, CANCELLED, FAILED, UNCHANGED)
 RESULT_KINDS = ("apply.result", "transfer.result", "guide.result", "guide.apply.result",
                 "markers.result", "markers.apply.result", "settings.result", "settings.apply.result",
                 "pixelmap.result", "pixelmap.apply.result")
-TIME_KINDS = ("time.sync", "time.update", "timing.set")      # client -> server, no reply
+ALIGN_KINDS = ("timing.align.request", "timing.align", "timing.aligned")      # to the other app as they are (D-50)
+TIME_KINDS = ("time.sync", "time.update", "timing.set") + ALIGN_KINDS         # client -> server, no reply
 LIVE_KINDS = ("live.sync", "live.watch", "live.changed")      # client -> server, no reply (D-41)
 
 
@@ -236,6 +244,9 @@ def decode(text) -> dict:
     if kind in ("timing.set", "timing.state") and (isinstance(data["origin"], bool)
                                                    or not isinstance(data["origin"], (int, float))):
         raise ProtocolError(E_BAD_MESSAGE, "origin must be a number (Maya frame)")
+    if kind == "timing.align" and data["t"] is not None and (isinstance(data["t"], bool)
+                                                             or not isinstance(data["t"], (int, float))):
+        raise ProtocolError(E_BAD_MESSAGE, "t must be a number (seconds) or null")
     if kind in ("live.sync", "live.sync.state") and not isinstance(data["enabled"], bool):
         raise ProtocolError(E_BAD_MESSAGE, "enabled must be true or false")
     if kind in ("live.sync.state", "live.watch", "live.changed") and (

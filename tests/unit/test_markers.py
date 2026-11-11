@@ -63,5 +63,26 @@ class MarkerTest(unittest.TestCase):
         self.assertIsNone(markers.marker_at([], 1.0))
 
 
+class MayaMarkersTest(unittest.TestCase):
+    """D-55: markers made in Maya carry their AE comp time, for a later sync with AE."""
+
+    def test_frames_to_comp_times_and_back(self):
+        result = markers.from_maya_frames([1049, 1001, 1025], [24, 1], 1001)
+        self.assertEqual(result["source"], "maya")
+        self.assertEqual([m["frame"] for m in result["markers"]], [1001.0, 1025.0, 1049.0])
+        self.assertEqual([m["comp_time"] for m in result["markers"]], [0.0, 1.0, 2.0])
+        self.assertEqual(result["markers"][1]["label"], u"マーカー 2/3")
+        times = [m["comp_time"] for m in result["markers"]]
+        self.assertEqual(markers.maya_frames_from_comp_times(times, [24, 1], 1001), [1001.0, 1025.0, 1049.0])
+
+    def test_ntsc_rate_comes_back_on_whole_frames(self):
+        result = markers.from_maya_frames([10, 37], [24000, 1001], 0)
+        times = [m["comp_time"] for m in result["markers"]]
+        self.assertEqual(markers.maya_frames_from_comp_times(times, [24000, 1001], 0), [10.0, 37.0])
+
+    def test_none(self):
+        self.assertEqual(markers.from_maya_frames([], [24, 1], 0)["markers"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

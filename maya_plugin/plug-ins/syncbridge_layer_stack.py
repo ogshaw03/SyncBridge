@@ -27,8 +27,10 @@ be reloaded by the SB Dev button, the plug-in is not):
                                         "margin": 1.0 = none, 1.2 = 20 %,
                                         "shade": 0.0 - 1.0, the opacity outside the frame,
                                         "editing": (dedicated camera, viewer camera) dag paths or None,
-                                        "range": (source camera, dedicated camera, width, height, label)
-                                                 of the solo layer (D-49) or None}
+                                        "range": (source camera, width, height, label) of the solo layer
+                                                 whose whole source is shown (D-52) or None,
+                                        "plan": [(4 corners (x/-z, y/-z), label)], the comp's frame on that
+                                                 source at the first and last key (D-54)}
 
 The viewer's 2D pan / zoom (D-44): the editing layer is drawn through the viewer camera (its dedicated
 camera with free 2D pan / zoom that Maya's 2D Pan/Zoom tool changes, syncbridge_maya.viewer_camera); the
@@ -45,12 +47,12 @@ import maya.api.OpenMayaRender as omr
 import maya.api.OpenMayaUI as omui
 
 OVERRIDE_NAME = "SyncBridgeLayerStack"
-REVISION = 16                                 # shown in uiName: is the plug-in really reloaded?
+REVISION = 18                                 # shown in uiName: is the plug-in really reloaded?
 UI_NAME = "SyncBridge Layer Stack r%d" % REVISION
 STATE_KEY = "_syncbridge_layer_stack"
 FRAME_COLOR = om.MColor((1.0, 0.55, 0.1, 1.0))       # the comp guide's colour (D-16)
 CUSTOM_COLOR = om.MColor((0.35, 0.85, 1.0, 1.0))     # the viewer's frame of a size typed in it
-RANGE_COLOR = om.MColor((0.55, 1.0, 0.45, 1.0))      # the solo layer's range (D-49)
+PLAN_COLORS = (om.MColor((0.35, 0.85, 1.0, 1.0)), om.MColor((1.0, 0.45, 0.75, 1.0)))   # the first and last frame (D-54)
 DEFAULT_SHADE = 0.5                                  # outside the frame, like the resolution gate's shade
 
 
@@ -340,7 +342,7 @@ class FrameHUD(omr.MHUDRender):
         self.margin = 1.0
         self.view = None                        # the viewer's 2D pan / zoom (NDC affine, D-44) or None
         self.depth = None                       # columns 2 and 3 of the view's projection (D-35)
-        self.range = None                       # (source camera, dedicated camera MDagPaths, w, h, label), D-49
+        self.range = None                       # (source camera MDagPath, w, h, label), D-52
 
     def hasUIDrawables(self):
         _debug("hasUIDrawables", "frame=%s core=%s" % (self.frame is not None, core_guide is not None))
@@ -362,30 +364,49 @@ class FrameHUD(omr.MHUDRender):
         self._draw_range(draw_manager, frame_context)
 
     def _draw_range(self, draw_manager, frame_context):
-        """The solo layer's range (D-49): its source's frame through the source camera at the source's size,
-        drawn as the layer is (the editing layer's view, or the margin): where AE puts the source."""
+        """The solo layer's frame (D-52): the source's size through the source camera, drawn as the layer is
+        (the editing layer's view, or the margin), with the look of the viewer's own frame."""
         if self.range is None or core_view is None:
             return
         try:
-            source, dedicated, width, height, text = self.range
+            source, width, height, text = self.range
             viewport = frame_context.getViewportDimensions()
             x0, y0, w, h = viewport
-            cam = model_camera(dedicated)
+            cam = model_camera(source)
             if self.view:
                 affine = core_view.compose(self.view, core_view.ndc_affine(cam, w, h))
             else:
                 affine = core_view.ndc_affine(cam, w, h, self.margin)
-            corners = core_view.source_range(model_camera(source), (width, height), affine)
+            corners = core_view.source_range(cam, (width, height), affine)
             points = [om.MPoint(*core_view.to_pixels(c, viewport)) for c in corners]
             draw_manager.beginDrawable()
-            draw_manager.setColor(RANGE_COLOR)
-            draw_manager.setLineWidth(2.0)              # solid: Maya's dashed line was dots, hard to see
+            shade = shade_color(_state().get("shade", DEFAULT_SHADE))
+            if shade.a > 0.0:
+                draw_manager.setColor(shade)
+                for left, bottom, right, top in mask_bands(points, viewport):
+                    draw_manager.rect2d(om.MPoint((left + right) / 2.0, (bottom + top) / 2.0),
+                                        om.MVector(0.0, 1.0, 0.0), (right - left) / 2.0, (top - bottom) / 2.0, True)
+            draw_manager.setColor(FRAME_COLOR)
+            draw_manager.setLineWidth(1.5)
             for i in range(4):
                 draw_manager.line2d(points[i], points[(i + 1) % 4])
-            draw_manager.text2d(label_point_below(points, viewport), text, omr.MUIDrawManager.kLeft)
+            draw_manager.text2d(label_point(points, viewport), text, omr.MUIDrawManager.kLeft)
+            # the comp's frame at the first and last key (D-54), through the same map as the source's frame:
+            # labels at the view's bottom-left, one line each, where the frames cannot cover them
+            for i, (uv, label) in enumerate(_state().get("plan") or []):
+                color = PLAN_COLORS[i % len(PLAN_COLORS)]
+                corners = [om.MPoint(*core_view.to_pixels(core_view.map_point(affine, c), viewport)) for c in uv]
+                draw_manager.setColor(color)
+                for j in range(4):
+                    draw_manager.line2d(corners[j], corners[(j + 1) % 4])
+                # inside the frame's corner: above it is the source frame's label
+                draw_manager.text2d(om.MPoint(corners[0].x + LABEL_GAP, corners[0].y - LABEL_HEIGHT), label.split("  ")[0],
+                                    omr.MUIDrawManager.kLeft)
+                draw_manager.text2d(om.MPoint(x0 + LABEL_GAP * 12.0, y0 + LABEL_GAP + LABEL_HEIGHT * (2 - i)), label,
+                                    omr.MUIDrawManager.kLeft)
             draw_manager.endDrawable()
         except Exception as exc:                # never break the view (an orthographic camera, ...)
-            _warn_once("SyncBridge layer stack: cannot draw the layer's range: %s" % exc)
+            _warn_once("SyncBridge layer stack: cannot draw the solo layer's frame: %s" % exc)
 
     def _draw_frames(self, draw_manager, frame_context):
         if self.frame is None or core_guide is None or core_frame is None:
@@ -491,9 +512,9 @@ class LayerStackOverride(omr.MRenderOverride):
         camera = _dag_path(overlay[0]) if overlay else None
         self._hud.frame = (camera, dict(overlay[1])) if camera is not None else None
         solo = state.get("range")
-        paths = (_dag_path(solo[0]), _dag_path(solo[1])) if solo else (None, None)
-        # `is None` each: `None in (MDagPath, ...)` compares MDagPath with None, which raises
-        self._hud.range = (paths + tuple(solo[2:])) if all(p is not None for p in paths) else None
+        source = _dag_path(solo[0]) if solo else None
+        # `is None`: `None in (MDagPath, ...)` compares MDagPath with None, which raises
+        self._hud.range = ((source,) + tuple(solo[1:])) if source is not None else None
         self._ops = ops + [self._hud, self._present]
         _debug("build", "version=%s layers=%d overlay=%s ops=%s" % (
             self._version, len(state["layers"]), overlay, [type(op).__name__ for op in self._ops]))

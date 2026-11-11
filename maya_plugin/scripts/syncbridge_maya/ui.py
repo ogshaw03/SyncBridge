@@ -22,7 +22,7 @@ except ImportError:
 from syncbridge import __version__, protocol
 from syncbridge.core import layer_mapping as core_layer_mapping
 from syncbridge.core import scene_sync
-from . import comp_guide, key_markers, layer_mapping, pixel_mapping, service, snapshots, timing
+from . import comp_guide, key_markers, layer_mapping, maya_markers, pixel_mapping, service, snapshots, timing
 
 WINDOW_NAME = "SyncBridgePanel"
 # <maya folder>/icons next to scripts/ (repository: maya_plugin/icons; release: <install>/maya/icons)
@@ -131,6 +131,11 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.origin.setValue(timing.origin())          # one Origin frame, kept in the scene (D-38)
         self.origin.setToolTip(u"AE のコンポの 0 秒にあたる Maya のフレーム（ふつうはレンダーの開始フレーム）。\n"
                                u"シーンに保存され、AE のパネル・時間の同期・転送・レイヤーマップのすべてで共通です")
+        self.align_origin_btn = QtWidgets.QPushButton(u"今の位置で合わせる")
+        self.align_origin_btn.setToolTip(u"Maya の今のフレームと AE の今の時間が同じ瞬間になるように、Origin frame を計算して入れます\n"
+                                         u"（AE で開いているコンプを使います。タイムスライダーの同期を切ってから、"
+                                         u"それぞれ合わせたい位置に置いて押してください）")
+        self.align_origin_btn.clicked.connect(self.align_origin)
 
         # -- time warp: Mode and Tolerance are rarely changed, folded under "詳細" (the user, 2026-10-27)
         self.mode = QtWidgets.QComboBox()
@@ -241,6 +246,19 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.clear_markers_btn = QtWidgets.QPushButton(u"マーカーを消す")
         self.clear_markers_btn.setToolTip(u"AE から送ったキーのマーカー（ブックマークとビューの表示）を、このシーンから消します")
         self.clear_markers_btn.clicked.connect(self.clear_markers)
+        # D-55: markers made in Maya alone, from the keys of SB_MARKERS
+        self.maya_markers_label = QtWidgets.QLabel()
+        self.maya_markers_label.setWordWrap(True)
+        self.add_marker_btn = QtWidgets.QPushButton(u"今のフレームに打つ")
+        self.add_marker_btn.setToolTip(u"今のフレームにマーカーを打ちます（SB_MARKERS のキー。Ctrl+Z で戻せます）")
+        self.add_marker_btn.clicked.connect(self.add_marker)
+        self.remove_marker_btn = QtWidgets.QPushButton(u"今のフレームのを消す")
+        self.remove_marker_btn.setToolTip(u"今のフレームから半フレーム以内のマーカーを消します（Ctrl+Z で戻せます）")
+        self.remove_marker_btn.clicked.connect(self.remove_marker)
+        self.select_markers_btn = QtWidgets.QPushButton(u"ノードを選ぶ")
+        self.select_markers_btn.setToolTip(u"SB_MARKERS を選びます。タイムスライダーにキーが出るので、ドラッグで動かしたり、"
+                                           u"S キーで打ったり、消したりできます")
+        self.select_markers_btn.clicked.connect(self.select_markers)
         self.cleanup_btn = QtWidgets.QPushButton(u"納品用のクリーンアップ…")
         self.cleanup_btn.setToolTip(u"SyncBridge がこのシーンに作ったノード（専用カメラ・レイヤーマップ・マーカーなど）を消します"
                                     u"（確認してから。Scene Time Warp は残します）")
@@ -293,6 +311,9 @@ class SyncBridgePanel(QtWidgets.QDialog):
                         self.guide_preset),
                    _row(None, self.show_guide_btn, self.clear_guide_btn),
                    _note(u"AE のパネルの「解像度の枠」でも出せます")),
+            _group(u"Maya のマーカー", self.maya_markers_label,
+                   _row(self.add_marker_btn, self.remove_marker_btn, self.select_markers_btn, None),
+                   _note(u"SB_MARKERS のキーが、タイムスライダーの水色のマーカーになります。AE がなくても使えます")),
             _group(u"AE のキーのマーカー", _row(self.markers_label, self.clear_markers_btn)),
             _group(u"納品", _row(self.cleanup_btn, None),
                    _note(u"SyncBridge のノードを消して、ツールなしで開けるシーンにします"))), u"その他")
@@ -310,7 +331,8 @@ class SyncBridgePanel(QtWidgets.QDialog):
         layout.setMenuBar(menubar)
         layout.addLayout(head)
         layout.addWidget(state)
-        layout.addLayout(_row(QtWidgets.QLabel("Origin frame"), self.origin, origin_note, None))
+        layout.addLayout(_row(QtWidgets.QLabel("Origin frame"), self.origin, self.align_origin_btn, None))
+        layout.addWidget(origin_note)
         layout.addWidget(self.tabs, 3)
         layout.addWidget(self.log, 1)
         self.resize(440, 600)
@@ -320,6 +342,12 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.refresh()
         self.show_stored_markers()
         self.refresh_pixel_mapping()
+        maya_markers.listeners.append(self.show_maya_markers)
+        self.show_maya_markers(maya_markers.frames())
+        try:
+            maya_markers.watch()
+        except Exception as exc:
+            self.write(u"Maya のマーカーを追えませんでした: %s" % exc)
 
     def open_about(self):
         from . import about
@@ -395,6 +423,28 @@ class SyncBridgePanel(QtWidgets.QDialog):
                    else u"設定 AE → Maya: 確認ダイアログを待っています...")
         self.busy = True
         self.refresh()
+
+    def align_origin(self):
+        try:
+            service.align_origin()
+        except Exception as exc:
+            self.write(u"AE の時間を読めませんでした: %s" % exc)
+
+    def show_origin_aligned(self, data):
+        if data["status"] == "no_comp":
+            self.write(u"Origin frame を合わせられませんでした: AE でコンポジションを開いてください。")
+            return
+        place = u"Maya のフレーム %g と AE のコンポ %s の %.3f 秒" % (data["frame"], data.get("comp") or u"", data["t"])
+        if abs(data["origin"] - data["before"]) < 1e-9:
+            self.write(u"%s は、すでに合っています（Origin frame %g）。" % (place, data["origin"]))
+            if service.time_sync_state()["enabled"]:
+                self.write(u"別の位置で合わせるときは、タイムスライダーの同期を切ってから動かしてください。")
+            return
+        self.origin.blockSignals(True)
+        self.origin.setValue(data["origin"])
+        self.origin.blockSignals(False)
+        self.write(u"%s を合わせました: Origin frame %g → %g。転送済みのタイムワープや動きのキーはそのままなので、"
+                   u"必要なら転送し直してください。" % (place, data["before"], data["origin"]))
 
     def toggle_time_sync(self, checked):
         try:
@@ -552,6 +602,47 @@ class SyncBridgePanel(QtWidgets.QDialog):
         except Exception as exc:
             self.write(u"マーカーをビューに表示できませんでした: %s" % exc)
 
+    # -- markers made in Maya (D-55) -----------------------------------------------------------
+    def show_maya_markers(self, frames):
+        try:
+            if frames:
+                self.maya_markers_label.setText(u"%d 個（フレーム %s）" % (
+                    len(frames), u", ".join(key_markers._frame_text(f) for f in frames[:12])
+                    + (u" ほか" if len(frames) > 12 else u"")))
+            else:
+                self.maya_markers_label.setText(u"まだありません。打ちたいフレームで「今のフレームに打つ」を押してください。")
+            self.remove_marker_btn.setEnabled(bool(frames))
+        except RuntimeError:                                  # the panel was closed (Qt object deleted)
+            if self.show_maya_markers in maya_markers.listeners:
+                maya_markers.listeners.remove(self.show_maya_markers)
+
+    def add_marker(self):
+        try:
+            frame = maya_markers.add()
+        except Exception as exc:
+            self.write(u"マーカーを打てませんでした: %s" % exc)
+            return
+        self.write(u"フレーム %s にマーカーを打ちました。" % key_markers._frame_text(frame))
+
+    def remove_marker(self):
+        try:
+            frame = maya_markers.remove()
+        except Exception as exc:
+            self.write(u"マーカーを消せませんでした: %s" % exc)
+            return
+        if frame is None:
+            self.write(u"今のフレームにはマーカーがありません。")
+        else:
+            self.write(u"フレーム %s のマーカーを消しました（Ctrl+Z で戻せます）。" % key_markers._frame_text(frame))
+
+    def select_markers(self):
+        try:
+            maya_markers.select_node()
+        except Exception as exc:
+            self.write(u"SB_MARKERS を選べませんでした: %s" % exc)
+            return
+        self.write(u"SB_MARKERS を選びました。タイムスライダーのキーをドラッグで動かせます（S キーで打てます）。")
+
     def clear_markers(self):
         try:
             count = key_markers.clear()
@@ -690,6 +781,8 @@ class SyncBridgePanel(QtWidgets.QDialog):
                 self.origin.setValue(float(payload))
                 self.origin.blockSignals(False)
                 self.write(u"Origin frame を %g にしました（AE のパネル・シーンと共通）。" % float(payload))
+        elif event == "origin_aligned":                  # D-50
+            self.show_origin_aligned(payload)
         elif event == "time_sync_stats":
             self.write(u"同期の計測（Maya が受け取った分）: %s" % payload)
         elif event == "time_sync":
@@ -719,6 +812,7 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.from_ae.setEnabled(enabled)
         self.settings_to_ae.setEnabled(enabled)
         self.settings_from_ae.setEnabled(enabled)
+        self.align_origin_btn.setEnabled(connected and bool(ae))
         state = service.time_sync_state()
         for check, value in ((self.time_sync_check, state["enabled"]), (self.follow_check, state["follow_playback"])):
             check.blockSignals(True)
@@ -740,6 +834,8 @@ class SyncBridgePanel(QtWidgets.QDialog):
 
     def closeEvent(self, event):
         service.remove_listener(self.on_event)
+        if self.show_maya_markers in maya_markers.listeners:
+            maya_markers.listeners.remove(self.show_maya_markers)
         super().closeEvent(event)
 
 

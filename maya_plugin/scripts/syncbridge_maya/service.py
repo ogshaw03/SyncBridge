@@ -229,6 +229,31 @@ def _on_timing(msg: dict) -> None:
     _notify("timing", value)
 
 
+def _on_time_align(msg: dict) -> None:
+    """AE's current comp time arrived (D-50): the Origin frame that makes it Maya's current frame."""
+    from . import timing
+    from .time_sync import _fps
+    data = msg["data"]
+    if data["t"] is None:
+        _notify("origin_aligned", {"status": "no_comp"})
+        return
+    t, before, frame = float(data["t"]), timing.origin(), cmds.currentTime(q=True)
+    origin = core_time_sync.origin_for(frame, t, _fps())
+    result = {"frame": frame, "t": t, "comp": data.get("comp"), "origin": origin, "before": before}
+    if is_connected():
+        _client.send("timing.aligned", result)     # before timing.set: the AE panel reports this one
+    set_time_origin(origin)
+    _notify("origin_aligned", dict(result, status="aligned"))
+    _notify("timing", origin)
+
+
+def align_origin() -> None:
+    """The Origin frame from where both time sliders are now (D-50): ask AE for its time."""
+    if not is_connected():
+        raise ConnectError("not connected to the SyncBridge server")
+    _client.send("timing.align.request", {})
+
+
 def _watch_scenes() -> None:
     for job in _scene_jobs:
         if job is not None and cmds.scriptJob(exists=job):
@@ -289,7 +314,7 @@ def connect(start_server: bool = True, port: Optional[int] = None) -> dict:
                   "settings.apply.request": _handle_settings_apply,
                   "pixelmap.apply.request": _handle_pixelmap},
         notices={"time.sync.state": _on_time_state, "time.set": _on_time_set, "timing.state": _on_timing,
-                 "live.sync.state": _on_live_state, "live.changed": _on_live_changed},
+                 "timing.align": _on_time_align, "live.sync.state": _on_live_state, "live.changed": _on_live_changed},
         dispatch=maya.utils.executeDeferred,
         on_event=_on_event,
         version=cmds.about(version=True),

@@ -7,7 +7,7 @@ Qt only (PySide2 / PySide6), Maya is not imported: the viewer window (viewer_win
     lst.order_changed.connect(...)              # [layer ids], top first, after a row is dragged
     lst.visible_changed.connect(...)            # (layer id, bool), the eye
     lst.motion_requested.connect(...)           # layer id, from the row's right-click menu
-    lst.solo_requested.connect(...)             # layer id, or None: the row's "単独" (D-49)
+    lst.solo_requested.connect(...)             # layer id, or None: the row's solo mark (D-49)
     lst.set_solo(layer_id)                      # show which row is solo (None: none)
 """
 from __future__ import annotations
@@ -23,10 +23,67 @@ from syncbridge.core import layer_mapping as core_lm
 
 Qt = QtCore.Qt
 ID_ROLE = Qt.ItemDataRole.UserRole
-COLUMNS = (u"表示", u"単独", u"#", u"レイヤー名", u"AE の解像度", u"カメラ", u"AE のレイヤー", u"オブジェクト")
-EYE, SOLO, NUMBER, NAME, RESOLUTION, CAMERA, AE_LAYER, OBJECTS = range(len(COLUMNS))
-SOLO_TIP = u"このレイヤーだけを表示し、AE で映る範囲を枠で示します（素材カメラのモードの接続）。もう一度押すと元に戻ります"
+COLUMNS = (u"表示", u"", u"", u"#", u"レイヤー名", u"AE の解像度", u"カメラ", u"AE のレイヤー", u"オブジェクト")   # solo, plan: marks
+EYE, SOLO, PLAN, NUMBER, NAME, RESOLUTION, CAMERA, AE_LAYER, OBJECTS = range(len(COLUMNS))
+MARK_HEIGHT = 18                                 # an icon button would make the rows taller
+PLAN_TIP = (u"素材の上に、最初のキーと最後のキーのコンプの枠を出します（水色が最初、ピンクが最後）。回転とスケールも枠に出て、"
+            u"数値は左下に出します。左の丸のボタン（単独）がオンのときだけ押せます")
+SOLO_TIP = (u"このレイヤーの素材の全体を、AE のパン・ズームなしで、素材の解像度の枠の中に表示します"
+            u"（素材カメラのモードの接続）。もう一度押すと元に戻ります")
 LABEL_COLORS = ("#b85c5c", "#c8a24a", "#5ca05c", "#4f86c6", "#9b6bc0", "#4fb0b0", "#c07a3c", "#8a8a8a")
+
+
+def _solo_pixmap(filled: bool, color: str) -> QtGui.QPixmap:
+    """The solo mark, like AE's: a ring, filled when on. Drawn, not a character: a font may not have it."""
+    scale = 2
+    pixmap = QtGui.QPixmap(16 * scale, 16 * scale)
+    pixmap.setDevicePixelRatio(scale)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QtGui.QPainter(pixmap)
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    painter.setPen(QtGui.QPen(QtGui.QColor(color), 1.5))
+    painter.setBrush(QtGui.QColor(color) if filled else Qt.BrushStyle.NoBrush)
+    painter.drawEllipse(QtCore.QPointF(8.0, 8.0), 4.2, 4.2)
+    painter.end()
+    return pixmap
+
+
+def _solo_icon() -> QtGui.QIcon:
+    icon = QtGui.QIcon()
+    icon.addPixmap(_solo_pixmap(False, "#c8c8c8"), QtGui.QIcon.Mode.Normal, QtGui.QIcon.State.Off)
+    icon.addPixmap(_solo_pixmap(True, "#ffffff"), QtGui.QIcon.Mode.Normal, QtGui.QIcon.State.On)
+    icon.addPixmap(_solo_pixmap(False, "#5e5e5e"), QtGui.QIcon.Mode.Disabled, QtGui.QIcon.State.Off)
+    return icon
+
+
+def _plan_pixmap(filled: bool, color: str) -> QtGui.QPixmap:
+    """The layout drawing's mark (D-54): one picture inside the corners of a frame."""
+    scale = 2
+    pixmap = QtGui.QPixmap(16 * scale, 16 * scale)
+    pixmap.setDevicePixelRatio(scale)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QtGui.QPainter(pixmap)
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    pen = QtGui.QPen(QtGui.QColor(color), 1.3)
+    painter.setPen(pen)
+    for x, dx in ((1.5, 3.5), (14.5, -3.5)):
+        for y, dy in ((1.5, 3.5), (14.5, -3.5)):
+            painter.drawLine(QtCore.QPointF(x, y), QtCore.QPointF(x + dx, y))
+            painter.drawLine(QtCore.QPointF(x, y), QtCore.QPointF(x, y + dy))
+    if filled:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QtGui.QColor(color))
+    painter.drawRect(QtCore.QRectF(4.8, 5.6, 6.4, 4.8))
+    painter.end()
+    return pixmap
+
+
+def _plan_icon() -> QtGui.QIcon:
+    icon = QtGui.QIcon()
+    icon.addPixmap(_plan_pixmap(False, "#c8c8c8"), QtGui.QIcon.Mode.Normal, QtGui.QIcon.State.Off)
+    icon.addPixmap(_plan_pixmap(True, "#ffffff"), QtGui.QIcon.Mode.Normal, QtGui.QIcon.State.On)
+    icon.addPixmap(_plan_pixmap(False, "#5e5e5e"), QtGui.QIcon.Mode.Disabled, QtGui.QIcon.State.Off)
+    return icon
 
 
 class _Tree(QtWidgets.QTreeWidget):
@@ -44,6 +101,7 @@ class LayerStackList(QtWidgets.QWidget):
     motion_requested = QtCore.Signal(str)      # layer id: transfer the AE motion of its links (D-30)
     editing_requested = QtCore.Signal(str)     # layer id: edit it in the viewer (D-44), a row clicked
     solo_requested = QtCore.Signal(object)     # layer id, or None to show every layer again (D-49)
+    plan_requested = QtCore.Signal(bool)       # the layout drawing's frames on / off (D-54)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -56,8 +114,12 @@ class LayerStackList(QtWidgets.QWidget):
         self.tree.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
         self.tree.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.InternalMove)
         self.tree.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.tree.headerItem().setIcon(SOLO, QtGui.QIcon(_solo_pixmap(True, "#c8c8c8")))
+        self.tree.headerItem().setToolTip(SOLO, SOLO_TIP)
+        self.tree.headerItem().setIcon(PLAN, QtGui.QIcon(_plan_pixmap(True, "#c8c8c8")))
+        self.tree.headerItem().setToolTip(PLAN, PLAN_TIP)
         header = self.tree.header()
-        for col, width in ((EYE, 44), (SOLO, 48), (NUMBER, 30), (NAME, 170), (RESOLUTION, 150), (CAMERA, 170),
+        for col, width in ((EYE, 44), (SOLO, 34), (PLAN, 34), (NUMBER, 30), (NAME, 170), (RESOLUTION, 150), (CAMERA, 170),
                            (AE_LAYER, 150)):
             header.resizeSection(col, width)
         header.setStretchLastSection(True)
@@ -67,7 +129,8 @@ class LayerStackList(QtWidgets.QWidget):
         self.tree.customContextMenuRequested.connect(self._menu)
         self.tree.itemClicked.connect(self._on_clicked)
         self.hint = QtWidgets.QLabel(u"上の行ほど手前に重なります。行をドラッグして並べ替え、左のチェックで表示・非表示。"
-                                     u"「単独」でそのレイヤーだけを表示し、AE で映る範囲を枠で示します。"
+                                     u"丸のボタン（単独）でそのレイヤーの素材の全体を、素材の解像度の枠の中に表示します。"
+                                     u"その右のボタンで、最初と最後のコンプの枠（原図の枠）を出します。"
                                      u"行をクリックすると、そのレイヤーを編集中にします（ビューでの選択・移動がそのレイヤーの"
                                      u"見え方どおりになります）。カメラか表示するオブジェクトのないレイヤーは描きません。")
         self.hint.setStyleSheet("color: #9a9a9a;")
@@ -79,6 +142,8 @@ class LayerStackList(QtWidgets.QWidget):
         self._filling = False
         self.editing = None
         self.solo = None
+        self._plan_shown = True                               # the layout drawing's frames are wanted (D-54)
+        self._plan_available = False                          # the solo layer's whole source is shown
         self._drawn = set()                                   # drawn when nothing is solo
         self._drawable = set()                                # drawn when shown (or solo)
 
@@ -106,23 +171,56 @@ class LayerStackList(QtWidgets.QWidget):
                 button.blockSignals(True)
                 button.setChecked(lid == layer_id)
                 button.blockSignals(False)
+            plan = self.tree.itemWidget(item, PLAN)
+            if plan is not None:                                  # only with this row's solo on (D-54)
+                on = lid == layer_id and self._plan_available
+                plan.blockSignals(True)
+                plan.setEnabled(on)
+                plan.setChecked(on and self._plan_shown)
+                plan.blockSignals(False)
             dim = lid not in self._drawn if layer_id is None else lid != layer_id
             for col in range(NUMBER, len(COLUMNS)):
                 item.setForeground(col, QtGui.QBrush(QtGui.QColor("#7a7a7a")) if dim else QtGui.QBrush())
 
+    def set_plan(self, shown: bool, available: bool) -> None:
+        """The layout drawing's frames: wanted, and possible now. set_solo shows them on the rows (D-54)."""
+        self._plan_shown, self._plan_available = bool(shown), bool(available)
+
+    def _on_plan(self, shown: bool) -> None:
+        self._plan_shown = shown
+        self.plan_requested.emit(shown)
+
+    def _plan_button(self) -> QtWidgets.QToolButton:
+        button = QtWidgets.QToolButton()
+        button.setIcon(_plan_icon())
+        button.setIconSize(QtCore.QSize(16, 16))
+        button.setFixedHeight(MARK_HEIGHT)
+        button.setAccessibleName(u"原図の枠")
+        button.setCheckable(True)
+        button.setAutoRaise(False)
+        button.setEnabled(False)
+        button.setToolTip(PLAN_TIP)
+        button.setStyleSheet("QToolButton { padding: 0 2px; } "
+                             "QToolButton:checked { background: #5285a6; border: 1px solid #7fb0cf; }")
+        button.toggled.connect(self._on_plan)
+        return button
+
     def _on_clicked(self, item, column):
-        if column not in (EYE, SOLO):                            # the eye toggles, it does not choose
+        if column not in (EYE, SOLO, PLAN):                      # the eye toggles, it does not choose
             self.editing_requested.emit(item.data(EYE, ID_ROLE))
 
     def _solo_button(self, layer_id: str, drawable: bool) -> QtWidgets.QToolButton:
         button = QtWidgets.QToolButton()
-        button.setText(u"単独")
+        button.setIcon(_solo_icon())
+        button.setIconSize(QtCore.QSize(16, 16))
+        button.setFixedHeight(MARK_HEIGHT)
+        button.setAccessibleName(u"単独")
         button.setCheckable(True)
         button.setAutoRaise(False)
         button.setEnabled(drawable)
         button.setToolTip(SOLO_TIP if drawable else u"カメラか表示するオブジェクトがないので、単独で表示できません")
-        button.setStyleSheet("QToolButton { padding: 0 4px; } "
-                             "QToolButton:checked { background: #c8a24a; color: #222222; font-weight: bold; }")
+        button.setStyleSheet("QToolButton { padding: 0 2px; } "
+                             "QToolButton:checked { background: #5285a6; border: 1px solid #7fb0cf; }")
         button.toggled.connect(lambda on: self.solo_requested.emit(layer_id if on else None))
         return button
 
@@ -139,7 +237,7 @@ class LayerStackList(QtWidgets.QWidget):
                 cam = core_lm.driven_camera(layer)
                 resolution = core_lm.layer_resolution(store, layer["id"])
                 item = QtWidgets.QTreeWidgetItem([
-                    "", "", str(i + 1), layer["name"], core_lm.resolution_text(resolution),
+                    "", "", "", str(i + 1), layer["name"], core_lm.resolution_text(resolution),
                     _transform_name(cam["camera"]) if cam["camera"] else u"（カメラなし）",
                     u", ".join(m["ae"].get("layer") or "?" for m in links) or u"―",
                     str(len(layer.get("objects") or []))])
@@ -155,6 +253,7 @@ class LayerStackList(QtWidgets.QWidget):
                                 if resolution else u"AE の解像度がまだありません（AE のレイヤーにつなぐと受け取ります）")
                 self.tree.addTopLevelItem(item)
                 self.tree.setItemWidget(item, SOLO, self._solo_button(layer["id"], layer["id"] in drawable))
+                self.tree.setItemWidget(item, PLAN, self._plan_button())
                 if layer["id"] == current:
                     item.setSelected(True)
             self.set_editing(self.editing)
@@ -176,6 +275,7 @@ class LayerStackList(QtWidgets.QWidget):
             if self.tree.itemWidget(item, SOLO) is None:          # a moved row loses its button
                 lid = item.data(EYE, ID_ROLE)
                 self.tree.setItemWidget(item, SOLO, self._solo_button(lid, lid in self._drawable))
+                self.tree.setItemWidget(item, PLAN, self._plan_button())
         self.set_solo(self.solo)
         self.order_changed.emit(self.order())
 

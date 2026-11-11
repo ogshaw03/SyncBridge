@@ -75,6 +75,35 @@ def from_ae_export(ae_data: dict, maya_fps, options: Optional[dict] = None) -> D
     }
 
 
+# ---- markers made in Maya (D-55) -------------------------------------------------------------
+# Kept as Maya frames (the keys of SB_MARKERS). For a later sync with AE they go to and come from AE comp
+# markers, which sit at comp times: the same Maya frame <-> comp time as the time sync (D-22, Origin frame
+# = comp 0 s), not a layer's start as the Time Remap keys above.
+
+def maya_marker_label(index: int, count: int) -> str:
+    """'マーカー 3/8' (the bookmark's name)"""
+    return u"マーカー %d/%d" % (index, count)
+
+
+def from_maya_frames(frames: List[float], maya_fps, origin: float) -> Dict[str, object]:
+    """The markers made in Maya, with the AE comp time of each: the form a sync with AE sends."""
+    from .time_sync import maya_frame_to_time
+    fps = FrameRate(maya_fps)
+    ordered = sorted(float(f) for f in frames)
+    markers: List[dict] = []
+    for index, frame in enumerate(ordered, 1):
+        markers.append({"index": index, "count": len(ordered), "frame": frame,
+                        "comp_time": maya_frame_to_time(frame, fps, origin),
+                        "label": maya_marker_label(index, len(ordered))})
+    return {"source": "maya", "maya_fps": fps.to_json(), "origin": float(origin), "markers": markers}
+
+
+def maya_frames_from_comp_times(comp_times: List[float], maya_fps, origin: float) -> List[float]:
+    """AE comp marker times -> the Maya frames to key on SB_MARKERS (the other way of the sync)."""
+    from .time_sync import time_to_maya_frame
+    return sorted(time_to_maya_frame(t, maya_fps, origin) for t in comp_times)
+
+
 def marker_at(markers: List[dict], frame: float, tolerance: float = MARKER_TOLERANCE) -> Optional[dict]:
     """The marker nearest to `frame` within `tolerance` frames, or None."""
     best = None

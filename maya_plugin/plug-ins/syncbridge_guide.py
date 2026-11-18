@@ -303,7 +303,7 @@ class CompGuideDrawOverride(omr.MPxDrawOverride):
 
 # ---- key markers overlay (D-18) -------------------------------------------------------------
 # A second plug-in shape: shows "AE キー 3/8  素材 36f" in the top-left corner of all views while the
-# current frame is on an AE key. Drawn in screen space (2D), so it needs no camera. The markers
+# current frame is on an AE key, and under it "マーカー 2/3" (cyan) on a marker made in Maya (D-55). Drawn in screen space (2D), so it needs no camera. The markers
 # are read from the scene's syncBridgeKeyMarkers network node on every draw (no connection:
 # a new transfer replaces that node, and an undo brings the old one back).
 # Not yet run in the GUI (H-MY-24): MUIDrawManager.text2d / circle2d,
@@ -349,10 +349,49 @@ def _stored_markers():
     return _parsed["markers"]
 
 
+# The markers made in Maya (D-55): the keys of SB_MARKERS.marker, read from its anim curve on every draw (the
+# keys are the data; an undo or a drag in the Time Slider is followed without any callback). Shown in cyan
+# under the AE line, like their Time Slider bookmarks.
+MAYA_MARKER_PLUG = "SB_MARKERS.marker"         # syncbridge_maya.maya_markers.NODE / ATTR
+MAYA_COLOR = om.MColor((0.35, 0.85, 1.0, 1.0))  # syncbridge_maya.maya_markers.BOOKMARK_COLOR
+LINE_HEIGHT = 22                                # pixels between the AE line and the Maya line
+
+
+def _maya_marker_frames():
+    sel = om.MSelectionList()
+    try:
+        sel.add(MAYA_MARKER_PLUG)
+        plug = sel.getPlug(0)
+    except (RuntimeError, TypeError):           # no Maya markers in this scene
+        return []
+    source = plug.source()
+    if source.isNull or not source.node().hasFn(om.MFn.kAnimCurve):
+        return []
+    curve = oma.MFnAnimCurve(source.node())
+    unit = om.MTime.uiUnit()
+    return [curve.input(i).asUnits(unit) for i in range(curve.numKeys)]
+
+
+def _overlay_lines(frame):
+    """[(text, color)] to show at `frame`: the AE key marker, then the Maya marker."""
+    lines = []
+    markers = _stored_markers()
+    if markers:
+        marker = core_markers.marker_at(markers, frame)
+        if marker is not None:
+            lines.append((marker["label"], COLOR))
+    maya_frames = _maya_marker_frames()
+    if maya_frames:
+        label = core_markers.maya_marker_at(maya_frames, frame)
+        if label:
+            lines.append((label, MAYA_COLOR))
+    return lines
+
+
 class KeyMarkerData(om.MUserData):
     def __init__(self):
         super().__init__(False)
-        self.text = ""
+        self.lines = []
 
 
 def _current_frame():
@@ -372,11 +411,7 @@ def _refresh_all_views():
 
 def _time_changed(*_args):
     try:
-        label = None
-        markers = _stored_markers()
-        if markers:
-            marker = core_markers.marker_at(markers, _current_frame())
-            label = marker["label"] if marker is not None else None
+        label = tuple(text for text, _color in _overlay_lines(_current_frame()))
         if label != _marker_state["label"]:
             _marker_state["label"] = label
             _refresh_all_views()
@@ -408,28 +443,28 @@ class KeyMarkerDrawOverride(omr.MPxDrawOverride):
 
     def prepareForDraw(self, obj_path, camera_path, frame_context, old_data):
         data = old_data if isinstance(old_data, KeyMarkerData) else KeyMarkerData()
-        data.text = ""
+        data.lines = []
         try:
-            marker = core_markers.marker_at(_stored_markers(), _current_frame())
-            if marker is not None:
-                data.text = marker["label"]
-            _debug("marker prepareForDraw", "frame=%g text=%r" % (_current_frame(), data.text))
+            data.lines = _overlay_lines(_current_frame())
+            _debug("marker prepareForDraw", "frame=%g lines=%r" % (_current_frame(), [t for t, _c in data.lines]))
         except Exception as exc:
             _warn_once("SyncBridge key markers: %s" % exc)
         return data
 
     def addUIDrawables(self, obj_path, draw_manager, frame_context, data):
-        if not isinstance(data, KeyMarkerData) or not data.text:
+        if not isinstance(data, KeyMarkerData) or not data.lines:
             return
         try:
             x, y, width, height = frame_context.getViewportDimensions()
             top = y + height - 36
             draw_manager.beginDrawable()
-            draw_manager.setColor(COLOR)
-            draw_manager.circle2d(om.MPoint(x + 22, top + 6), 7.0, True)
-            draw_manager.text2d(om.MPoint(x + 36, top), data.text, omr.MUIDrawManager.kLeft)
+            for text, color in data.lines:
+                draw_manager.setColor(color)
+                draw_manager.circle2d(om.MPoint(x + 22, top + 6), 7.0, True)
+                draw_manager.text2d(om.MPoint(x + 36, top), text, omr.MUIDrawManager.kLeft)
+                top -= LINE_HEIGHT
             draw_manager.endDrawable()
-            _debug("marker addUIDrawables", "drew %r" % data.text)
+            _debug("marker addUIDrawables", "drew %r" % [t for t, _c in data.lines])
         except Exception as exc:
             _warn_once("SyncBridge key markers: drawing failed: %s" % exc)
 
@@ -595,10 +630,26 @@ def _report(step):
     traceback.print_exc()
 
 
+def _remember_digest(plugin_dir):
+    """The file's digest when loaded: switching to a newly installed version without restarting Maya
+    (syncbridge_maya.hot_reload, D-56) reloads this plug-in only when its file changed."""
+    import __main__
+    import hashlib
+    try:
+        with open(os.path.join(plugin_dir, "syncbridge_guide.py"), "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        return
+    digests = getattr(__main__, "_syncbridge_plugin_digests", None) or {}
+    digests["syncbridge_guide"] = digest
+    setattr(__main__, "_syncbridge_plugin_digests", digests)
+
+
 def initializePlugin(obj):
     try:
         plugin = om.MFnPlugin(obj, "SyncBridge", "1.1", "Any")
         _import_core(plugin.loadPath())
+        _remember_digest(plugin.loadPath())
         plugin.registerShape(NODE_NAME, NODE_ID, CompGuideNode.creator, CompGuideNode.initialize,
                              GuideShapeUI.creator, DRAW_CLASSIFICATION)
         omr.MDrawRegistry.registerDrawOverrideCreator(DRAW_CLASSIFICATION, DRAW_REGISTRANT,

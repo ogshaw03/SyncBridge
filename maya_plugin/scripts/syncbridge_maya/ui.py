@@ -22,9 +22,10 @@ except ImportError:
 from syncbridge import __version__, protocol
 from syncbridge.core import layer_mapping as core_layer_mapping
 from syncbridge.core import scene_sync
-from . import comp_guide, key_markers, layer_mapping, maya_markers, pixel_mapping, service, snapshots, timing
+from . import comp_guide, hot_reload, key_markers, layer_mapping, maya_markers, pixel_mapping, service, snapshots, timing
 
 WINDOW_NAME = "SyncBridgePanel"
+UPDATE_CHECK_MS = 3000           # how often the panel looks for a newly installed version (install.json)
 # <maya folder>/icons next to scripts/ (repository: maya_plugin/icons; release: <install>/maya/icons)
 ICON_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "icons")
 LOGO_FILE = os.path.join(ICON_DIR, "syncbridge_logo.png")
@@ -313,7 +314,8 @@ class SyncBridgePanel(QtWidgets.QDialog):
                    _note(u"AE のパネルの「解像度の枠」でも出せます")),
             _group(u"Maya のマーカー", self.maya_markers_label,
                    _row(self.add_marker_btn, self.remove_marker_btn, self.select_markers_btn, None),
-                   _note(u"SB_MARKERS のキーが、タイムスライダーの水色のマーカーになります。AE がなくても使えます")),
+                   _note(u"SB_MARKERS のキーが、タイムスライダーの水色のマーカーになり、そのフレームではビューの左上にも出ます。"
+                         u"AE がなくても使えます")),
             _group(u"AE のキーのマーカー", _row(self.markers_label, self.clear_markers_btn)),
             _group(u"納品", _row(self.cleanup_btn, None),
                    _note(u"SyncBridge のノードを消して、ツールなしで開けるシーンにします"))), u"その他")
@@ -329,6 +331,27 @@ class SyncBridgePanel(QtWidgets.QDialog):
         about_action = help_menu.addAction(u"SyncBridge について / 更新…")
         about_action.triggered.connect(self.open_about)
         layout.setMenuBar(menubar)
+        # a newly installed version: switch to it without restarting Maya (D-56)
+        self.update_bar = QtWidgets.QFrame()
+        self.update_bar.setObjectName("syncBridgeUpdate")
+        self.update_bar.setStyleSheet("QFrame#syncBridgeUpdate { background: #3f5f4a; border-radius: 4px; }")
+        self.update_label = QtWidgets.QLabel()
+        self.update_label.setWordWrap(True)
+        self.switch_btn = QtWidgets.QPushButton(u"切り替える")
+        self.switch_btn.setToolTip(u"Maya を開き直さずに、インストールした版に切り替えます。\n"
+                                   u"SyncBridge の画面を閉じて開き直し、接続していたらつなぎ直します")
+        self.switch_btn.clicked.connect(self.switch_version)
+        bar = QtWidgets.QHBoxLayout(self.update_bar)
+        bar.setContentsMargins(8, 4, 6, 4)
+        bar.addWidget(self.update_label, 1)
+        bar.addWidget(self.switch_btn)
+        self.update_bar.hide()
+        layout.addWidget(self.update_bar)
+        self._update_timer = QtCore.QTimer(self)
+        self._update_timer.setInterval(UPDATE_CHECK_MS)
+        self._update_timer.timeout.connect(self.check_installed)
+        self._update_timer.start()
+        self.check_installed()
         layout.addLayout(head)
         layout.addWidget(state)
         layout.addLayout(_row(QtWidgets.QLabel("Origin frame"), self.origin, self.align_origin_btn, None))
@@ -352,6 +375,21 @@ class SyncBridgePanel(QtWidgets.QDialog):
     def open_about(self):
         from . import about
         about.show(self, logo=LOGO_FILE)
+
+    # -- a newly installed version (D-56) ----------------------------------------------------------
+    def check_installed(self):
+        version = hot_reload.pending()
+        if version:
+            self.update_label.setText(u"SyncBridge %s がインストールされました（使用中は %s）。" % (version, __version__))
+        self.update_bar.setVisible(bool(version))
+        return version
+
+    def switch_version(self):
+        self.switch_btn.setEnabled(False)
+        self._update_timer.stop()
+        self.write(u"新しい版に切り替えています…")
+        import maya.utils
+        maya.utils.executeDeferred(hot_reload.switch)      # not inside this panel's slot: it is closed there
 
     def show_detail(self, *_args):
         opened = self.detail_btn.isChecked()
@@ -833,6 +871,7 @@ class SyncBridgePanel(QtWidgets.QDialog):
         self.log.appendPlainText(str(text))
 
     def closeEvent(self, event):
+        self._update_timer.stop()
         service.remove_listener(self.on_event)
         if self.show_maya_markers in maya_markers.listeners:
             maya_markers.listeners.remove(self.show_maya_markers)

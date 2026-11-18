@@ -175,11 +175,11 @@ class AboutDialog(QtWidgets.QDialog):
         lines = [u"SyncBridge %s をインストールします（今は %s%s）。" % (item["version"], __version__,
                                                                 u"。古い版に戻ります" if older else u""), u""]
         if kind == "exe":
-            lines += [u"インストーラーをダウンロードして開きます。",
-                      u"インストーラーが開いたら、Maya と After Effects を終了してから「インストール」を押してください。"]
+            lines += [u"インストーラーをダウンロードして開きます。「インストール」を押してください",
+                      u"（Maya と After Effects は開いたままで構いません）。"]
         else:
-            lines += [u"zip をダウンロードして展開し、Install.bat を実行します（すぐにインストールが始まります）。",
-                      u"終わったら、Maya と After Effects を再起動してください。"]
+            lines += [u"zip をダウンロードして展開し、Install.bat を実行します（すぐにインストールが始まります）。"]
+        lines += [u"終わると、SyncBridge のパネルの上に「切り替える」が出ます。押すと、開き直さずに新しい版になります。"]
         lines += [u"", u"インストール中は SyncBridge のサーバーが止まり、Maya と After Effects の接続が切れます。"]
         if not item.get("has_updater", True):
             lines += [u"", u"※ %s にはこの更新のメニューがありません。あとで新しい版にするときは、インストーラーか zip を"
@@ -217,10 +217,10 @@ class AboutDialog(QtWidgets.QDialog):
                 QtWidgets.QMessageBox.warning(self, u"SyncBridge の更新", str(error))
                 return
             if kind == "exe":
-                text = (u"インストーラーを開きました。Maya と After Effects を終了してから「インストール」を押し、"
-                        u"終わったら起動し直してください。")
+                text = (u"インストーラーを開きました。「インストール」を押してください。終わると、"
+                        u"パネルの上に「切り替える」が出ます。")
             else:
-                text = u"インストールを始めました。完了のメッセージが出たら、Maya と After Effects を再起動してください。"
+                text = u"インストールを始めました。終わると、パネルの上に「切り替える」が出ます。"
             self.say(text)
             QtWidgets.QMessageBox.information(self, u"SyncBridge の更新", text)
         self._relays.append(_in_thread(work, finished, on_progress))

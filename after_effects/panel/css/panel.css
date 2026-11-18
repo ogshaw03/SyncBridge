@@ -38,6 +38,9 @@ button:disabled { opacity: 0.4; }
 .half { flex: 1; }
 .full { width: 100%; }
 .primary { background: #24537a; border-color: var(--accent); font-weight: 600; }
+/* a newly installed version (D-56, hotreload.js) */
+.update-bar { display: flex; align-items: center; gap: 6px; background: #3f5f4a; border-radius: 4px; padding: 5px 6px 5px 8px; }
+.update-bar .grow { white-space: normal; }
 /* state: what is connected and what is on (UI/UX proposal, 2026-10-27) */
 .state {
   background: #2f2f2f;

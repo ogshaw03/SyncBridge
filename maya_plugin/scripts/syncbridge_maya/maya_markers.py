@@ -173,11 +173,20 @@ def update() -> List[float]:
     return keys
 
 
+def _overlay(has_keys: bool) -> None:
+    """The view's top-left overlay (key_markers, D-18) shows 'マーカー 3/8' in cyan on a marker's frame; it is
+    made with the first key and removed with the last one (unless AE markers are stored). Display only."""
+    from . import key_markers
+    if has_keys != bool(key_markers.overlays()):
+        key_markers.restore_overlay()
+
+
 def _run() -> None:
     state = _state()
     state["pending"] = False
     try:
         keys = update()
+        _overlay(bool(keys))
         if _curve() != state.get("curve"):        # a first key, or every key deleted / undone
             watch()
         for fn in list(listeners):

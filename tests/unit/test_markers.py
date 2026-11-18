@@ -62,6 +62,14 @@ class MarkerTest(unittest.TestCase):
         self.assertIsNone(markers.marker_at(ms, 25.6))
         self.assertIsNone(markers.marker_at([], 1.0))
 
+    def test_maya_marker_at(self):
+        # the viewport overlay's Maya line (D-55): numbered in frame order, whatever order the keys come in
+        frames = [30.0, 10.0, 20.0]
+        self.assertEqual(markers.maya_marker_at(frames, 10.0), u"マーカー 1/3")
+        self.assertEqual(markers.maya_marker_at(frames, 30.4), u"マーカー 3/3")
+        self.assertIsNone(markers.maya_marker_at(frames, 15.0))
+        self.assertIsNone(markers.maya_marker_at([], 1.0))
+
 
 class MayaMarkersTest(unittest.TestCase):
     """D-55: markers made in Maya carry their AE comp time, for a later sync with AE."""

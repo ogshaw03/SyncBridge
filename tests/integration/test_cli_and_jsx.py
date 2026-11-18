@@ -167,13 +167,13 @@ class ExtendScriptJsonTest(unittest.TestCase):
             "const vm = require('vm'), fs = require('fs'), path = require('path');"
             "const page = {document: {}, navigator: {platform: 'Win32'}, module: {exports: {}}, require: require};"
             "page.window = page; vm.createContext(page);"
-            "for (const name of ['sbclient.js', 'about.js']) {"
+            "for (const name of ['sbclient.js', 'about.js', 'hotreload.js']) {"
             "  vm.runInContext(fs.readFileSync(path.join(%s, name), 'utf8'), page, {filename: name}); }"
             "process.stdout.write(JSON.stringify([typeof page.SBPanelClient, typeof page.SBAbout,"
-            "  typeof page.SBPanelClient.jsxCall]));" % json.dumps(panel_js))
+            "  typeof page.SBPanelClient.jsxCall, typeof page.SBHotReload]));" % json.dumps(panel_js))
         out = subprocess.run(["node", "-e", body], capture_output=True, encoding="utf-8", timeout=60)
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertEqual(json.loads(out.stdout), ["function", "object", "function"])
+        self.assertEqual(json.loads(out.stdout), ["function", "object", "function", "object"])
 
     def test_rejects_non_json(self):
         out = self.run_js("try { SBJSON.parse('alert(1)'); process.stdout.write('accepted'); }"

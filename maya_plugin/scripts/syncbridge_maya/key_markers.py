@@ -121,6 +121,7 @@ def clear() -> int:
             _delete_stored()
         finally:
             cmds.undoInfo(closeChunk=True)
+    restore_overlay()                            # kept for the Maya markers, if any
     return count
 
 
@@ -148,9 +149,15 @@ def remove_overlay() -> int:
         return comp_guide._delete(shapes)
 
 
+def _maya_markers() -> bool:
+    """The markers made in Maya (D-55) are drawn by the same overlay, under the AE line."""
+    from . import maya_markers
+    return bool(maya_markers.frames())
+
+
 def restore_overlay() -> bool:
-    """Show the overlay for the markers stored in this scene. Returns whether it is shown."""
-    if stored() is None:
+    """Show the overlay for the markers of this scene (AE's or Maya's). Returns whether it is shown."""
+    if stored() is None and not _maya_markers():
         remove_overlay()
         return False
     comp_guide.ensure_plugin()

@@ -215,12 +215,12 @@ var SBAbout = (function () {
         var lines = ['SyncBridge ' + item.version + ' をインストールします（今は ' + (state.result.current || '?') +
                      (older ? '。古い版に戻ります' : '') + '）。'];
         if (item.asset.kind === 'exe') {
-            lines.push('インストーラーをダウンロードして開きます。インストーラーが開いたら、After Effects と Maya を終了してから' +
-                       '「インストール」を押してください。');
+            lines.push('インストーラーをダウンロードして開きます。「インストール」を押してください' +
+                       '（After Effects と Maya は開いたままで構いません）。');
         } else {
-            lines.push('zip をダウンロードして展開し、Install.bat を実行します（すぐにインストールが始まります）。' +
-                       '終わったら After Effects と Maya を再起動してください。');
+            lines.push('zip をダウンロードして展開し、Install.bat を実行します（すぐにインストールが始まります）。');
         }
+        lines.push('終わると、SyncBridge のパネルの上に「切り替える」が出ます。押すと、開き直さずに新しい版になります。');
         lines.push('インストール中は SyncBridge のサーバーが止まり、接続が切れます。');
         if (item.has_updater === false) {
             lines.push('※ ' + item.version + ' にはこの更新のメニューがありません。あとで新しい版にするときは、' +
@@ -265,9 +265,9 @@ var SBAbout = (function () {
             showButtons();
             if (failed) { return; }
             if (launched === 'exe') {
-                say('インストーラーを開きました。After Effects と Maya を終了してから「インストール」を押し、終わったら起動し直してください。');
+                say('インストーラーを開きました。「インストール」を押してください。終わると、パネルの上に「切り替える」が出ます。');
             } else if (launched === 'zip') {
-                say('インストールを始めました。完了のメッセージが出たら、After Effects と Maya を再起動してください。');
+                say('インストールを始めました。終わると、パネルの上に「切り替える」が出ます。');
             } else {
                 say('更新を始められませんでした。', true);
             }

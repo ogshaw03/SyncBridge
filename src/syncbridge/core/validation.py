@@ -14,6 +14,13 @@ from .timebase import FrameRate
 Evaluator = Callable[[float], float]
 DEFAULT_TOLERANCE_FRAMES = 0.1
 _MAX_REPORTED_EXCEEDANCES = 50
+# A hold jump (AE HOLD / Maya step key) at "the same" time in two curves can differ by a rounding error of the
+# time (comp seconds -> Maya frames -> seconds: 0.4166666666666667 vs 0.41666666666666663). Sampled exactly
+# there, one curve already shows the next drawing and the other not yet: the whole jump (2 frames for a hold on
+# twos) was reported as an error and the transfer refused (2026-11-18). An error that vanishes when the time is
+# moved by TIME_JITTER (far below a frame: 1e-7 s = 0.0000024 frames at 24 fps) is such a rounding, not a
+# difference of the curves.
+TIME_JITTER = 1e-7
 
 
 @dataclass
@@ -72,6 +79,10 @@ def compare_samples(times: Sequence[float], values: Sequence[float], b: Evaluato
     total = total_sq = 0.0
     for t, v in zip(times, values):
         err = abs(v - b(t)) * rate
+        if err > tolerance_frames:            # at a hold jump? (see TIME_JITTER)
+            nudged = min(abs(v - b(t - TIME_JITTER)), abs(v - b(t + TIME_JITTER))) * rate
+            if nudged <= tolerance_frames:    # only a rounding of the jump's time: a real error is kept as is
+                err = nudged
         total += err
         total_sq += err * err
         if report.worst_time is None or err > report.max_error_frames:

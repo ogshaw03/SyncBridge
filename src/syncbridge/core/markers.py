@@ -112,3 +112,10 @@ def marker_at(markers: List[dict], frame: float, tolerance: float = MARKER_TOLER
         if distance <= tolerance and (best is None or distance < abs(best["frame"] - frame)):
             best = marker
     return best
+
+
+def maya_marker_at(frames: List[float], frame: float, tolerance: float = MARKER_TOLERANCE) -> Optional[str]:
+    """The label ('マーカー 3/8') of the Maya marker (D-55) at `frame`, or None: the viewport overlay's second line."""
+    ordered = sorted(float(f) for f in frames)
+    marker = marker_at([{"frame": f, "index": i} for i, f in enumerate(ordered, 1)], frame, tolerance)
+    return None if marker is None else maya_marker_label(marker["index"], len(ordered))

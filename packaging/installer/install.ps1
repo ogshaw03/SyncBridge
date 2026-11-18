@@ -186,7 +186,9 @@ try {
     if (Get-Process -Name maya -ErrorAction SilentlyContinue) { $running += 'Maya' }
     $restart = ''
     if ($running.Count -gt 0) {
-        $restart = "`n`n※ " + ($running -join ' と ') + ' が起動中です。再起動すると使えるようになります。'
+        # D-56: a running panel of 0.1.21 or later offers "切り替える"; older panels need a restart
+        $restart = "`n`n※ " + ($running -join ' と ') + ' が起動中です。SyncBridge のパネルの上に出る「切り替える」を押すと、' +
+            '開き直さずに新しい版になります（0.1.20 以前のパネルでは出ないので、開き直してください）。'
     }
     $dragFile = Join-Path $InstallRoot 'maya\drag_to_maya_SyncBridge.py'
     $again = if ($Setup) { 'インストーラー' } else { ' Install.bat ' }

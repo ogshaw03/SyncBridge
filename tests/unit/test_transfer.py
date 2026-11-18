@@ -29,6 +29,36 @@ class MappingTest(unittest.TestCase):
         self.assertTrue(rep.passed, rep.summary())
 
 
+def _hold_key(t, v):
+    return {"time": t, "value": v, "inInterp": "HOLD", "outInterp": "HOLD",
+            "inEase": {"speed": 0, "influence": 16.667}, "outEase": {"speed": 0, "influence": 16.667}}
+
+
+class HoldJumpRoundingTest(unittest.TestCase):
+    """AE holds on twos at 24 fps were refused with 'conversion 2.0000 f' (2026-11-18): the Maya key at frame 10
+    came back as 0.41666666666666663 s, the AE key is 0.4166666666666667 s, and the check sampled the jump there."""
+
+    def _job(self, keys, mode):
+        from syncbridge.core import jobs
+        ae = {"keys": keys, "layer": {"name": "BG", "startTime": 0.0},
+              "comp": {"frameRate": 24.0, "frameDuration": 1 / 24.0, "duration": 10.0}}
+        maya = {"scene": {"fps": [24, 1], "playback_range": [1, 240]}}
+        return jobs.ae_to_maya_job(ae, maya, jobs.TransferOptions(mode=mode))
+
+    def test_holds_on_twos_pass(self):
+        keys = [_hold_key(i * 2 / 24.0, i * 2 / 24.0) for i in range(20)]
+        for mode in (transfer.EDITABLE, transfer.PRECISION):
+            job = self._job(keys, mode)
+            self.assertTrue(job.passed, "%s: %s" % (mode, job.result.conversion.summary()))
+            self.assertEqual([k["time"] for k in job.result.native["keys"]][:4], [0.0, 2.0, 4.0, 6.0])
+
+    def test_a_real_shift_of_a_jump_still_fails(self):
+        src = testcurves.jump_hold()
+        moved = src.affine(in_offset=1 / 24.0)            # every jump one frame later
+        rep = compare_curves(src, moved, FPS, 0.1)
+        self.assertFalse(rep.passed, rep.summary())
+
+
 class PrecisionTest(unittest.TestCase):
     def test_all_curves_within_tolerance(self):
         for fps in (FPS, [24000, 1001], [30, 1]):

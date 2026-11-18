@@ -340,6 +340,15 @@ def disconnect() -> None:
     del _scene_jobs[:]
 
 
+def shutdown() -> None:
+    """Before a new version's modules replace these (hot_reload, D-56): leave no connection, callback or
+    listener of this load behind."""
+    disconnect()
+    _timesync.stop()
+    _time_state.update(enabled=False, follow_playback=False, by=None)
+    del _listeners[:]
+
+
 def peers() -> list:
     return list(_client.peers) if _client is not None else []
 

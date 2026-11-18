@@ -511,5 +511,10 @@
     refresh();
     updateInfo();
     setInterval(updateInfo, INFO_INTERVAL_MS);
+    // a newly installed version: switch to it without restarting AE (D-56), shown under the menu bar
+    SBHotReload.start({
+        log: log, container: app, before: menubar.nextSibling,
+        beforeSwitch: function () { if (client.ws) { client.disconnect(); } }
+    });
     connect();
 }());
